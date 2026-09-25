@@ -138,7 +138,9 @@ export function Checker() {
 
               <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
                 <span className="w-1 h-1 rounded-full bg-emerald-500" />
-                {source === "ai" ? "Chấm điểm bằng AI thật" : "Chấm điểm local (thiếu JEV_API_KEY)"}
+                {source === "ai"
+                  ? "Chấm điểm bằng AI thật"
+                  : "Chấm điểm local • Đăng nhập để dùng AI thật"}
                 {" • "}Qua{" "}
                 <code className="px-1.5 py-0.5 rounded bg-slate-100 border">/api/check</code>, key giữ ở server
               </div>

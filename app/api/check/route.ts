@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { planLimit, vnDayStartISO } from "@/lib/quota";
 
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
+// Cần đăng nhập (session Supabase) + có quota trong ngày.
 export const runtime = "nodejs";
 export const maxDuration = 10;
 
@@ -69,6 +72,37 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Phải đăng nhập mới dùng AI (chặn abuse + trừ quota)
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Cần đăng nhập để check" }, { status: 401, headers: CORS });
+    }
+
+    // Quota trong ngày theo gói
+    const { data: profile } = await supabase
+      .from("users")
+      .select("plan")
+      .eq("id", user.id)
+      .single();
+
+    const limit = planLimit(profile?.plan);
+    const { count } = await supabase
+      .from("checks")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .gte("created_at", vnDayStartISO());
+
+    if ((count ?? 0) >= limit) {
+      return NextResponse.json(
+        { error: `Hết ${limit} lượt check/ngày của gói ${profile?.plan ?? "free"}. Nâng cấp Pro để check thêm.` },
+        { status: 429, headers: CORS },
+      );
+    }
+
     const jevRes = await fetch("https://api.typesafe.ai/v1/systemone", {
       method: "POST",
       headers: {
@@ -96,13 +130,24 @@ export async function POST(req: NextRequest) {
     // Điểm 0-4 của score type quy về thang 100
     const invest = ans.investment_potential?.score ?? 0;
     const invest100 = invest <= 4 ? Math.round((invest / 4) * 100) : Math.round(invest);
+    const dealType = ans.deal_type?.choice || "binh_thuong";
+    const isNgop = Math.round((ans.is_ngop?.noul ?? 0) * 100);
+
+    // Lưu lịch sử (không chặn response nếu ghi DB lỗi)
+    await supabase.from("checks").insert({
+      user_id: user.id,
+      original_text: text.slice(0, 6000),
+      score: invest100,
+      deal_type: dealType,
+      is_ngop: isNgop,
+    });
 
     return NextResponse.json(
       {
         investment_score: invest100,
-        deal_type: ans.deal_type?.choice || "binh_thuong",
+        deal_type: dealType,
         confidence: ans.deal_type?.confidence || 0.7,
-        is_ngop: Math.round((ans.is_ngop?.noul ?? 0) * 100),
+        is_ngop: isNgop,
         legal_safety: Math.round((ans.legal_safety?.noul ?? 0) * 100),
         location_growth: ans.location_growth?.score ?? 0,
         liquidity: ans.liquidity?.score ?? 0,
