@@ -1,4 +1,18 @@
+# deps
 node_modules
+
+# next.js
+.next
+next-env.d.ts
+*.tsbuildinfo
+
+# env
 .env
 .env.local
+.env.production
+
+# vercel
 .vercel
+
+# misc
+.DS_Store
