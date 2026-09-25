@@ -6,7 +6,7 @@ create table if not exists public.users (
   phone       text,
   name        text,
   plan        text not null default 'free' check (plan in ('free', 'pro', 'team')),
-  credits     integer not null default 20,
+  credits     integer not null default 0,
   referred_by uuid references public.users (id),
   ref_code    text unique,
   created_at  timestamptz not null default now()

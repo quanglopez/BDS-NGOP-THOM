@@ -52,6 +52,7 @@ npm run dev                  # http://localhost:3000
 
 1. **Supabase**: tạo project → SQL Editor → chạy `supabase/schema.sql`
    - Authentication → Providers: bật **Google** (nhập Google OAuth Client ID/Secret, redirect URL `https://<domain>/api/auth/callback`)
+   - Đã chạy `schema.sql` rồi thì chỉ cần chạy các file trong `supabase/migrations/` theo thứ tự tên (chúng idempotent)
 2. **Vercel**: import repo (auto-detect Next.js) → Environment Variables: thêm bảng trên → Deploy
 3. **SePay**: tạo API key → cấu hình webhook trỏ `https://<domain>/api/sepay/webhook`
    - Khi khách chuyển khoản đúng nội dung `NANGCAP {user_id}` + số tiền ≥ giá gói → webhook tự nâng plan Pro/Team
