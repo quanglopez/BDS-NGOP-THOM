@@ -6,6 +6,7 @@ import { SignOutButton } from "@/components/auth/sign-out-button";
 import { StatsCards } from "@/components/dashboard/stats-cards";
 import { HistoryTable, type CheckRow } from "@/components/dashboard/history-table";
 import { BulkCheck } from "@/components/dashboard/bulk-check";
+import { ReferralCard } from "@/components/dashboard/referral-card";
 
 export const metadata: Metadata = {
   title: "Dashboard môi giới - Check BĐS Ngộp",
@@ -91,6 +92,8 @@ export default async function DashboardPage() {
         <BulkCheck isPro={plan !== "free"} />
 
         <HistoryTable rows={rows} />
+
+        <ReferralCard />
       </div>
     </main>
   );

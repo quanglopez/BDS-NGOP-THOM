@@ -2,12 +2,13 @@
 -- Chạy đoạn này trong Supabase Dashboard -> SQL Editor
 
 create table if not exists public.users (
-  id         uuid primary key references auth.users (id) on delete cascade,
-  phone      text,
-  name       text,
-  plan       text not null default 'free' check (plan in ('free', 'pro', 'team')),
-  credits    integer not null default 20,
-  created_at timestamptz not null default now()
+  id          uuid primary key references auth.users (id) on delete cascade,
+  phone       text,
+  name        text,
+  plan        text not null default 'free' check (plan in ('free', 'pro', 'team')),
+  credits     integer not null default 20,
+  referred_by uuid references public.users (id),
+  created_at  timestamptz not null default now()
 );
 
 -- RLS: user chỉ thấy/sửa được record của mình

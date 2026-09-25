@@ -85,7 +85,7 @@ export async function POST(req: NextRequest) {
     // Quota trong ngày theo gói
     const { data: profile } = await supabase
       .from("users")
-      .select("plan")
+      .select("plan, credits")
       .eq("id", user.id)
       .single();
 
@@ -96,11 +96,17 @@ export async function POST(req: NextRequest) {
       .eq("user_id", user.id)
       .gte("created_at", vnDayStartISO());
 
+    let usingCredit = false;
     if ((count ?? 0) >= limit) {
-      return NextResponse.json(
-        { error: `Hết ${limit} lượt check/ngày của gói ${profile?.plan ?? "free"}. Nâng cấp Pro để check thêm.` },
-        { status: 429, headers: CORS },
-      );
+      // Hết lượt ngày -> dùng credits thưởng (giới thiệu bạn +10 check)
+      if ((profile?.credits ?? 0) > 0) {
+        usingCredit = true;
+      } else {
+        return NextResponse.json(
+          { error: `Hết ${limit} lượt check/ngày của gói ${profile?.plan ?? "free"}. Nâng cấp Pro để check thêm.` },
+          { status: 429, headers: CORS },
+        );
+      }
     }
 
     const jevRes = await fetch("https://api.typesafe.ai/v1/systemone", {
@@ -141,6 +147,14 @@ export async function POST(req: NextRequest) {
       deal_type: dealType,
       is_ngop: isNgop,
     });
+
+    // Nếu check bằng credits thưởng thì trừ 1
+    if (usingCredit) {
+      await supabase
+        .from("users")
+        .update({ credits: (profile?.credits ?? 1) - 1 })
+        .eq("id", user.id);
+    }
 
     return NextResponse.json(
       {

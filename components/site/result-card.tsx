@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { AnalysisResult } from "@/lib/types";
+import { ShareImage } from "@/components/site/share-image";
 
 interface Props {
   result: AnalysisResult;
@@ -211,7 +212,7 @@ export function ResultCard({ result, onCheckAnother }: Props) {
               HÀNH ĐỘNG ĐỀ XUẤT
             </div>
             <p className="mt-3 text-[14px] leading-[1.6] font-semibold text-slate-800">{t.action}</p>
-            <div className="mt-4 flex gap-2">
+            <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={onCheckAnother}
@@ -226,6 +227,9 @@ export function ResultCard({ result, onCheckAnother }: Props) {
               >
                 Copy phân tích
               </button>
+            </div>
+            <div className="mt-3">
+              <ShareImage result={t} />
             </div>
           </div>
         </div>
