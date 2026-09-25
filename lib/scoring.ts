@@ -5,6 +5,7 @@ import type {
   TagColor,
   ActionType,
 } from "@/lib/types";
+import { detectProvince } from "@/lib/provinces";
 
 // Từ khóa ngộp: match đúng chuỗi con nên "ngop" bắt cả "ngộp"
 const NGOP_KEYWORDS = [
@@ -20,18 +21,33 @@ const NGOP_KEYWORDS = [
   "siết nợ",
 ];
 
-const AREAS = [
-  "thùy vân",
-  "trần phú",
+// Nhóm khu vực có tiềm năng tăng giá cao (dùng cho scoring local)
+const HOT_MARKETS = [
+  "thủ đức",
+  "quận 7",
+  "quận 2",
+  "cầu giấy",
+  "tây hồ",
+  "đống đa",
+  "hải châu",
+  "ngũ hành sơn",
+  "thanh khê",
   "hạ long",
-  "bãi sau",
-  "bãi trước",
-  "bãi dâu",
-  "phường 8",
-  "phường 11",
-  "chí linh",
-  "thắng tam",
+  "tuần châu",
+  "vũng tàu",
+  "thùy vân",
+  "nha trang",
+  "quy nhơn",
+  "huế",
+  "hội an",
+  "phú quốc",
+  "đà lạt",
+  "bãi hà",
+  "sầm sơn",
+  "vinh",
 ];
+
+const MID_MARKETS = ["biên hòa", "thủ dầu một", "bình dương", "thủ đức", "quy nhơn", "ninh bình", "hạ long"];
 
 // Chấm điểm local (fallback khi thiếu JEV_API_KEY / AI lỗi)
 export function analyzeListing(input: string): AnalysisResult {
@@ -43,23 +59,21 @@ export function analyzeListing(input: string): AnalysisResult {
   const price = priceMatch ? `${priceMatch[1]} tỷ` : "Chưa rõ";
   const area = areaMatch ? `${areaMatch[1]}m²` : "Chưa rõ";
 
-  const foundArea = AREAS.find((a) => n.includes(a)) || "Vũng Tàu";
-  const street = foundArea.charAt(0).toUpperCase() + foundArea.slice(1);
+  // Khu vực: ưu tiên nhận diện tỉnh/thành, không nhận được thì lấy tên đường/khu phố
+  const province = detectProvince(text);
+  const streetRaw =
+    province ?? (n.match(/(?:đường|đ|phố|ngõ)\s+[a-zàáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ0-9][a-z0-9\s]{2,24}/)?.[0] ?? "Khu vực của bạn");
+  const street = streetRaw.charAt(0).toUpperCase() + streetRaw.slice(1);
 
   // 1) Điểm ngộp
   const hits = NGOP_KEYWORDS.filter((k) => n.includes(k));
   const hitCount = hits.length;
   const ngop = Math.min(95, 20 + hitCount * 28 + (n.includes("gấp") ? 20 : 0));
 
-  // 2) Điểm tăng giá theo vị trí
+  // 2) Điểm tăng giá theo khu vực (chỉ áp dụng local; AI sẽ chấm lại đầy đủ)
   let tangGia = 50;
-  if (["thùy vân", "thuy van", "trần phú", "bãi sau", "bãi trước"].some((a) => n.includes(a))) {
-    tangGia = 90;
-  } else if (["hạ long", "bãi dâu", "chí linh"].some((a) => n.includes(a))) {
-    tangGia = 78;
-  } else if (n.includes("phường 8") || n.includes("phường 11")) {
-    tangGia = 62;
-  }
+  if (HOT_MARKETS.some((a) => n.includes(a))) tangGia = 88;
+  else if (MID_MARKETS.some((a) => n.includes(a))) tangGia = 68;
 
   // 3) Thanh khoản theo loại hình
   let thanhKhoan = 60;
@@ -134,10 +148,10 @@ export function analyzeListing(input: string): AnalysisResult {
       label: tangGia > 85 ? "Tăng mạnh" : tangGia > 70 ? "Tăng khá" : "Tăng chậm",
       detail:
         tangGia > 85
-          ? "Gần biển Bãi Sau - du lịch bùng nổ"
+          ? "Khu vực trọng điểm, thanh khoản tốt"
           : tangGia > 60
-            ? "Khu dân cư ổn định Vũng Tàu"
-            : "Khu vực xa trung tâm",
+            ? "Khu dân cư ổn định, nhu cầu ở thực"
+            : "Khu vực xa trung tâm, cần cân nhắc kỹ",
     },
     thanhKhoan: {
       score: thanhKhoan,
@@ -163,16 +177,16 @@ export function analyzeListing(input: string): AnalysisResult {
           ? `${price} / ${area} ~ ${pricePerM2}`
           : diff > 0
             ? `Thấp hơn trung bình khu ${street}`
-            : "So với mặt bằng Vũng Tàu",
+            : "So với mặt bằng khu vực",
     },
     viTri: {
       score: viTriScore,
       label: street,
       detail:
         viTriScore > 85
-          ? "Mặt tiền Thùy Vân - trung tâm du lịch, cách biển 50m"
+          ? "Mặt tiền đường lớn, khu vực sầm uất"
           : viTriScore > 70
-            ? `${street} - khu du lịch phát triển`
+            ? `${street} - khu vực có nhu cầu tốt`
             : `${street} - khu dân cư`,
     },
   };
@@ -182,7 +196,7 @@ export function analyzeListing(input: string): AnalysisResult {
   // 7) Lý luận
   let reasoning = "";
   if (overall >= 80) {
-    reasoning = `Giá ${price} cho ${area} tại ${street} rẻ hơn trung bình khu vực (${breakdown.giaThiTruong.diffAmount}). Từ khóa "${hitList}" cho thấy chủ đang kẹt thật, không phải chiêu marketing. Vị trí ${breakdown.viTri.detail.toLowerCase()} với tiềm năng tăng giá ${tangGia}/100 nhờ du lịch Vũng Tàu phục hồi mạnh 2024-2025. Pháp lý ${phapLy}% an toàn. Đây là kèo ngộp thơm đúng nghĩa - biên lợi nhuận 15-20% nếu bán lại sau 6-12 tháng.`;
+    reasoning = `Giá ${price} cho ${area} tại ${street} rẻ hơn trung bình khu vực (${breakdown.giaThiTruong.diffAmount}). Từ khóa "${hitList}" cho thấy chủ đang kẹt thật, không phải chiêu marketing. Vị trí ${breakdown.viTri.detail.toLowerCase()} với tiềm năng tăng giá ${tangGia}/100 nhờ nhu cầu thị trường phục hồi. Pháp lý ${phapLy}% an toàn. Đây là kèo ngộp thơm đúng nghĩa - biên lợi nhuận 15-20% nếu bán lại sau 6-12 tháng.`;
   } else if (overall >= 50) {
     reasoning = `Tin này ở mức trung bình khá. Giá ${price} tương đối hợp lý so với ${street}, nhưng chưa đủ độ ngộp để gọi là kèo thơm. ${
       ngop > 60 ? "Có dấu hiệu cần tiền nhưng chưa rõ ràng, cần gọi kiểm chứng." : "Không có tín hiệu bán gấp rõ rệt."
@@ -203,13 +217,13 @@ export function analyzeListing(input: string): AnalysisResult {
   let action = "";
   if (actionType === "hot") {
     action =
-      "🔥 NÊN GỌI NGAY CHỦ - Check quy hoạch trên cổng thông tin BR-VT, hẹn xem sổ gốc, chuẩn bị cọc 100tr giữ chỗ. Kèo này bay trong 24-48h. Nếu pháp lý ok, vào luôn.";
+      "🔥 NÊN GỌI NGAY CHỦ - Check quy hoạch trên cổng thông tin địa phương, hẹn xem sổ gốc, chuẩn bị cọc giữ chỗ. Kèo này bay trong 24-48h. Nếu pháp lý ok, vào luôn.";
   } else if (actionType === "ok") {
     action =
       "👉 Gọi hỏi kỹ lý do bán, ép giá thêm 5-10%, yêu cầu xem sổ và check quy hoạch. Nếu chủ thiện chí hạ thêm thì cân nhắc vào.";
   } else {
     action =
-      "⛔ BỎ QUA - Giá cao, pháp lý hoặc vị trí không thơm. Đừng tiếc, Vũng Tàu còn nhiều kèo khác. Dùng bộ lọc AI để săn tin mới.";
+      "⛔ BỎ QUA - Giá cao, pháp lý hoặc vị trí không thơm. Đừng tiếc, còn nhiều kèo khác. Dùng bộ lọc AI để săn tin mới.";
   }
 
   return {
