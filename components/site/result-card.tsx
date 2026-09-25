@@ -65,8 +65,8 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
     <div className="bg-white rounded-[24px] border border-slate-200 shadow-[0_20px_60px_-24px_rgba(0,0,0,0.25)] overflow-hidden">
       {/* Đầu thẻ: vòng điểm + tag + thông tin trích xuất */}
       <div className="px-6 md:px-8 py-5 flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-white to-[#FFFEFB]">
-        <div className="flex items-center gap-4">
-          <div className={`w-[88px] h-[88px] rounded-full flex items-center justify-center border-[6px] relative ${ringClass}`}>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className={`w-[88px] h-[88px] shrink-0 rounded-full flex items-center justify-center border-[6px] relative ${ringClass}`}>
             <div className="text-center leading-none">
               <div className="text-[28px] font-black tracking-tight">{t.overall}</div>
               <div className="text-[11px] font-bold tracking-widest mt-0.5">/100</div>
@@ -86,7 +86,7 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
             </svg>
           </div>
 
-          <div>
+          <div className="min-w-0">
             <div
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
                 isAi

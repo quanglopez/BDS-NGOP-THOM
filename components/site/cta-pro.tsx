@@ -49,7 +49,7 @@ export function CtaPro() {
                 asChild
                 className="mt-4 w-full h-[44px] rounded-[12px] bg-navy text-white font-bold text-[14px] hover:bg-black transition"
               >
-                <Link href="/pricing">Đăng ký Pro - Dùng thử 7 ngày</Link>
+                <Link href="/pricing#thanh-toan">Nâng cấp Pro - Dùng thử 7 ngày</Link>
               </Button>
               <div className="mt-3 text-[11px] text-center text-slate-400">
                 Thanh toán chuyển khoản VietQR • Tự kích hoạt

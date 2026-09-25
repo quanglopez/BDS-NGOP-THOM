@@ -86,7 +86,7 @@ export default function PricingPage() {
                 </Link>
               ) : (
                 <a
-                  href="#thanhtoan"
+                  href="#thanh-toan"
                   className="mt-6 w-full h-[44px] rounded-[12px] bg-gold hover:bg-[#d4b678] text-navy text-[14px] font-bold flex items-center justify-center transition"
                 >
                   Nâng cấp {p.label}
@@ -96,7 +96,13 @@ export default function PricingPage() {
           ))}
         </div>
 
-        <div id="thanhtoan" className="mt-12">
+        <div className="mt-6 rounded-[16px] border border-slate-200 bg-white p-5 text-[12px] text-slate-500">
+          <b className="text-slate-700">Cổng thanh toán:</b> đang dùng chuyển khoản VietQR (tự kích hoạt trong 1-2
+          phút). VNPay / MoMo cần tài khoản merchant của bạn — sau khi có, thêm nút trả QR/redirect tại đây, không
+          đổi logic gói.
+        </div>
+
+        <div id="thanh-toan" className="mt-12 scroll-mt-24">
           <PaymentBox />
         </div>
 

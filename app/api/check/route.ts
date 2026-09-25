@@ -2,17 +2,31 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { planLimit, vnDayStartISO } from "@/lib/quota";
+import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
 // Cần đăng nhập (session Supabase) + có quota trong ngày.
 export const runtime = "nodejs";
 export const maxDuration = 10;
 
-const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+// Chỉ cho phép gọi từ site của mình (kèm localhost để dev)
+const ALLOWED_ORIGINS = new Set([
+  "https://check-bds-ngop.vercel.app",
+  "https://check-bds-ngop-quangs-projects-cc2709cd.vercel.app",
+  "http://localhost:3000",
+]);
+
+function corsHeaders(req: Request): Record<string, string> {
+  const origin = req.headers.get("origin") ?? "";
+  const allowed = ALLOWED_ORIGINS.has(origin) ? origin : "";
+
+  return {
+    ...(allowed ? { "Access-Control-Allow-Origin": allowed } : {}),
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Vary": "Origin",
+  };
+}
 
 // Shape 1 câu trả lời từ Jev
 type JevAnswer = {
@@ -60,8 +74,8 @@ const QUESTIONS = {
   },
 } as const;
 
-export async function OPTIONS() {
-  return new NextResponse(null, { status: 200, headers: CORS });
+export async function OPTIONS(req: NextRequest) {
+  return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
 }
 
 // Đọc quota hôm nay của 1 user (dùng cho GET và POST)
@@ -92,7 +106,8 @@ async function getQuota(supabase: SupabaseClient, userId: string) {
 }
 
 // GET: quota hôm nay để Bulk Check biết còn bao nhiêu lượt
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const CORS = corsHeaders(req);
   const supabase = await createClient();
   const {
     data: { user },
@@ -106,9 +121,21 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const CORS = corsHeaders(req);
   // requestId giúp đối chiếu log server với lỗi user thấy trên UI
   const requestId = crypto.randomUUID().slice(0, 8);
   const startedAt = Date.now();
+
+  // Chặn flood theo IP trước khi tốn phí gọi AI
+  const ip = clientIp(req);
+  const rate = await checkRateLimit(ip);
+  if (!rate.allowed) {
+    console.warn(`[check:${requestId}] RATE_LIMIT ip=${ip}`);
+    return NextResponse.json(
+      { error: "Bạn gửi quá nhanh. Vui lòng thử lại sau ít phút." },
+      { status: 429, headers: { ...CORS, "Retry-After": String(Math.ceil((rate.resetAt - Date.now()) / 1000)) } },
+    );
+  }
 
   try {
     const body = await req.json().catch(() => ({}));
