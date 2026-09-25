@@ -14,6 +14,14 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+// Shape 1 câu trả lời từ Jev
+type JevAnswer = {
+  score?: number;
+  noul?: number;
+  choice?: string;
+  confidence?: number;
+};
+
 // Bộ câu hỏi chấm điểm 1 tin BĐS Vũng Tàu
 const QUESTIONS = {
   investment_potential: {
@@ -98,6 +106,10 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  // requestId giúp đối chiếu log server với lỗi user thấy trên UI
+  const requestId = crypto.randomUUID().slice(0, 8);
+  const startedAt = Date.now();
+
   try {
     const body = await req.json().catch(() => ({}));
     const text: string = body?.text ?? "";
@@ -108,6 +120,7 @@ export async function POST(req: NextRequest) {
 
     const JEV_KEY = process.env.JEV_API_KEY;
     if (!JEV_KEY) {
+      console.error(`[check:${requestId}] MISSING_JEV_API_KEY - chưa cấu hình JEV_API_KEY trên Vercel`);
       return NextResponse.json(
         { error: "Chưa cấu hình JEV_API_KEY trên Vercel" },
         { status: 500, headers: CORS },
@@ -156,14 +169,28 @@ export async function POST(req: NextRequest) {
 
     const raw = await jevRes.text();
     if (!jevRes.ok) {
+      // Log chi tiết lỗi provider để debug trong Vercel Logs (không log key)
+      console.error(
+        `[check:${requestId}] JEV_ERROR status=${jevRes.status} url=https://api.typesafe.ai/v1/systemone body=${raw.slice(0, 800)}`,
+      );
       return NextResponse.json(
         { error: "Jev lỗi", detail: raw.slice(0, 500) },
         { status: jevRes.status, headers: CORS },
       );
     }
 
-    const data = JSON.parse(raw);
-    const ans = data.answers || data;
+    let data: Record<string, unknown>;
+    try {
+      data = JSON.parse(raw);
+    } catch (e) {
+      console.error(`[check:${requestId}] JEV_BAD_JSON body=${raw.slice(0, 500)}`, e);
+      return NextResponse.json(
+        { error: "Jev trả về dữ liệu không hợp lệ" },
+        { status: 502, headers: CORS },
+      );
+    }
+    // answers: object, mỗi câu hỏi có score/noul/choice/confidence
+    const ans = (data.answers ?? data) as Record<string, JevAnswer>;
 
     // Điểm 0-4 của score type quy về thang 100
     const invest = ans.investment_potential?.score ?? 0;
@@ -190,6 +217,10 @@ export async function POST(req: NextRequest) {
     }
     quota.used += 1;
     quota.remaining = Math.max(0, limit - quota.used) + quota.credits;
+
+    console.log(
+      `[check:${requestId}] OK user=${user.id} score=${invest100} deal=${dealType} ms=${Date.now() - startedAt}`,
+    );
 
     return NextResponse.json(
       {
