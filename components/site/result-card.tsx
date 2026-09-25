@@ -2,10 +2,12 @@
 
 import type { ReactNode } from "react";
 import type { AnalysisResult } from "@/lib/types";
+import type { CheckSource } from "@/lib/client-check";
 import { ShareImage } from "@/components/site/share-image";
 
 interface Props {
   result: AnalysisResult;
+  source: CheckSource;
   onCheckAnother: () => void;
 }
 
@@ -35,9 +37,10 @@ function ScoreCard({
   );
 }
 
-// Thẻ kết quả: vòng điểm tròn, 6 chỉ số, panel AI phân tích + hành động
-export function ResultCard({ result, onCheckAnother }: Props) {
+// Thẻ kết quả: vòng điểm tròn, badge nguồn, 6 chỉ số, panel AI phân tích + hành động
+export function ResultCard({ result, source, onCheckAnother }: Props) {
   const t = result;
+  const isAi = source === "ai";
   const ringClass =
     t.tagColor === "green"
       ? "border-emerald-500 bg-emerald-50 text-emerald-700"
@@ -83,10 +86,22 @@ export function ResultCard({ result, onCheckAnother }: Props) {
           </div>
 
           <div>
-            <div className={`inline-flex px-3 py-1 rounded-full text-[11px] font-black tracking-[0.12em] border ${tagClass}`}>
-              {t.tag}
+            <div
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                isAi
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : "bg-amber-50 text-amber-800 border-amber-200"
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${isAi ? "bg-emerald-500" : "bg-amber-500"}`} />
+              {isAi ? "Phân tích bằng AI" : "Ước tính nhanh – AI đang bận, dùng công thức dự phòng"}
             </div>
-            <div className="mt-2 flex flex-wrap gap-2 text-[12px]">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <div
+                className={`inline-flex px-3 py-1 rounded-full text-[11px] font-black tracking-[0.12em] border ${tagClass}`}
+              >
+                {t.tag}
+              </div>
               <span className="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200">💰 {t.extracted.price}</span>
               <span className="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200">📐 {t.extracted.area}</span>
               <span className="px-2.5 py-1 rounded-full bg-navy text-white">📍 {t.extracted.street}</span>

@@ -163,7 +163,11 @@ export function Checker() {
           ref={resultRef}
           className="mx-auto max-w-[1120px] px-5 md:px-8 -mt-6 md:-mt-8 relative z-10 pb-10"
         >
-          <ResultCard result={result} onCheckAnother={() => window.scrollTo({ top: 0, behavior: "smooth" })} />
+          <ResultCard
+            result={result}
+            source={source}
+            onCheckAnother={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+          />
         </section>
       )}
     </>
