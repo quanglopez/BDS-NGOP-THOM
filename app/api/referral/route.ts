@@ -4,7 +4,7 @@ import { refCodeOf } from "@/lib/referral";
 
 // GET: lấy mã giới thiệu + link chia sẻ của user hiện tại
 export async function GET(req: Request) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 
 // Trạng thái thanh toán gần nhất + gói hiện tại (client poll để biết khi nào được nâng)
 export async function GET() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

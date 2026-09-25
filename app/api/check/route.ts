@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { planLimit, vnDayStartISO } from "@/lib/quota";
 
@@ -56,7 +57,7 @@ export async function OPTIONS() {
 }
 
 // Đọc quota hôm nay của 1 user (dùng cho GET và POST)
-async function getQuota(supabase: ReturnType<typeof createClient>, userId: string) {
+async function getQuota(supabase: SupabaseClient, userId: string) {
   const { data: profile } = await supabase
     .from("users")
     .select("plan, credits")
@@ -84,7 +85,7 @@ async function getQuota(supabase: ReturnType<typeof createClient>, userId: strin
 
 // GET: quota hôm nay để Bulk Check biết còn bao nhiêu lượt
 export async function GET() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -114,7 +115,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Phải đăng nhập mới dùng AI (chặn abuse + trừ quota)
-    const supabase = createClient();
+    const supabase = await createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();

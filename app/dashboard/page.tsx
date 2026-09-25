@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 
 // Dashboard cho môi giới: stats + lịch sử 100 tin + Bulk Check
 export default async function DashboardPage() {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

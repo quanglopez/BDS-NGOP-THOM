@@ -4,7 +4,7 @@ import { PLANS, transferContent } from "@/lib/payments";
 
 // Tạo bản ghi thanh toán pending cho gói user chọn
 export async function POST(req: Request) {
-  const supabase = createClient();
+  const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

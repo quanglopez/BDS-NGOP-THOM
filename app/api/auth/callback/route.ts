@@ -11,7 +11,7 @@ export async function GET(request: NextRequest) {
   const ref = searchParams.get("ref");
 
   if (code) {
-    const supabase = createClient();
+    const supabase = await createClient();
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
     if (!error) {
