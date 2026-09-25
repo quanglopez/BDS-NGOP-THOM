@@ -55,6 +55,47 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 200, headers: CORS });
 }
 
+// Đọc quota hôm nay của 1 user (dùng cho GET và POST)
+async function getQuota(supabase: ReturnType<typeof createClient>, userId: string) {
+  const { data: profile } = await supabase
+    .from("users")
+    .select("plan, credits")
+    .eq("id", userId)
+    .single();
+
+  const limit = planLimit(profile?.plan);
+  const { count } = await supabase
+    .from("checks")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .gte("created_at", vnDayStartISO());
+
+  const used = count ?? 0;
+  const credits = profile?.credits ?? 0;
+  return {
+    plan: profile?.plan ?? "free",
+    limit,
+    used,
+    credits,
+    // Lượt còn lại = hạn ngày chưa dùng + credits thưởng
+    remaining: Math.max(0, limit - used) + credits,
+  };
+}
+
+// GET: quota hôm nay để Bulk Check biết còn bao nhiêu lượt
+export async function GET() {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Cần đăng nhập" }, { status: 401, headers: CORS });
+  }
+
+  return NextResponse.json(await getQuota(supabase, user.id), { headers: CORS });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
@@ -83,27 +124,17 @@ export async function POST(req: NextRequest) {
     }
 
     // Quota trong ngày theo gói
-    const { data: profile } = await supabase
-      .from("users")
-      .select("plan, credits")
-      .eq("id", user.id)
-      .single();
-
-    const limit = planLimit(profile?.plan);
-    const { count } = await supabase
-      .from("checks")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", user.id)
-      .gte("created_at", vnDayStartISO());
+    const quota = await getQuota(supabase, user.id);
+    const limit = quota.limit;
 
     let usingCredit = false;
-    if ((count ?? 0) >= limit) {
+    if (quota.used >= limit) {
       // Hết lượt ngày -> dùng credits thưởng (giới thiệu bạn +10 check)
-      if ((profile?.credits ?? 0) > 0) {
+      if (quota.credits > 0) {
         usingCredit = true;
       } else {
         return NextResponse.json(
-          { error: `Hết ${limit} lượt check/ngày của gói ${profile?.plan ?? "free"}. Nâng cấp Pro để check thêm.` },
+          { error: `Hết ${limit} lượt check/ngày của gói ${quota.plan}. Nâng cấp Pro để check thêm.` },
           { status: 429, headers: CORS },
         );
       }
@@ -152,9 +183,12 @@ export async function POST(req: NextRequest) {
     if (usingCredit) {
       await supabase
         .from("users")
-        .update({ credits: (profile?.credits ?? 1) - 1 })
+        .update({ credits: quota.credits - 1 })
         .eq("id", user.id);
+      quota.credits -= 1;
     }
+    quota.used += 1;
+    quota.remaining = Math.max(0, limit - quota.used) + quota.credits;
 
     return NextResponse.json(
       {
@@ -165,6 +199,7 @@ export async function POST(req: NextRequest) {
         legal_safety: Math.round((ans.legal_safety?.noul ?? 0) * 100),
         location_growth: ans.location_growth?.score ?? 0,
         liquidity: ans.liquidity?.score ?? 0,
+        quota,
         raw: data,
       },
       { headers: CORS },

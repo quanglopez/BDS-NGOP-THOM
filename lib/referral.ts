@@ -7,13 +7,18 @@ export function refCodeOf(userId: string): string {
 
 // Tìm user theo mã giới thiệu
 export async function findUserByRefCode(admin: SupabaseClient, code: string): Promise<string | null> {
-  const { data } = await admin
-    .from("users")
-    .select("id")
-    .like("id", `${code.toLowerCase()}%`)
-    .limit(2);
-  if (!data || data.length !== 1) return null;
-  return data[0].id as string;
+  const wanted = code.toLowerCase().trim();
+
+  // Ưu tiên cột ref_code (nhanh, index unique). Nếu chưa chạy migration thì fallback bên dưới.
+  const byCode = await admin.from("users").select("id").eq("ref_code", wanted).limit(2);
+  if (!byCode.error) {
+    return byCode.data && byCode.data.length === 1 ? (byCode.data[0].id as string) : null;
+  }
+
+  const all = await admin.from("users").select("id").limit(1000);
+  if (all.error) return null;
+  const matches = (all.data ?? []).filter((r) => (r.id as string).replace(/-/g, "").startsWith(wanted));
+  return matches.length === 1 ? (matches[0].id as string) : null;
 }
 
 // Áp dụng mã giới thiệu: người được giới thiệu gắn referred_by, người giới thiệu +10 check

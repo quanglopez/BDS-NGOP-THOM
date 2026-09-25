@@ -8,6 +8,7 @@ create table if not exists public.users (
   plan        text not null default 'free' check (plan in ('free', 'pro', 'team')),
   credits     integer not null default 20,
   referred_by uuid references public.users (id),
+  ref_code    text unique,
   created_at  timestamptz not null default now()
 );
 
@@ -31,11 +32,12 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.users (id, phone, name)
+  insert into public.users (id, phone, name, ref_code)
   values (
     new.id,
     new.phone,
-    coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name')
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name'),
+    left(replace(new.id::text, '-', ''), 8)
   )
   on conflict (id) do nothing;
   return new;

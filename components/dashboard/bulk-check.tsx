@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { dealBadgeClass, dealLabel, scoreBadgeClass } from "@/lib/format";
+import type { QuotaInfo } from "@/lib/types";
 
 interface BulkRow {
   text: string;
@@ -21,6 +22,22 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
   const [running, setRunning] = useState(false);
   const [doneCount, setDoneCount] = useState(0);
   const [onlyGood, setOnlyGood] = useState(false);
+  const [quota, setQuota] = useState<QuotaInfo | null>(null);
+  const [notice, setNotice] = useState("");
+
+  // Lấy quota hôm nay để chặn trước khi gọi hết file
+  const loadQuota = useCallback(async () => {
+    try {
+      const res = await fetch("/api/check");
+      if (res.ok) setQuota(await res.json());
+    } catch {
+      // bỏ qua, coi như không biết quota
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadQuota();
+  }, [loadQuota]);
 
   // Đọc file -> mảng tin (mỗi dòng 1 tin)
   const handleFile = async (file: File) => {
@@ -34,17 +51,30 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
     setDoneCount(0);
   };
 
-  // Chạy check tuần tự 3 request song song
+  // Chạy check tối đa 3 request song song, tự dừng khi hết lượt
   const runBulk = async () => {
     if (rows.length === 0 || running) return;
+
+    const allowed = quota ? Math.min(rows.length, quota.remaining) : rows.length;
+    if (allowed <= 0) {
+      setNotice("Hết lượt check hôm nay. Nâng cấp Pro hoặc chờ ngày mai.");
+      return;
+    }
+    if (allowed < rows.length) {
+      setNotice(`Hôm nay chỉ còn ${allowed}/${rows.length} lượt — sẽ check ${allowed} tin đầu.`);
+    } else {
+      setNotice("");
+    }
+
     setRunning(true);
     setDoneCount(0);
 
-    const results = rows.map((r) => ({ ...r }));
+    const results = rows.slice(0, allowed).map((r) => ({ ...r }));
     let cursor = 0;
+    let stopped = false;
 
     const worker = async () => {
-      while (cursor < results.length) {
+      while (cursor < results.length && !stopped) {
         const i = cursor++;
         try {
           const res = await fetch("/api/check", {
@@ -53,7 +83,11 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
             body: JSON.stringify({ text: results[i].text }),
           });
           const data = await res.json();
-          if (!res.ok || data.error) {
+
+          if (res.status === 429) {
+            stopped = true;
+            setNotice(data.error || "Đã hết lượt check hôm nay.");
+          } else if (!res.ok || data.error) {
             results[i] = { ...results[i], error: data.error || `Lỗi ${res.status}` };
           } else {
             results[i] = {
@@ -62,6 +96,7 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
               dealType: data.deal_type,
               isNgop: data.is_ngop,
             };
+            if (data.quota) setQuota(data.quota);
           }
         } catch {
           results[i] = { ...results[i], error: "Lỗi mạng" };
@@ -73,6 +108,7 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
 
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
     setRunning(false);
+    if (!stopped) void loadQuota();
   };
 
   // Xuất Excel (SheetJS, lazy-load để không kéo nặng bundle dashboard)
@@ -105,6 +141,13 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
           <p className="mt-1 text-[12px] text-slate-500">
             Upload .txt / .csv (mỗi dòng 1 tin, tối đa {MAX_LINES} tin) → AI chấm điểm hàng loạt
             {!isPro && " • Bulk là tính năng gói Pro"}
+            {quota && (
+              <>
+                {" "}
+                • <b>Còn {quota.remaining} lượt hôm nay</b> ({quota.used}/{quota.limit}
+                {quota.credits > 0 ? ` + ${quota.credits} credits` : ""})
+              </>
+            )}
           </p>
         </div>
 
@@ -126,7 +169,7 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
           <Button
             type="button"
             onClick={runBulk}
-            disabled={running || rows.length === 0}
+            disabled={running || rows.length === 0 || (quota?.remaining ?? 1) <= 0}
             className="h-9 px-5 rounded-full text-[12px] font-bold"
           >
             {running ? `Đang check ${doneCount}/${rows.length}...` : `Check ${rows.length} tin`}
@@ -143,6 +186,12 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
           </Button>
         </div>
       </div>
+
+      {notice && (
+        <div className="mt-3 rounded-[10px] bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800">
+          {notice}
+        </div>
+      )}
 
       {rows.length > 0 && (
         <>

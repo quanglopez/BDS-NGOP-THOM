@@ -37,6 +37,14 @@ export interface AnalysisResult {
 }
 
 // Phản hồi chuẩn của POST /api/check
+export interface QuotaInfo {
+  plan: string;
+  limit: number;
+  used: number;
+  credits: number;
+  remaining: number;
+}
+
 export interface CheckApiResponse {
   investment_score: number;
   deal_type: string;
@@ -45,6 +53,7 @@ export interface CheckApiResponse {
   legal_safety: number;
   location_growth: number;
   liquidity: number;
+  quota?: QuotaInfo;
   raw?: unknown;
   error?: string;
 }
