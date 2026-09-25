@@ -1,7 +1,7 @@
 import { SiteHeader } from "@/components/site/header";
 import { Checker } from "@/components/site/checker";
 import { SocialProof } from "@/components/site/social-proof";
-import { MarketTable } from "@/components/site/market-table";
+import { Coverage } from "@/components/site/coverage";
 import { Comparison } from "@/components/site/comparison";
 import { SalesHero } from "@/components/site/sales-hero";
 import { Faq } from "@/components/site/faq";
@@ -15,7 +15,7 @@ export default function HomePage() {
       <SiteHeader />
       <Checker />
       <SocialProof />
-      <MarketTable />
+      <Coverage />
       <Comparison />
       <SalesHero />
       <Faq />
