@@ -1,8 +1,8 @@
 import type { MetadataRoute } from "next";
 
-// Sitemap cho SEO
+// Sitemap cho SEO - domain lấy từ env NEXT_PUBLIC_SITE_URL
 export default function sitemap(): MetadataRoute.Sitemap {
-  const base = "https://check-bds-ngop.vercel.app";
+  const base = (process.env.NEXT_PUBLIC_SITE_URL || "https://check-bds-ngop.vercel.app").replace(/\/$/, "");
   const now = new Date();
 
   return [
