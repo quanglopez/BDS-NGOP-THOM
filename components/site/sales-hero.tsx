@@ -13,11 +13,11 @@ export function SalesHero() {
           <div>
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] tracking-[0.12em] text-amber-200 font-semibold">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              CHO MÔI GIỚI BẤT ĐỘNG SẢN VŨNG TÀU
+              CHO MÔI GIỚI BẤT ĐỘNG SẢN VIỆT NAM
             </div>
 
             <h2 className="mt-5 text-[28px] md:text-[42px] font-black leading-[1.02] tracking-[-0.02em] text-white">
-              Môi giới Vũng Tàu lọc 100 tin trong 1 phút
+              Môi giới cả nước lọc 100 tin trong 1 phút
               <br />
               <span className="text-gold">Không bỏ lỡ kèo ngộp</span>
             </h2>
@@ -70,7 +70,7 @@ export function SalesHero() {
                 <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
                   <span className="px-2 py-1 rounded-full bg-slate-100 border border-slate-200">💰 5.5 tỷ</span>
                   <span className="px-2 py-1 rounded-full bg-slate-100 border border-slate-200">📐 80m²</span>
-                  <span className="px-2 py-1 rounded-full bg-navy text-white">📍 Thùy Vân</span>
+                  <span className="px-2 py-1 rounded-full bg-navy text-white">📍 Hà Nội</span>
                 </div>
               </div>
             </div>

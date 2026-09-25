@@ -5,8 +5,8 @@ import { SiteFooter } from "@/components/site/footer";
 import { PaymentBox } from "@/components/pricing/payment-box";
 
 export const metadata: Metadata = {
-  title: "Bảng giá - Check BĐS Ngộp Vũng Tàu",
-  description: "Gói Free 20 tin/ngày, Pro 299k/tháng 500 tin/ngày + Bulk Check, Team 799k/tháng cho 3 môi giới.",
+  title: "Bảng giá - Check BĐS Ngộp Toàn Quốc",
+  description: "Gói Free 20 tin/ngày, Pro 299k/tháng 500 tin/ngày + Bulk Check, Team 799k/tháng cho 3 môi giới. Hỗ trợ toàn quốc.",
 };
 
 const FEATURES: Record<string, string[]> = {

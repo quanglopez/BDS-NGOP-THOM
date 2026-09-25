@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import { LoginForm } from "@/components/auth/login-form";
 
 export const metadata: Metadata = {
-  title: "Đăng nhập - Check BĐS Ngộp Vũng Tàu",
+  title: "Đăng nhập - Check BĐS Ngộp Toàn Quốc",
   description: "Đăng nhập bằng Google để dùng tool check kèo BĐS.",
 };
 
@@ -17,7 +17,7 @@ export default function LoginPage() {
             AI
           </div>
           <h1 className="mt-4 text-[22px] font-black text-white">BĐS NGỘP THƠM</h1>
-          <p className="mt-1 text-[13px] text-slate-300">Đăng nhập để check kèo BĐS Vũng Tàu</p>
+          <p className="mt-1 text-[13px] text-slate-300">Đăng nhập để check kèo BĐS trên toàn quốc</p>
         </div>
         <Suspense>
           <LoginForm />

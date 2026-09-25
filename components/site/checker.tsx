@@ -70,7 +70,7 @@ export function Checker() {
               hay Thơm
             </h1>
             <p className="mt-4 text-[16px] md:text-[18px] leading-[1.5] text-slate-300 font-medium max-w-[560px]">
-              AI chấm điểm tiềm năng đầu tư BĐS Vũng Tàu trong 1s. Phát hiện bán gấp, so sánh giá thị trường, đánh
+              AI chấm điểm tiềm năng đầu tư BĐS Việt Nam trong 1s. Phát hiện bán gấp, so sánh giá thị trường, đánh
               giá pháp lý.
             </p>
           </div>

@@ -1,6 +1,10 @@
 // FAQ cho trang bán hàng
 const QA: { q: string; a: string }[] = [
   {
+    q: "Tool hỗ trợ khu vực nào?",
+    a: "Toàn quốc: 63 tỉnh/thành phố. Dán tin có tên tỉnh, quận/huyện hoặc đường phố là AI tự nhận diện khu vực để chấm điểm vị trí, tăng giá và thanh khoản cho đúng.",
+  },
+  {
     q: "AI (Jev) ở đây là gì? Có chính xác không?",
     a: "Tool dùng mô hình AI chuyên chấm điểm bất động sản theo 6 tiêu chí: độ ngộp, tiềm năng tăng giá, thanh khoản, pháp lý, giá thị trường và vị trí. Độ chính xác ~85% với tin đầy đủ thông tin - AI giúp lọc nhanh, việc mua vẫn do bạn kiểm chứng sổ + quy hoạch.",
   },

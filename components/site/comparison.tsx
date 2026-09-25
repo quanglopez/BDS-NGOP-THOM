@@ -1,7 +1,7 @@
 // Bảng so sánh: làm thủ công vs dùng tool
 const ROWS: { label: string; manual: string; tool: string }[] = [
   { label: "Lọc 100 tin/ngày", manual: "3-4 giờ đọc tay", tool: "1 phút (Bulk Check)" },
-  { label: "So sánh giá thị trường", manual: "Nhớ giá theo cảm tính", tool: "Bảng giá 6 khu vực Vũng Tàu" },
+  { label: "So sánh giá thị trường", manual: "Nhớ giá theo cảm tính", tool: "So sánh giá theo khu vực của tin" },
   { label: "Phát hiện bán gấp", manual: "Đọc kỹ từng tin", tool: "AI bắt từ khóa ngộp tự động" },
   { label: "Đánh giá pháp lý", manual: "Hỏi môi giới khác", tool: "Chấm % an toàn theo sổ" },
   { label: "Bỏ lỡ kèo ngon", manual: "Thường xuyên", tool: "Gần như không - kèo >80 nổi lên đầu" },

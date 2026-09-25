@@ -11,8 +11,7 @@ export function SiteFooter() {
           <span className="px-2 py-1 rounded-full bg-slate-100 border">Vercel Edge • /api/check proxy</span>
         </div>
         <div className="text-slate-400 max-w-[520px] leading-snug">
-          Chấm điểm qua <code>/api/check</code> với prompt scoring + market data Vũng Tàu. Không lưu dữ liệu người
-          dùng.
+          Chấm điểm qua <code>/api/check</code> với prompt scoring + dữ liệu khu vực. Không lưu dữ liệu người dùng.
         </div>
       </div>
     </footer>

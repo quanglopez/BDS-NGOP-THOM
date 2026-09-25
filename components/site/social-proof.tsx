@@ -19,7 +19,7 @@ export function SocialProof() {
           </div>
 
           <div>
-            <div className="text-[15px] font-black text-navy">Đang mở beta cho môi giới Vũng Tàu</div>
+            <div className="text-[15px] font-black text-navy">Đang mở beta cho môi giới bất động sản</div>
             <div className="mt-1 text-[12px] text-slate-500">
               Mới ra mắt — mỗi môi giới giới thiệu được <b>+10 check free</b> khi bạn dùng link của họ.
             </div>

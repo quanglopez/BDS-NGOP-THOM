@@ -32,7 +32,7 @@ export function ShareImage({ result }: { result: AnalysisResult }) {
       // Header brand
       ctx.fillStyle = "#C9A86A";
       ctx.font = "700 34px Inter, sans-serif";
-      ctx.fillText("BĐS NGỘP THƠM • VŨNG TÀU", 80, 120);
+      ctx.fillText("BĐS NGỘP THƠM • TOÀN QUỐC", 80, 120);
 
       // Điểm số lớn
       ctx.fillStyle = "#FFFFFF";
@@ -67,7 +67,7 @@ export function ShareImage({ result }: { result: AnalysisResult }) {
       // Footer
       ctx.fillStyle = "#C9A86A";
       ctx.font = "700 30px Inter, sans-serif";
-      ctx.fillText("check-bds-ngop.vercel.app • AI chấm điểm BĐS Vũng Tàu", 80, 1030);
+      ctx.fillText("check-bds-ngop.vercel.app • AI chấm điểm BĐS Việt Nam", 80, 1030);
 
       const url = canvas.toDataURL("image/png");
       setPreview(url);

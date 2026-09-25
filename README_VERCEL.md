@@ -1,6 +1,6 @@
-# BĐS Ngộp Thơm - Check kèo BĐS Vũng Tàu bằng AI
+# BĐS Ngộp Thơm - Check kèo BĐS toàn quốc bằng AI
 
-Tool SaaS cho môi giới BĐS Vũng Tàu: dán tin / upload 100 tin Zalo → AI chấm điểm 6 tiêu chí → lọc kèo ngộp >80 điểm. Gói Free 20 tin/ngày, Pro 299k/tháng, Team 799k/tháng.
+Tool SaaS cho môi giới bất động sản: dán tin / upload 100 tin Zalo → AI chấm điểm 6 tiêu chí → lọc kèo ngộp >80 điểm. Hỗ trợ 63 tỉnh/thành. Gói Free 20 tin/ngày, Pro 299k/tháng, Team 799k/tháng.
 
 ## Stack
 

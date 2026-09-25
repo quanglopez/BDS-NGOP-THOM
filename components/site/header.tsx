@@ -12,7 +12,7 @@ export function SiteHeader() {
           <div className="leading-none">
             <div className="font-extrabold text-[15px] tracking-tight text-navy">BĐS NGỘP THƠM</div>
             <div className="text-[11px] tracking-[0.14em] font-semibold text-slate-500 mt-[2px]">
-              VŨNG TÀU • AI
+              TOÀN QUỐC • AI
             </div>
           </div>
         </Link>
