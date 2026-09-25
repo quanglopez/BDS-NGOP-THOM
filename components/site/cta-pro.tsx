@@ -1,10 +1,11 @@
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
 const FEATURES = [
-  "Auto scan Batdongsan Vũng Tàu 15p/lần",
-  "Lọc tin ngộp >80 điểm gửi Zalo OA",
-  "So sánh giá thị trường realtime",
-  "Export Excel + API /api/check",
+  "Bulk Check 100 tin Zalo/lần",
+  "Lọc kèo ngộp >80 điểm",
+  "Xuất Excel kèo ngon",
+  "Lịch sử + thống kê đầu tư",
 ];
 
 // CTA bán gói Pro cho môi giới
@@ -21,7 +22,7 @@ export function CtaPro() {
                 DÀNH CHO MÔI GIỚI CHUYÊN NGHIỆP
               </div>
               <h3 className="mt-4 text-[24px] md:text-[30px] font-black leading-[1.05] text-white">
-                Tích hợp vào Zalo, tự động check 100 tin/ngày, báo kèo ngộp về điện thoại
+                Bulk check 100 tin trong 1 phút, lọc kèo ngộp &gt;80 điểm, xuất Excel cho cả team
               </h3>
               <ul className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[13px] text-slate-300">
                 {FEATURES.map((f) => (
@@ -45,13 +46,13 @@ export function CtaPro() {
                 Cho 100 tin/ngày • Không giới hạn khu vực • Hủy bất kỳ lúc nào
               </div>
               <Button
-                type="button"
+                asChild
                 className="mt-4 w-full h-[44px] rounded-[12px] bg-navy text-white font-bold text-[14px] hover:bg-black transition"
               >
-                Đăng ký Pro - Dùng thử 7 ngày
+                <Link href="/pricing">Đăng ký Pro - Dùng thử 7 ngày</Link>
               </Button>
               <div className="mt-3 text-[11px] text-center text-slate-400">
-                Thanh toán Momo / Bank • Kích hoạt ngay
+                Thanh toán chuyển khoản VietQR • Tự kích hoạt
               </div>
             </div>
           </div>

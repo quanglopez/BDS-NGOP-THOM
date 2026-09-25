@@ -1,0 +1,95 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
+import { planFromAmount, transferContent } from "@/lib/payments";
+
+// Webhook SePay: ngân hàng báo có tiền -> tự nâng plan
+// Doc: https://docs.sepay.vn - payload chứa content, transferAmount, referenceCode
+export async function POST(req: NextRequest) {
+  const apiKey = process.env.SEPAY_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: "Chưa cấu hình SEPAY_API_KEY" }, { status: 500 });
+  }
+
+  // SePay gửi Authorization: Apikey <key> (cũng chấp nhận Bearer / X-API-Key)
+  const auth = req.headers.get("authorization") ?? req.headers.get("x-api-key") ?? "";
+  const token = auth.replace(/^(apikey|bearer)\s+/i, "");
+  if (token !== apiKey) {
+    return NextResponse.json({ error: "Sai API key" }, { status: 401 });
+  }
+
+  const payload = await req.json().catch(() => null);
+  if (!payload) {
+    return NextResponse.json({ error: "Payload không hợp lệ" }, { status: 400 });
+  }
+
+  const content: string = payload.content ?? payload.description ?? "";
+  const amount: number = Number(payload.transferAmount ?? payload.amount ?? 0);
+  const ref: string | null = payload.referenceCode ?? payload.code ?? null;
+
+  // Chỉ xử lý tiền vào
+  if (payload.transferType && payload.transferType !== "in") {
+    return NextResponse.json({ ok: true, skipped: "not-inbound" });
+  }
+
+  // Nhận diện user từ nội dung CK: NANGCAP {user_id}
+  const match = content.match(/NANGCAP\s+([0-9a-f-]{36})/i);
+  if (!match) {
+    return NextResponse.json({ ok: true, skipped: "no-match" });
+  }
+  const userId = match[1];
+
+  const plan = planFromAmount(amount);
+  if (!plan || plan === "free") {
+    return NextResponse.json({ ok: true, skipped: "amount-too-low" });
+  }
+
+  // Service role: webhook không có session user, cần quyền ghi vượt RLS
+  const admin = createSupabaseAdmin(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+
+  // Idempotent: đã ghi nhận giao dịch này thì bỏ qua
+  if (ref) {
+    const { data: dup } = await admin
+      .from("payments")
+      .select("id")
+      .eq("sepay_ref", ref)
+      .eq("status", "paid")
+      .maybeSingle();
+    if (dup) return NextResponse.json({ ok: true, skipped: "duplicate" });
+  }
+
+  // Ưu tiên cập nhật bản ghi pending của user (khớp đúng nội dung CK)
+  const { data: pending } = await admin
+    .from("payments")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("transfer_content", transferContent(userId))
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (pending) {
+    await admin
+      .from("payments")
+      .update({ status: "paid", sepay_ref: ref, plan, amount })
+      .eq("id", pending.id);
+  } else {
+    await admin.from("payments").insert({
+      user_id: userId,
+      plan,
+      amount,
+      transfer_content: content.slice(0, 120),
+      status: "paid",
+      sepay_ref: ref,
+    });
+  }
+
+  // Nâng gói user
+  await admin.from("users").update({ plan }).eq("id", userId);
+
+  return NextResponse.json({ ok: true, plan });
+}

@@ -69,3 +69,24 @@ create policy "checks_select_own"
 create policy "checks_insert_own"
   on public.checks for insert
   with check (auth.uid() = user_id);
+
+-- Bảng payments: theo dõi các lần chuyển khoản SePay/VietQR
+create table if not exists public.payments (
+  id               uuid primary key default gen_random_uuid(),
+  user_id          uuid not null references auth.users (id) on delete cascade,
+  plan             text not null check (plan in ('pro', 'team')),
+  amount           integer not null,
+  transfer_content text not null,
+  status           text not null default 'pending' check (status in ('pending', 'paid')),
+  sepay_ref        text,
+  created_at       timestamptz not null default now()
+);
+
+create index if not exists payments_content_idx on public.payments (transfer_content);
+create index if not exists payments_user_idx on public.payments (user_id, created_at desc);
+
+alter table public.payments enable row level security;
+
+create policy "payments_select_own"
+  on public.payments for select
+  using (auth.uid() = user_id);
