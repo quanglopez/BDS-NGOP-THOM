@@ -273,6 +273,10 @@ export function fromApiResponse(data: CheckApiResponse, local: AnalysisResult): 
     tag,
     tagColor,
     actionType,
+    extracted: {
+      ...local.extracted,
+      street: data.province ?? local.extracted.street,
+    },
     breakdown: {
       ...local.breakdown,
       ngop: { ...local.breakdown.ngop, score: typeof data.is_ngop === "number" ? data.is_ngop : local.breakdown.ngop.score },

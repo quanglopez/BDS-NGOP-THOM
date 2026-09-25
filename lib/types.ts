@@ -53,6 +53,9 @@ export interface CheckApiResponse {
   legal_safety: number;
   location_growth: number;
   liquidity: number;
+  province?: string | null;
+  price_billion?: number | null;
+  area_m2?: number | null;
   analyzed_at?: string;
   quota?: QuotaInfo;
   raw?: unknown;

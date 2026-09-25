@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { planLimit, vnDayStartISO } from "@/lib/quota";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
+import { detectProvince, provinceLabel } from "@/lib/provinces";
 
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
 // Cần đăng nhập (session Supabase) + có quota trong ngày.
@@ -36,11 +37,11 @@ type JevAnswer = {
   confidence?: number;
 };
 
-// Bộ câu hỏi chấm điểm 1 tin BĐS Vũng Tàu
+// Bộ câu hỏi chấm điểm 1 tin BĐS Việt Nam
 const QUESTIONS = {
   investment_potential: {
     type: "score",
-    instructions: "Chấm điểm tiềm năng đầu tư BĐS Vũng Tàu",
+    instructions: "Chấm điểm tiềm năng đầu tư BĐS Việt Nam",
     criteria: ["Rất tệ", "Thấp", "Trung bình", "Cao", "Rất cao kèo thơm"],
   },
   is_ngop: {
@@ -181,6 +182,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Nhận diện tỉnh + giá + diện tích từ nội dung tin để chấm đúng khu vực và lưu lịch sử
+    const detectedProvince = detectProvince(text);
+    const priceMatch = text.match(/(\d+[\.,]?\d*)\s*tỷ/i);
+    const areaMatch = text.match(/(\d+)\s*m2/i);
+    const priceBillion = priceMatch ? Number(priceMatch[1].replace(",", ".")) : null;
+    const areaM2 = areaMatch ? Number(areaMatch[1]) : null;
+
     const jevRes = await fetch("https://api.typesafe.ai/v1/systemone", {
       method: "POST",
       headers: {
@@ -189,7 +197,8 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "jev-latest",
-        state: text.slice(0, 6000),
+        // Chèn hint khu vực để AI chấm vị trí/tăng giá đúng tỉnh
+        state: `Khu vực: ${provinceLabel(detectedProvince)}\n${text.slice(0, 5900)}`,
         questions: QUESTIONS,
       }),
     });
@@ -232,6 +241,9 @@ export async function POST(req: NextRequest) {
       score: invest100,
       deal_type: dealType,
       is_ngop: isNgop,
+      province: detectedProvince,
+      price_billion: priceBillion,
+      area_m2: areaM2,
     });
 
     // Nếu check bằng credits thưởng thì trừ 1
@@ -258,6 +270,9 @@ export async function POST(req: NextRequest) {
         legal_safety: Math.round((ans.legal_safety?.noul ?? 0) * 100),
         location_growth: ans.location_growth?.score ?? 0,
         liquidity: ans.liquidity?.score ?? 0,
+        province: detectedProvince,
+        price_billion: priceBillion,
+        area_m2: areaM2,
         analyzed_at: new Date().toISOString(),
         quota,
         raw: data,
