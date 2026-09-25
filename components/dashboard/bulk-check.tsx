@@ -111,23 +111,26 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
     if (!stopped) void loadQuota();
   };
 
-  // Xuất Excel (SheetJS, lazy-load để không kéo nặng bundle dashboard)
-  const exportExcel = async () => {
+  // Xuất CSV UTF-8 BOM (Excel/WPS mở đúng tiếng Việt, không cần thư viện ngoài)
+  const exportCsv = () => {
     const done = rows.filter((r) => r.score !== null && (!onlyGood || (r.score ?? 0) >= 80));
     if (done.length === 0) return;
 
-    const XLSX = await import("xlsx");
-    const sheetData = done.map((r, i) => ({
-      STT: i + 1,
-      "Tin rao": r.text,
-      "Điểm": r.score,
-      "Loại kèo": dealLabel(r.dealType),
-      "Ngộp %": r.isNgop,
-    }));
-    const ws = XLSX.utils.json_to_sheet(sheetData);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Keo ngon");
-    XLSX.writeFile(wb, `keo-ngon-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
+    const lines = [
+      ["STT", "Tin rao", "Điểm", "Loại kèo", "Ngộp %"].join(","),
+      ...done.map((r, i) =>
+        [i + 1, esc(r.text), r.score, esc(dealLabel(r.dealType)), r.isNgop].join(","),
+      ),
+    ];
+
+    const blob = new Blob(["\uFEFF" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `keo-ngon-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const visible = rows.filter((r) => !onlyGood || (r.score ?? 0) >= 80);
@@ -178,11 +181,11 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
           <Button
             type="button"
             variant="outline"
-            onClick={exportExcel}
+            onClick={exportCsv}
             disabled={rows.every((r) => r.score === null)}
             className="h-9 px-4 rounded-full text-[12px] font-bold"
           >
-            📊 Xuất Excel
+            📊 Xuất Excel (CSV)
           </Button>
         </div>
       </div>
