@@ -6,6 +6,8 @@ export type CheckSource = "ai" | "local";
 export interface CheckOutcome {
   result: AnalysisResult;
   source: CheckSource;
+  // Thời điểm server trả kết quả (ISO) - dùng để hiển thị, không phải đồng hồ client
+  analyzedAt?: string;
 }
 
 // Gọi /api/check; nếu server thiếu key hoặc AI lỗi thì fallback scoring local để demo luôn chạy được
@@ -26,7 +28,7 @@ export async function runCheck(text: string): Promise<CheckOutcome> {
       return { result: local, source: "local" };
     }
 
-    return { result: fromApiResponse(data, local), source: "ai" };
+    return { result: fromApiResponse(data, local), source: "ai", analyzedAt: data.analyzed_at };
   } catch {
     return { result: local, source: "local" };
   }

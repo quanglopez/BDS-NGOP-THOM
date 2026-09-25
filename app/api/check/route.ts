@@ -231,6 +231,7 @@ export async function POST(req: NextRequest) {
         legal_safety: Math.round((ans.legal_safety?.noul ?? 0) * 100),
         location_growth: ans.location_growth?.score ?? 0,
         liquidity: ans.liquidity?.score ?? 0,
+        analyzed_at: new Date().toISOString(),
         quota,
         raw: data,
       },

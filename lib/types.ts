@@ -53,6 +53,7 @@ export interface CheckApiResponse {
   legal_safety: number;
   location_growth: number;
   liquidity: number;
+  analyzed_at?: string;
   quota?: QuotaInfo;
   raw?: unknown;
   error?: string;

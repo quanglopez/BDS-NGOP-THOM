@@ -8,6 +8,7 @@ import { ShareImage } from "@/components/site/share-image";
 interface Props {
   result: AnalysisResult;
   source: CheckSource;
+  analyzedAt?: string;
   onCheckAnother: () => void;
 }
 
@@ -38,7 +39,7 @@ function ScoreCard({
 }
 
 // Thẻ kết quả: vòng điểm tròn, badge nguồn, 6 chỉ số, panel AI phân tích + hành động
-export function ResultCard({ result, source, onCheckAnother }: Props) {
+export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props) {
   const t = result;
   const isAi = source === "ai";
   const ringClass =
@@ -111,9 +112,11 @@ export function ResultCard({ result, source, onCheckAnother }: Props) {
 
         <div className="flex items-center gap-2">
           <div className="text-right hidden sm:block">
-            <div className="text-[11px] tracking-widest font-bold text-slate-400">AI SCORE</div>
+            <div className="text-[11px] tracking-widest font-bold text-slate-400">ĐIỂM SỐ</div>
             <div className="text-[13px] font-semibold text-slate-700">
-              Cập nhật {new Date().toLocaleTimeString("vi-VN")}
+              {analyzedAt
+                ? `Phân tích lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}`
+                : "Ước tính bằng công thức dự phòng"}
             </div>
           </div>
           <div className={`w-3 h-3 rounded-full ${dotClass} animate-pulse`} />

@@ -7,14 +7,14 @@ export function MarketTable() {
       <div className="flex items-end justify-between gap-4 flex-wrap">
         <div>
           <h2 className="text-[22px] md:text-[28px] font-black tracking-tight text-navy">
-            Giá thị trường Vũng Tàu • Live
+            Giá thị trường Vũng Tàu • Tham khảo
           </h2>
           <p className="mt-1 text-[13px] text-slate-500">
-            AI tổng hợp từ 3,200 tin Batdongsan / Chotot 7 ngày qua. Cập nhật mỗi 2h.
+            Dữ liệu tham khảo, cập nhật định kỳ. Mức giá thực tế thay đổi theo từng tin rao.
           </p>
         </div>
         <div className="text-[11px] px-3 py-1.5 rounded-full bg-white border border-slate-200 text-slate-600">
-          Nguồn: Batdongsan.com.vn • Alonhadat • Chotot
+          Mức giá tr/m² theo khu vực
         </div>
       </div>
 

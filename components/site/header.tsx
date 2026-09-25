@@ -18,7 +18,7 @@ export function SiteHeader() {
         </Link>
 
         <div className="hidden md:flex items-center gap-2 text-[12px] font-medium">
-          <span className="px-3 py-1.5 rounded-full bg-navy text-white">● Live market Vũng Tàu</span>
+          <span className="px-3 py-1.5 rounded-full bg-navy text-white">● Mức giá cập nhật định kỳ</span>
           <span className="px-3 py-1.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
             Powered by AI
           </span>

@@ -13,6 +13,7 @@ export function Checker() {
   const [text, setText] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [source, setSource] = useState<CheckSource>("local");
+  const [analyzedAt, setAnalyzedAt] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
 
@@ -23,6 +24,7 @@ export function Checker() {
       const outcome = await runCheck(text);
       setResult(outcome.result);
       setSource(outcome.source);
+      setAnalyzedAt(outcome.analyzedAt);
       setTimeout(
         () => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
         100,
@@ -57,8 +59,8 @@ export function Checker() {
         <div className="relative mx-auto max-w-[1120px] px-5 md:px-8 pt-12 md:pt-20 pb-16 md:pb-24">
           <div className="max-w-[760px]">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] tracking-[0.12em] text-amber-200 font-semibold mb-5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              AI ĐANG SCAN 1,247 TIN MỚI VŨNG TÀU HÔM NAY
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              CHẤM ĐIỂM 6 TIÊU CHÍ • LỌC KÈO NGỘP &gt;80 ĐIỂM
             </div>
             <h1 className="text-[32px] md:text-[54px] font-black leading-[0.95] tracking-[-0.03em] text-white">
               Dán tin BĐS vào đây
@@ -166,6 +168,7 @@ export function Checker() {
           <ResultCard
             result={result}
             source={source}
+            analyzedAt={analyzedAt}
             onCheckAnother={() => window.scrollTo({ top: 0, behavior: "smooth" })}
           />
         </section>
