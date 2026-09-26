@@ -34,8 +34,8 @@ export async function updateSession(request: NextRequest) {
 
   const path = request.nextUrl.pathname;
 
-  // Chưa đăng nhập mà vào /dashboard -> đá về /login
-  if (!user && path.startsWith("/dashboard")) {
+  // Chưa đăng nhập mà vào /dashboard hoặc /admin -> đá về /login
+  if (!user && (path.startsWith("/dashboard") || path.startsWith("/admin"))) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", path);
@@ -48,6 +48,24 @@ export async function updateSession(request: NextRequest) {
     url.pathname = "/dashboard";
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // /admin + /api/admin chỉ dành cho email trong ADMIN_EMAILS
+  if (user && (path.startsWith("/admin") || path.startsWith("/api/admin"))) {
+    const allowed = (process.env.ADMIN_EMAILS ?? "")
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (!allowed.includes((user.email ?? "").toLowerCase())) {
+      if (path.startsWith("/api/")) {
+        return NextResponse.json({ error: "Không có quyền" }, { status: 403 });
+      }
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;
