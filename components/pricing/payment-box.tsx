@@ -78,7 +78,7 @@ export function PaymentBox() {
       </p>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        {(["pro", "team"] as PlanKey[]).map((p) => (
+        {(["pro"] as PlanKey[]).map((p) => (
           <button
             key={p}
             type="button"

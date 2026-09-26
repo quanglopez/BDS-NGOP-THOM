@@ -18,15 +18,13 @@ const FEATURES: Record<string, string[]> = {
     "Lọc kèo >80 điểm",
     "Hỗ trợ ưu tiên Zalo/SĐT",
   ],
-  team: ["Tất cả tính năng Pro", "3 tài khoản môi giới", "500 tin/ngày mỗi tài khoản", "Quản lý team (sắp có)"],
 };
 
-// Trang bảng giá: 3 gói + thanh toán VietQR/SePay
+// Trang bảng giá: Free + Pro (gói Team đang phát triển, chưa bán)
 export default function PricingPage() {
   const plans = [
     { key: "free", label: "FREE", price: "0đ", sub: "Dùng thử", limit: "20 tin/ngày", highlight: false },
     { key: "pro", label: "PRO", price: "299k", sub: "/ tháng", limit: "500 tin/ngày", highlight: true },
-    { key: "team", label: "TEAM", price: "799k", sub: "/ tháng", limit: "3 tài khoản", highlight: false },
   ] as const;
 
   return (
@@ -46,7 +44,7 @@ export default function PricingPage() {
           </p>
         </div>
 
-        <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-5">
+        <div className="mt-10 grid grid-cols-1 md:grid-cols-2 gap-5">
           {plans.map((p) => (
             <div
               key={p.key}
@@ -101,6 +99,10 @@ export default function PricingPage() {
           phút). VNPay / MoMo cần tài khoản merchant của bạn — sau khi có, thêm nút trả QR/redirect tại đây, không
           đổi logic gói.
         </div>
+
+        <p className="mt-3 text-[12px] text-slate-400 text-center">
+          Gói Team (3 tài khoản, 799k/tháng) đang phát triển — chưa mở bán.
+        </p>
 
         <div id="thanh-toan" className="mt-12 scroll-mt-24">
           <PaymentBox />
