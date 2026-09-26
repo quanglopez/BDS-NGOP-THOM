@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { planLimit, vnDayStartISO, effectivePlan } from "@/lib/quota";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { StatsCards } from "@/components/dashboard/stats-cards";
+import { QuickCheck } from "@/components/dashboard/quick-check";
 import { HistoryTable, type CheckRow } from "@/components/dashboard/history-table";
 import { BulkCheck } from "@/components/dashboard/bulk-check";
 import { ReferralCard } from "@/components/dashboard/referral-card";
@@ -96,6 +97,8 @@ export default async function DashboardPage() {
             }}
           />
         </div>
+
+        <QuickCheck />
 
         <BulkCheck isPro={plan !== "free"} />
 
