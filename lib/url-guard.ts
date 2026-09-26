@@ -5,8 +5,8 @@ import net from "node:net";
 const ALLOWED_PORTS = new Set(["80", "443"]);
 const MAX_REDIRECTS = 3;
 const MAX_BYTES = 2 * 1024 * 1024; // 2MB
-const TIMEOUT_MS = 8000;
-const UA =
+const TIMEOUT_MS = 12000;
+export const FETCH_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0 Safari/537.36";
 
 export type BlockReason = "unsupported_scheme" | "ssrf_blocked" | "dns_blocked" | "dns_failed";
@@ -174,7 +174,7 @@ export async function safeFetchPage(rawUrl: string): Promise<FetchOutcome> {
         redirect: "manual",
         signal: controller.signal,
         headers: {
-          "User-Agent": UA,
+          "User-Agent": FETCH_UA,
           Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           "Accept-Language": "vi,en;q=0.8",
         },
@@ -185,7 +185,7 @@ export async function safeFetchPage(rawUrl: string): Promise<FetchOutcome> {
       return {
         ok: false,
         reason: aborted ? "timeout" : "network_error",
-        message: aborted ? "Trang phản hồi quá 8 giây" : "Không kết nối được tới trang",
+        message: aborted ? "Trang phản hồi quá 12 giây" : "Không kết nối được tới trang",
       };
     }
 

@@ -6,7 +6,7 @@ export interface ExtractedListing {
   text: string;
   priceHint: string | null;
   areaHint: string | null;
-  method: "jsonld" | "meta" | "text";
+  method: "jsonld" | "nextdata" | "gateway" | "meta" | "text";
   domain: string;
 }
 
@@ -38,7 +38,7 @@ function decodeEntities(input: string): string {
     .replace(/&([a-z0-9]+);/gi, (m, name: string) => ENTITIES[name.toLowerCase()] ?? m);
 }
 
-function collapse(input: string): string {
+export function collapse(input: string): string {
   return input.replace(/[ \t ]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -154,6 +154,60 @@ function findJsonLd(html: string): { text: string; price: string | null; area: s
   return { text, price, area };
 }
 
+// Bóc dữ liệu nhúng của trang Next.js (__NEXT_DATA__): gom mọi chuỗi nội dung
+// có nghĩa, bỏ URL/base64/hash kỹ thuật. Cứu được trang render bằng JS mà
+// server vẫn tải được HTML (vd trang danh sách Chợ Tốt/Nhà Tốt).
+function findNextData(html: string): { text: string; price: string | null; area: string | null } | null {
+  const m = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+  if (!m) return null;
+
+  let data: unknown;
+  try {
+    data = JSON.parse(m[1]);
+  } catch {
+    return null;
+  }
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const walk = (v: unknown, depth: number): void => {
+    if (out.join("\n").length > MAX_TEXT || depth > 8) return;
+    if (typeof v === "string") {
+      const t = collapse(decodeEntities(v));
+      if (
+        t.length >= 25 &&
+        t.length <= 2000 &&
+        /[a-zà-ỹ]/i.test(t) &&
+        !/^(https?:|data:|blob:)/i.test(t) &&
+        !/^[a-z0-9+/=]{48,}$/i.test(t.replace(/\s+/g, ""))
+      ) {
+        const key = t.slice(0, 60).toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push(t.slice(0, 400));
+        }
+      }
+      return;
+    }
+    if (Array.isArray(v)) {
+      for (const item of v.slice(0, 60)) walk(item, depth + 1);
+      return;
+    }
+    if (v && typeof v === "object") {
+      for (const value of Object.values(v as Record<string, unknown>)) walk(value, depth + 1);
+    }
+  };
+  walk(data, 0);
+
+  const text = collapse(out.join("\n"));
+  if (text.length < MIN_USABLE) return null;
+  return {
+    text,
+    price: text.match(/([\d.,]+\s*(?:tỷ|tr|triệu))/i)?.[1] ?? null,
+    area: text.match(/(\d+(?:[.,]\d+)?\s*m2)/i)?.[1] ?? null,
+  };
+}
+
 // Text hiển thị: bỏ script/style, gắn xuống dòng theo thẻ block
 function visibleText(html: string): string {
   const cleaned = html
@@ -201,6 +255,18 @@ export function extractListing(html: string, url: string): ExtractedListing {
       priceHint: ld.price,
       areaHint: ld.area,
       method: "jsonld",
+      domain,
+    };
+  }
+
+  const nd = findNextData(html);
+  if (nd) {
+    return {
+      title,
+      text: collapse(`${title}\n${nd.text}`).slice(0, MAX_TEXT),
+      priceHint: nd.price,
+      areaHint: nd.area,
+      method: "nextdata",
       domain,
     };
   }

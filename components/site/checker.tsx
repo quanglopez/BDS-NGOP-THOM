@@ -27,7 +27,11 @@ export function Checker() {
   const [source, setSource] = useState<CheckSource>("local");
   const [analyzedAt, setAnalyzedAt] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
-  const [extractState, setExtractState] = useState<{ kind: "idle" | "loading" | "ok" | "error"; text: string }>({
+  const [extractState, setExtractState] = useState<{
+    kind: "idle" | "loading" | "ok" | "error";
+    text: string;
+    reason?: string;
+  }>({
     kind: "idle",
     text: "",
   });
@@ -92,7 +96,7 @@ export function Checker() {
 
     // Giữ lại phần text khách đã dán kèm (nếu có) để không mất gì
     setText(isBareUrl(clip) ? "" : clip);
-    setExtractState({ kind: "error", text: result.message });
+    setExtractState({ kind: "error", text: result.message, reason: result.reason });
   };
 
   // Ảnh chụp màn hình tin rao (Zalo/Facebook): OCR ngay trong trình duyệt rồi điền vào ô
@@ -275,9 +279,27 @@ export function Checker() {
                     >
                       {extractState.text}
                       {extractState.kind === "error" && (
-                        <div className="mt-1 text-slate-500">
-                          Cách dùng thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán
-                          vào ô trên.
+                        <div className="mt-2">
+                          {["blocked_by_site", "login_required", "no_content", "not_found"].includes(
+                            extractState.reason ?? "",
+                          ) ? (
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                              <span className="text-slate-500">
+                                Cách nhanh nhất: chụp màn hình tin rồi tải ảnh lên, AI tự đọc chữ:
+                              </span>
+                              <OcrButton
+                                onFile={handleOcrFile}
+                                disabled={ocrState.busy}
+                                compact
+                                label="Tải ảnh tin lên"
+                              />
+                            </div>
+                          ) : (
+                            <div className="text-slate-500">
+                              Cách dùng thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi
+                              dán vào ô trên.
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

@@ -4,6 +4,7 @@
 import { strict as assert } from "node:assert";
 import { assertPublicUrl, safeFetchPage } from "../lib/url-guard.ts";
 import { extractListing } from "../lib/html-extract.ts";
+import { parseChototId, adToListing } from "../lib/chotot.ts";
 
 let pass = 0;
 let fail = 0;
@@ -133,6 +134,85 @@ async function main() {
     );
     assert.match(r.text, /&/);
     assert.doesNotMatch(r.text, /&amp;/);
+  });
+
+  console.log("\n== Link tin Chợ Tốt / Nhà Tốt ==");
+
+  await check("tách ID từ link tin chi tiết nhatot", () => {
+    assert.equal(
+      parseChototId("https://www.nhatot.com/mua-ban-nha-dat-quan-go-vap-tp-ho-chi-minh/134384271.htm"),
+      "134384271",
+    );
+  });
+
+  await check("tách ID khi có query/fragment", () => {
+    assert.equal(
+      parseChototId("https://www.nhatot.com/mua-ban-nha-dat/134824296.htm#px=SR-1?utm=x"),
+      "134824296",
+    );
+  });
+
+  await check("trang danh sách/khác domain -> null (đi đường fetch thường)", () => {
+    assert.equal(parseChototId("https://www.nhatot.com/mua-ban-nha-dat"), null);
+    assert.equal(parseChototId("https://batdongsan.com.vn/nha-dat-ban/123.htm"), null);
+    assert.equal(parseChototId("not-a-url"), null);
+  });
+
+  const adFixture = {
+    subject: "NHÀ RIÊNG NGUYỄN KIỆM - PHÁP LÝ RÕ - GIÁ 4,75 TỶ",
+    body: "Chính chủ bán nhà tại Nguyễn Kiệm, sổ riêng, nhà 2 tầng khang trang, diện tích 27m2, giá 4,75 tỷ, thương lượng trực tiếp với khách thiện chí.",
+    price_string: "4,75 tỷ",
+    price: 4750000000,
+    size: 27,
+    street_name: "Đường Nguyễn Kiệm",
+    ward_name: "Phường 3",
+    area_name: "Quận Gò Vấp",
+    region_name: "Tp Hồ Chí Minh",
+    rooms: 2,
+    floors: 1,
+  };
+
+  await check("adToListing ghép đủ tiêu đề/mô tả/giá/diện tích/địa chỉ", () => {
+    const r = adToListing(adFixture, "https://www.nhatot.com/mua-ban-nha-dat/134384271.htm");
+    assert.ok(r, "phải bóc được");
+    assert.equal(r!.method, "gateway");
+    assert.match(r!.text, /NGUYỄN KIỆM/);
+    assert.match(r!.text, /4,75 tỷ/);
+    assert.match(r!.text, /27 m²/);
+    assert.match(r!.text, /Quận Gò Vấp/);
+    assert.equal(r!.priceHint, "4,75 tỷ");
+    assert.equal(r!.areaHint, "27 m²");
+    assert.equal(r!.domain, "nhatot.com");
+    assert.ok(r!.text.length >= 120, "text phải đủ dài để chấm điểm");
+  });
+
+  await check("ad thiếu subject/body -> null", () => {
+    assert.equal(adToListing({ price: 1 }, "https://www.nhatot.com/x/1.htm"), null);
+  });
+
+  console.log("\n== Bóc __NEXT_DATA__ (trang Next.js) ==");
+
+  const nextDataPage = `<!doctype html><html><head><title>Tin BĐS Quận 7</title>
+    <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"ad":{
+      "subject":"Bán nhà gấp Quận 7 giá 3 tỷ",
+      "body":"Nhà 3 tầng mặt tiền đường số 12, diện tích 60m2, sổ hồng riêng đầy đủ, cần tiền bán gấp trong tuần này, khách thiện chí thương lượng."}}}}</script>
+    </head><body><div id="__next"></div></body></html>`;
+
+  await check("__NEXT_DATA__ được bóc khi không có JSON-LD", () => {
+    const r = extractListing(nextDataPage, "https://www.chotot.com/tin/999");
+    assert.equal(r.method, "nextdata");
+    assert.match(r.text, /Quận 7/);
+    assert.match(r.text, /60m2/);
+    assert.ok(r.text.length >= 120, "text phải đủ dài để chấm điểm");
+  });
+
+  await check("JSON-LD vẫn ưu tiên hơn __NEXT_DATA__", () => {
+    const both = jsonLd.replace(
+      "</head>",
+      `<script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"ad":{"subject":"Tin khác","body":"Nội dung khác dài hơn hai mươi lăm ký tự để qua ngưỡng lọc chuỗi."}}}}</script></head>`,
+    );
+    const r = extractListing(both, "https://example.vn/tin/123");
+    assert.equal(r.method, "jsonld");
   });
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail\n`);
