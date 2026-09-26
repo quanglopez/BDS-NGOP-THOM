@@ -16,3 +16,10 @@ next-env.d.ts
 
 # misc
 .DS_Store
+
+# test artifacts
+tests/.sample-listing.png
+
+# OCR models tesseract tai ve luc test (khong commit)
+eng.traineddata
+vie.traineddata

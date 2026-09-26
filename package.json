@@ -10,7 +10,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --experimental-strip-types tests/extract.test.ts"
+    "test": "node --experimental-strip-types tests/extract.test.ts",
+    "test:ocr": "node --experimental-strip-types tests/ocr.test.ts"
   },
   "dependencies": {
     "@radix-ui/react-slot": "^1.1.1",
@@ -23,7 +24,8 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "tailwind-merge": "^2.6.0",
-    "tailwindcss-animate": "^1.0.7"
+    "tailwindcss-animate": "^1.0.7",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { exampleListings } from "@/lib/market-data";
 import { runCheck, type CheckSource } from "@/lib/client-check";
 import { extractFromUrl, firstUrl, isBareUrl } from "@/lib/client-extract";
+import { ocrImageToText } from "@/lib/ocr";
 import type { AnalysisResult } from "@/lib/types";
 import { ResultCard } from "@/components/site/result-card";
+import OcrButton from "@/components/site/ocr-button";
 
 // Chỉ hiện domain trong thông báo, không lộ toàn bộ URL
 function safeDomain(url: string): string {
@@ -29,6 +31,7 @@ export function Checker() {
     kind: "idle",
     text: "",
   });
+  const [ocrState, setOcrState] = useState<{ busy: boolean; progress: number; text: string }>({ busy: false, progress: 0, text: "" });
   const resultRef = useRef<HTMLDivElement>(null);
 
   const handleCheck = async () => {
@@ -90,6 +93,25 @@ export function Checker() {
     // Giữ lại phần text khách đã dán kèm (nếu có) để không mất gì
     setText(isBareUrl(clip) ? "" : clip);
     setExtractState({ kind: "error", text: result.message });
+  };
+
+  // Anh chup man hinh tin rao (Zalo/Facebook): OCR ngay trong trinh duyet roi dien vao o
+  const handleOcrFile = async (file: File) => {
+    if (ocrState.busy) return;
+    if (file.size > 12 * 1024 * 1024) {
+      setOcrState({ busy: false, progress: 0, text: "Anh qua nang (vuot 12MB). Hay chup lai gon hon." });
+      return;
+    }
+    setOcrState({ busy: true, progress: 0, text: "Dang tai bo nhan dang tieng Viet (lan dau hoi lau)..." });
+    try {
+      const text = await ocrImageToText(file, (pct) =>
+        setOcrState({ busy: true, progress: pct, text: `Dang doc chu trong anh... ${pct}%` }),
+      );
+      setText(text.slice(0, 1000));
+      setOcrState({ busy: false, progress: 100, text: `Da doc ${text.length} ky tu tu anh. Kiem tra roi bam Check.` });
+    } catch {
+      setOcrState({ busy: false, progress: 0, text: "Khong doc duoc chu trong anh nay. Thu anh ro net hon, hoac copy mo ta tin roi dan vao o." });
+    }
   };
 
   return (
@@ -166,6 +188,8 @@ export function Checker() {
                   <span>📋</span> Dán link tin rao
                 </Button>
 
+                <OcrButton onFile={handleOcrFile} disabled={ocrState.busy} />
+
                 <Button
                   type="button"
                   onClick={handleCheck}
@@ -195,6 +219,20 @@ export function Checker() {
                   <code className="px-1.5 py-0.5 rounded bg-slate-100 border">/api/check</code>
                 </div>
               </div>
+
+              {ocrState.text && (
+                <div
+                  className={`mt-2 text-[11px] leading-snug ${
+                    ocrState.busy
+                      ? "text-slate-500"
+                      : ocrState.text.startsWith("Đã") || ocrState.text.startsWith("Da")
+                        ? "text-emerald-700"
+                        : "text-amber-700"
+                  }`}
+                >
+                  {ocrState.text}
+                </div>
+              )}
 
               {extractState.text && (
                 <div
