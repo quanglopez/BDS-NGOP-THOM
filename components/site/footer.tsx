@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Logo } from "@/components/site/logo";
 
 // Footer cuối trang: brand + điều hướng + cam kết dữ liệu
 export function SiteFooter() {
@@ -7,17 +8,7 @@ export function SiteFooter() {
       <div className="mx-auto max-w-[1120px] px-5 md:px-8 py-10 md:py-12">
         <div className="flex flex-col md:flex-row gap-8 md:items-start justify-between">
           <div className="max-w-[320px]">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-gold flex items-center justify-center text-navy font-black text-[14px] tracking-widest">
-                AI
-              </div>
-              <div className="leading-none">
-                <div className="font-extrabold text-[15px] tracking-tight text-white">BĐS NGỘP THƠM</div>
-                <div className="text-[10px] tracking-[0.18em] font-semibold text-gold mt-[3px]">
-                  TOÀN QUỐC • AI SCORING
-                </div>
-              </div>
-            </div>
+            <Logo height={26} />
             <p className="mt-4 text-[12px] leading-relaxed text-slate-400">
               Tool chấm điểm kèo bất động sản cho môi giới Việt Nam — phát hiện bán gấp,
               so sánh giá, đánh giá pháp lý trong vài giây.
@@ -44,7 +35,7 @@ export function SiteFooter() {
         </div>
 
         <div className="mt-8 pt-6 border-t border-white/10 flex flex-col md:flex-row gap-2 items-start md:items-center justify-between text-[11px] text-slate-500">
-          <div>© 2026 BĐS Ngộp Thơm. AI hỗ trợ lọc tin — quyết định mua bán luôn cần kiểm chứng sổ + quy hoạch.</div>
+          <div>© 2026 CheckBDS.online — AI hỗ trợ lọc tin, quyết định mua bán luôn cần kiểm chứng sổ + quy hoạch.</div>
           <div className="flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
             Tin của bạn chỉ dùng để chấm điểm, không chia sẻ

@@ -37,6 +37,7 @@ export const metadata: Metadata = {
     description: "Dán tin BĐS, AI chấm điểm 6 tiêu chí, lọc kèo ngộp >80 điểm.",
   },
   robots: { index: true, follow: true },
+  icons: { icon: "/logo-mark.png", apple: "/logo-mark.png" },
 };
 
 export const viewport: Viewport = {

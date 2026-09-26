@@ -6,13 +6,14 @@ import { PaymentBox } from "@/components/pricing/payment-box";
 
 export const metadata: Metadata = {
   title: "Bảng giá - Check BĐS Ngộp Toàn Quốc",
-  description: "Gói Free 20 tin/ngày, Pro 299k/tháng 500 tin/ngày + Bulk Check, Team 799k/tháng cho 3 môi giới. Hỗ trợ toàn quốc.",
+  description: "Gói Free 20 tin/ngày. Pro 299k/tháng: 500 tin/ngày, quét danh mục 50 tin/lần, Bulk Check 100 tin, xuất Excel. Hỗ trợ toàn quốc.",
 };
 
 const FEATURES: Record<string, string[]> = {
-  free: ["20 tin check/ngày", "Phân tích AI 6 chỉ số", "Lịch sử 100 tin", "Chấm điểm local khi hết lượt"],
+  free: ["20 tin check/ngày", "Quét danh mục 10 tin/lần", "Phân tích AI 6 chỉ số", "Lịch sử 100 tin"],
   pro: [
     "500 tin check/ngày",
+    "Quét danh mục 50 tin/lần + lọc giá/diện tích/quận",
     "Bulk Check 100 tin/lần",
     "Xuất Excel kèo ngon",
     "Lọc kèo >80 điểm",
@@ -114,16 +115,9 @@ export default function PricingPage() {
             <div>
               <div className="font-bold text-slate-800">AI dùng ở đây là gì? Có chính xác không?</div>
               <p className="mt-1 text-slate-500 leading-relaxed">
-                Tool dùng mô hình AI (Jev) chấm điểm 6 tiêu chí: độ ngộp, tăng giá, thanh khoản, pháp lý, giá thị
+                Tool dùng mô hình AI chấm điểm 6 tiêu chí: độ ngộp, tăng giá, thanh khoản, pháp lý, giá thị
                 trường, vị trí. Độ chính xác ~85% với tin đầy đủ thông tin — AI là trợ lý lọc tin, quyết định mua vẫn
                 do môi giới kiểm chứng sổ + quy hoạch.
-              </p>
-            </div>
-            <div>
-              <div className="font-bold text-slate-800">Chi phí token $0.042/1M nghĩa là sao?</div>
-              <p className="mt-1 text-slate-500 leading-relaxed">
-                Mỗi tin check tốn rất ít token (vài nghìn) — tương đương chưa tới 10đ/tin. Giá gói Pro 299k/tháng gồm
-                chi phí hạ tầng, vận hành và hỗ trợ.
               </p>
             </div>
             <div>

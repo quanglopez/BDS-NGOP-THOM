@@ -5,12 +5,8 @@ const QA: { q: string; a: string }[] = [
     a: "Toàn quốc: 63 tỉnh/thành phố. Dán tin có tên tỉnh, quận/huyện hoặc đường phố là AI tự nhận diện khu vực để chấm điểm vị trí, tăng giá và thanh khoản cho đúng.",
   },
   {
-    q: "AI (Jev) ở đây là gì? Có chính xác không?",
+    q: "AI ở đây là gì? Có chính xác không?",
     a: "Tool dùng mô hình AI chuyên chấm điểm bất động sản theo 6 tiêu chí: độ ngộp, tiềm năng tăng giá, thanh khoản, pháp lý, giá thị trường và vị trí. Độ chính xác ~85% với tin đầy đủ thông tin - AI giúp lọc nhanh, việc mua vẫn do bạn kiểm chứng sổ + quy hoạch.",
-  },
-  {
-    q: "$0.042/1M token nghĩa là sao?",
-    a: "Đó là chi phí tính theo dung lượng AI xử lý (token). Mỗi tin chỉ tốn vài nghìn token - chưa tới 10đ/tin. Phí 299k/tháng gồm chi phí AI, hạ tầng, vận hành và hỗ trợ.",
   },
   {
     q: "Tôi không rành công nghệ thì dùng được không?",

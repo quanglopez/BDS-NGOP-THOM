@@ -1,8 +1,10 @@
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { planLimit, vnDayStartISO, effectivePlan } from "@/lib/quota";
+import { planLimit, vnDayStartISO, effectivePlan, SCAN_LIMITS } from "@/lib/quota";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { Logo } from "@/components/site/logo";
 import { StatsCards } from "@/components/dashboard/stats-cards";
 import { QuickCheck } from "@/components/dashboard/quick-check";
 import { HistoryTable, type CheckRow } from "@/components/dashboard/history-table";
@@ -10,10 +12,10 @@ import { BulkCheck } from "@/components/dashboard/bulk-check";
 import { ReferralCard } from "@/components/dashboard/referral-card";
 
 export const metadata: Metadata = {
-  title: "Dashboard môi giới - Check BĐS Ngộp",
+  title: "Dashboard môi giới - CheckBDS.online",
 };
 
-// Dashboard cho môi giới: stats + lịch sử 100 tin + Bulk Check
+// Dashboard cho môi giới: stats + check lẻ + quét danh mục + bulk + lịch sử
 export default async function DashboardPage() {
   const supabase = await createClient();
   const {
@@ -50,17 +52,16 @@ export default async function DashboardPage() {
   return (
     <main className="min-h-screen bg-cream">
       <header className="sticky top-0 z-30 backdrop-blur-xl bg-navy/90 border-b border-white/10">
-        <div className="mx-auto max-w-[1120px] px-5 md:px-8 h-[64px] flex items-center justify-between">
+        <div className="mx-auto max-w-[1120px] px-5 md:px-8 h-[64px] flex items-center justify-between gap-3">
+          <Link href="/" className="flex items-center shrink-0">
+            <Logo height={24} />
+          </Link>
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gold flex items-center justify-center text-navy font-black text-[14px] tracking-widest">
-              AI
-            </div>
-            <div className="leading-none">
-              <div className="font-extrabold text-[15px] tracking-tight text-white">BĐS NGỘP THƠM</div>
-              <div className="text-[10px] tracking-[0.18em] font-semibold text-gold mt-[3px]">DASHBOARD</div>
-            </div>
+            <span className="hidden sm:inline text-[10px] tracking-[0.18em] font-bold text-gold">
+              DASHBOARD
+            </span>
+            <SignOutButton />
           </div>
-          <SignOutButton />
         </div>
       </header>
 
@@ -85,6 +86,24 @@ export default async function DashboardPage() {
               )}
             </p>
           </div>
+
+          {/* Gói Free: nhắc nâng cấp để mở Bulk Check 100 tin + quét danh mục */}
+          {plan === "free" && (
+            <div className="rounded-[16px] border border-gold/40 bg-white px-4 py-3 flex items-center gap-4 shadow-sm">
+              <div className="text-[12px] leading-snug">
+                <div className="font-black text-navy">Nâng cấp Pro — 299k/tháng</div>
+                <div className="text-slate-500">
+                  500 tin/ngày • quét {SCAN_LIMITS.pro} tin/lần • Bulk Check 100 tin • xuất Excel
+                </div>
+              </div>
+              <Link
+                href="/pricing#thanh-toan"
+                className="h-10 px-4 rounded-[10px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[13px] font-bold flex items-center whitespace-nowrap hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
+              >
+                Nâng cấp ngay →
+              </Link>
+            </div>
+          )}
         </div>
 
         <div className="mt-6">

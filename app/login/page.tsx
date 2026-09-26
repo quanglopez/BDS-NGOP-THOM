@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { LoginForm } from "@/components/auth/login-form";
+import { Logo } from "@/components/site/logo";
 
 export const metadata: Metadata = {
   title: "Đăng nhập - Check BĐS Ngộp Toàn Quốc",
@@ -10,7 +11,7 @@ export const metadata: Metadata = {
 
 const PERKS = [
   { icon: "🤖", title: "AI thật, không giới hạn công thức", desc: "Chấm 6 tiêu chí sâu thay vì ước tính nhanh" },
-  { icon: "📦", title: "Bulk Check 100 tin/lần", desc: "Upload file Zalo, lọc kèo >80 điểm trong 1 phút" },
+  { icon: "🗂", title: "Quét cả trang danh mục", desc: "Dán link danh mục, lọc giá/diện tích/quận rồi check hàng loạt" },
   { icon: "📊", title: "Lịch sử + thống kê", desc: "Mọi tin đã check lưu lại, xuất Excel khi cần" },
 ];
 
@@ -32,16 +33,8 @@ export default function LoginPage() {
       <div className="relative w-full max-w-[880px] grid md:grid-cols-2 gap-8 md:gap-12 items-center">
         {/* Cột giới thiệu */}
         <div className="hidden md:block">
-          <Link href="/" className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gold flex items-center justify-center text-navy font-black text-[15px] tracking-widest">
-              AI
-            </div>
-            <div className="leading-none">
-              <div className="font-extrabold text-[16px] tracking-tight text-white">BĐS NGỘP THƠM</div>
-              <div className="text-[10px] tracking-[0.18em] font-semibold text-gold mt-[3px]">
-                TOÀN QUỐC • AI SCORING
-              </div>
-            </div>
+          <Link href="/" className="inline-flex items-center">
+            <Logo height={30} />
           </Link>
 
           <h1 className="mt-8 text-[32px] font-black leading-[1.1] tracking-tight text-white">
@@ -69,11 +62,10 @@ export default function LoginPage() {
         {/* Cột form */}
         <div className="w-full max-w-[420px] mx-auto md:mx-0">
           <div className="md:hidden text-center mb-6">
-            <div className="w-12 h-12 rounded-xl bg-gold mx-auto flex items-center justify-center text-navy font-black text-[16px] tracking-widest">
-              AI
-            </div>
-            <h1 className="mt-4 text-[22px] font-black text-white">BĐS NGỘP THƠM</h1>
-            <p className="mt-1 text-[13px] text-slate-300">Đăng nhập để check kèo BĐS trên toàn quốc</p>
+            <Link href="/" className="inline-flex items-center justify-center">
+              <Logo height={30} />
+            </Link>
+            <p className="mt-3 text-[13px] text-slate-300">Đăng nhập để check kèo BĐS trên toàn quốc</p>
           </div>
           <Suspense>
             <LoginForm />

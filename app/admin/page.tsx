@@ -5,6 +5,7 @@ import { adminClient, isAdmin } from "@/lib/admin";
 import { effectivePlan, planLimit, vnDayStartISO } from "@/lib/quota";
 import { AdminActions } from "@/components/admin/admin-actions";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { Logo } from "@/components/site/logo";
 
 export const metadata: Metadata = {
   title: "Admin - Check BĐS Ngộp",
@@ -88,9 +89,7 @@ export default async function AdminPage({
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto max-w-[1120px] px-5 md:px-8 h-[64px] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-navy flex items-center justify-center text-gold font-black text-[14px]">
-              AD
-            </div>
+            <Logo height={24} rounded={false} />
             <div className="leading-none">
               <div className="font-extrabold text-[15px] text-navy">QUẢN TRỊ</div>
               <div className="text-[11px] text-slate-500 mt-[2px]">{user.email}</div>

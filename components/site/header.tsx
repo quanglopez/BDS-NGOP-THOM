@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Logo } from "@/components/site/logo";
 
 const NAV = [
   { href: "#tinh-nang", label: "Tính năng" },
@@ -12,16 +13,8 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-30 backdrop-blur-xl bg-navy/90 border-b border-white/10">
       <div className="mx-auto max-w-[1120px] px-5 md:px-8 h-[64px] flex items-center justify-between gap-4">
-        <Link href="/" className="flex items-center gap-3 shrink-0">
-          <div className="w-9 h-9 rounded-xl bg-gold flex items-center justify-center text-navy font-black text-[14px] tracking-widest shadow-[0_4px_16px_-4px_rgba(201,168,106,0.6)]">
-            AI
-          </div>
-          <div className="leading-none">
-            <div className="font-extrabold text-[15px] tracking-tight text-white">BĐS NGỘP THƠM</div>
-            <div className="text-[10px] tracking-[0.18em] font-semibold text-gold mt-[3px]">
-              TOÀN QUỐC • AI SCORING
-            </div>
-          </div>
+        <Link href="/" className="flex items-center shrink-0">
+          <Logo height={24} />
         </Link>
 
         <nav className="hidden md:flex items-center gap-1 text-[13px] font-semibold text-slate-300">

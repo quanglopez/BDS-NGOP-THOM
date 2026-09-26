@@ -32,7 +32,7 @@ export function ShareImage({ result }: { result: AnalysisResult }) {
       // Header brand
       ctx.fillStyle = "#C9A86A";
       ctx.font = "700 34px Inter, sans-serif";
-      ctx.fillText("BĐS NGỘP THƠM • TOÀN QUỐC", 80, 120);
+      ctx.fillText("CHECKBDS.ONLINE • TOÀN QUỐC", 80, 120);
 
       // Điểm số lớn
       ctx.fillStyle = "#FFFFFF";
