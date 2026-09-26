@@ -114,14 +114,23 @@ function stripAdminWords(s: string): string {
     .trim();
 }
 
+// Tên truy vấn chuẩn cho 1 tỉnh: label rút gọn ("TP.HCM") không khớp tên đầy đủ
+// ("Tp Hồ Chí Minh") khi so chuỗi nên phải mở rộng ra trước khi hỏi gateway
+function provinceQuery(provinceName: string): string {
+  const n = provinceName.trim().toLowerCase();
+  if (n === "tp.hcm" || n === "tphcm" || n === "tp hcm") return "ho chi minh";
+  return provinceName;
+}
+
 // Dò mã tỉnh (region_v2) bằng API tìm kiếm: hỏi tên tỉnh rồi đọc mã của tin khớp
 async function resolveRegionCode(cg: number, provinceName: string): Promise<number | null> {
   const key = `region:${cg}:${normName(provinceName)}`;
   const hit = cacheGet(key);
   if (hit !== null) return hit;
 
-  const want = stripAdminWords(normName(provinceName));
-  const data = await gatewayGet(`cg=${cg}&limit=50&q=${encodeURIComponent(provinceName)}`);
+  const query = provinceQuery(provinceName);
+  const want = stripAdminWords(normName(query));
+  const data = await gatewayGet(`cg=${cg}&limit=50&q=${encodeURIComponent(query)}`);
   const ads = (data?.ads ?? []) as Record<string, unknown>[];
   for (const ad of ads) {
     const name = stripAdminWords(normName(str(ad.region_name)));
