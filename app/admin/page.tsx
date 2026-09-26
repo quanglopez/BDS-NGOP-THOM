@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { adminClient, isAdmin } from "@/lib/admin";
 import { effectivePlan, planLimit, vnDayStartISO } from "@/lib/quota";
 import { AdminActions } from "@/components/admin/admin-actions";
+import { countByDay, goodDealRate, hostOf, topCounts } from "@/lib/admin-stats";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { Logo } from "@/components/site/logo";
 
@@ -45,7 +46,8 @@ export default async function AdminPage({
   const now = Date.now();
   const monthStart = new Date(now - 30 * DAY).toISOString();
 
-  const [leads, users, payments, usersCount, paidSum, checksToday] = await Promise.all([
+  const weekStart = new Date(now - 7 * DAY).toISOString();
+  const [leads, users, payments, usersCount, paidSum, checksToday, checksWeek, usersWeek, leadsWeek] = await Promise.all([
     admin.from("leads").select("*").order("created_at", { ascending: false }).limit(100),
     admin
       .from("users")
@@ -67,7 +69,34 @@ export default async function AdminPage({
       .from("checks")
       .select("id", { count: "exact", head: true })
       .gte("created_at", vnDayStartISO()),
+    admin
+      .from("checks")
+      .select("created_at, score, province, listing_url")
+      .gte("created_at", weekStart)
+      .order("created_at", { ascending: false })
+      .limit(5000),
+    admin
+      .from("users")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", weekStart),
+    admin
+      .from("leads")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", weekStart),
   ]);
+
+  // Thống kê dùng thật 7 ngày: số check/ngày, kèo ngon, khu vực, nguồn link
+  const weekRows = (checksWeek.data ?? []) as {
+    created_at: string;
+    score: number | null;
+    province: string | null;
+    listing_url: string | null;
+  }[];
+  const byDay = countByDay(weekRows, 7);
+  const peak = Math.max(1, ...byDay.map((d) => d.count));
+  const topProvince = topCounts(weekRows.map((r) => r.province), 5);
+  const topSource = topCounts(weekRows.map((r) => hostOf(r.listing_url)), 5);
+  const goodRate = goodDealRate(weekRows);
 
   const revenue = (paidSum.data ?? []).reduce((s, r) => s + Number(r.amount ?? 0), 0);
   const allUsers = users.data ?? [];
@@ -114,6 +143,66 @@ export default async function AdminPage({
             </div>
           ))}
         </div>
+
+        {/* Thống kê dùng thật 7 ngày */}
+        <section className="mt-8 rounded-[18px] border border-slate-200 bg-white p-5">
+          <h2 className="text-[16px] font-black text-navy">
+            Hoạt động 7 ngày{" "}
+            <span className="text-[12px] font-normal text-slate-500">
+              {fmtNum(checksWeek.data?.length ?? 0)} lượt check • {fmtNum(usersWeek.count ?? 0)} user mới •{" "}
+              {fmtNum(leadsWeek.count ?? 0)} lead mới • {goodRate}% kèo ngon (&gt;80 điểm)
+            </span>
+          </h2>
+
+          {/* Cột số check/ngày */}
+          <div className="mt-4 flex items-end gap-2 h-[96px]">
+            {byDay.map((d) => (
+              <div key={d.date} className="flex-1 flex flex-col items-center gap-1" title={`${d.date}: ${d.count} check`}>
+                <div className="text-[11px] font-bold text-slate-500">{d.count}</div>
+                <div
+                  className="w-full rounded-t-[6px] bg-gradient-to-t from-navy to-[#16305f]"
+                  style={{ height: `${Math.round((d.count / peak) * 56)}px`, minHeight: 2 }}
+                />
+                <div className="text-[10px] text-slate-400 whitespace-nowrap">{d.date.slice(5)}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div>
+              <div className="text-[11px] font-black tracking-[0.14em] text-slate-500">KHU VỰC CHECK NHIỀU NHẤT</div>
+              <div className="mt-2 space-y-1.5">
+                {topProvince.length === 0 ? (
+                  <div className="text-[12px] text-slate-400">Chưa có dữ liệu.</div>
+                ) : (
+                  topProvince.map((r) => (
+                    <div key={r.label} className="flex items-center gap-2 text-[12px]">
+                      <span className="font-semibold text-navy w-[140px] truncate">{r.label}</span>
+                      <span className="h-2 rounded-full bg-gold" style={{ width: `${Math.round((r.count / topProvince[0].count) * 90)}px` }} />
+                      <span className="text-slate-500">{r.count}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] font-black tracking-[0.14em] text-slate-500">NGUỒN LINK KHÁCH DÁN</div>
+              <div className="mt-2 space-y-1.5">
+                {topSource.length === 0 ? (
+                  <div className="text-[12px] text-slate-400">Chưa có ai dán link (chỉ check text/ảnh).</div>
+                ) : (
+                  topSource.map((r) => (
+                    <div key={r.label} className="flex items-center gap-2 text-[12px]">
+                      <span className="font-semibold text-navy w-[140px] truncate">{r.label}</span>
+                      <span className="h-2 rounded-full bg-gold" style={{ width: `${Math.round((r.count / topSource[0].count) * 90)}px` }} />
+                      <span className="text-slate-500">{r.count}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
 
         {/* Leads */}
         <section className="mt-8">

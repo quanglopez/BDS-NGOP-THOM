@@ -3,6 +3,7 @@ import { Checker } from "@/components/site/checker";
 import { SocialProof } from "@/components/site/social-proof";
 import { Coverage } from "@/components/site/coverage";
 import { Comparison } from "@/components/site/comparison";
+import { ScanFeature } from "@/components/site/scan-feature";
 import { SalesHero } from "@/components/site/sales-hero";
 import { Faq } from "@/components/site/faq";
 import { CtaPro } from "@/components/site/cta-pro";
@@ -17,6 +18,7 @@ export default function HomePage() {
       <SocialProof />
       <Coverage />
       <Comparison />
+      <ScanFeature />
       <SalesHero />
       <Faq />
       <CtaPro />

@@ -3,6 +3,7 @@ import { Logo } from "@/components/site/logo";
 
 const NAV = [
   { href: "#tinh-nang", label: "Tính năng" },
+  { href: "#quet-danh-muc", label: "Quét danh mục" },
   { href: "#so-sanh", label: "So sánh" },
   { href: "/pricing", label: "Bảng giá" },
   { href: "#faq", label: "FAQ" },
