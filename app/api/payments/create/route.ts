@@ -22,6 +22,22 @@ export async function POST(req: Request) {
   const amount = PLANS[planKey].price;
   const content = transferContent(user.id);
 
+  // Đã có giao dịch đang chờ với đúng nội dung CK thì dùng lại, khỏi tạo trùng
+  // (mỗi lần bấm "Tạo mã QR" trước đây sinh thêm 1 bản ghi pending mới)
+  const { data: existing } = await supabase
+    .from("payments")
+    .select("id, plan, amount, transfer_content, status, created_at")
+    .eq("user_id", user.id)
+    .eq("transfer_content", content)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing) {
+    return NextResponse.json({ payment: existing, content, amount });
+  }
+
   const { data, error } = await supabase
     .from("payments")
     .insert({ user_id: user.id, plan: planKey, amount, transfer_content: content, status: "pending" })
