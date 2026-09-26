@@ -5,8 +5,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { exampleListings } from "@/lib/market-data";
 import { runCheck, type CheckSource } from "@/lib/client-check";
+import { extractFromUrl, firstUrl, isBareUrl } from "@/lib/client-extract";
 import type { AnalysisResult } from "@/lib/types";
 import { ResultCard } from "@/components/site/result-card";
+
+// Chỉ hiện domain trong thông báo, không lộ toàn bộ URL
+function safeDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "trang";
+  }
+}
 
 // Hero + ô dán tin + nút chấm điểm
 export function Checker() {
@@ -15,6 +25,10 @@ export function Checker() {
   const [source, setSource] = useState<CheckSource>("local");
   const [analyzedAt, setAnalyzedAt] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
+  const [extractState, setExtractState] = useState<{ kind: "idle" | "loading" | "ok" | "error"; text: string }>({
+    kind: "idle",
+    text: "",
+  });
   const resultRef = useRef<HTMLDivElement>(null);
 
   const handleCheck = async () => {
@@ -34,18 +48,48 @@ export function Checker() {
     }
   };
 
-  // Dán nội dung clipboard; không đọc được thì chèn link mẫu
+  // Dán link tin rao: nếu clipboard chứa URL thì tự lấy nội dung trang,
+  // lấy được thì điền vào ô; không được thì báo rõ để khách copy tay
   const handlePaste = async () => {
+    let clip = "";
     try {
-      const clip = await navigator.clipboard.readText();
-      if (clip) {
-        setText(clip);
-        return;
-      }
+      clip = await navigator.clipboard.readText();
     } catch {
-      // bỏ qua, dùng fallback bên dưới
+      setExtractState({
+        kind: "error",
+        text: "Trình duyệt không cho đọc clipboard. Hãu dán trực tiếp (Ctrl+V) vào ô bên dưới.",
+      });
+      return;
     }
-    setText((prev) => prev + (prev ? "\n" : "") + "https://batdongsan.com.vn/...");
+
+    if (!clip.trim()) {
+      setExtractState({ kind: "error", text: "Clipboard trống — hãy copy link hoặc mô tả tin rồi dán." });
+      return;
+    }
+
+    const url = isBareUrl(clip) ? clip.trim() : firstUrl(clip);
+    if (!url) {
+      // Không phải link -> dán luôn nội dung mô tả tin
+      setText(clip);
+      setExtractState({ kind: "idle", text: "" });
+      return;
+    }
+
+    setExtractState({ kind: "loading", text: `Đang đọc trang ${safeDomain(url)}...` });
+    const result = await extractFromUrl(url);
+
+    if (result.ok) {
+      setText(result.text);
+      setExtractState({
+        kind: "ok",
+        text: `Đã lấy nội dung từ ${result.domain} (${result.text.length} ký tự). Kiểm tra rồi bấm Check.`,
+      });
+      return;
+    }
+
+    // Giữ lại phần text khách đã dán kèm (nếu có) để không mất gì
+    setText(isBareUrl(clip) ? "" : clip);
+    setExtractState({ kind: "error", text: result.message });
   };
 
   return (
@@ -116,7 +160,10 @@ export function Checker() {
                   onClick={handlePaste}
                   className="h-[48px] px-5 rounded-[12px] border-slate-200 bg-white hover:bg-slate-50 text-[14px] font-semibold text-slate-700"
                 >
-                  <span>📋</span> Dán link Batdongsan
+                  {extractState.kind === "loading" && (
+                    <span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+                  )}
+                  <span>📋</span> Dán link tin rao
                 </Button>
 
                 <Button
@@ -138,14 +185,36 @@ export function Checker() {
                 </Button>
               </div>
 
-              <div className="mt-3 flex items-center gap-2 text-[11px] text-slate-500">
-                <span className="w-1 h-1 rounded-full bg-emerald-500" />
-                {source === "ai"
-                  ? "Chấm điểm bằng AI thật"
-                  : "Chấm điểm local • Đăng nhập để dùng AI thật"}
-                {" • "}Qua{" "}
-                <code className="px-1.5 py-0.5 rounded bg-slate-100 border">/api/check</code>, key giữ ở server
+              <div className="mt-3 flex items-start gap-2 text-[11px] text-slate-500">
+                <span className="w-1 h-1 rounded-full bg-emerald-500 mt-1" />
+                <div>
+                  {source === "ai"
+                    ? "Chấm điểm bằng AI thật"
+                    : "Chấm điểm local • Đăng nhập để dùng AI thật"}
+                  {" • "}Q qua{" "}
+                  <code className="px-1.5 py-0.5 rounded bg-slate-100 border">/api/check</code>
+                </div>
               </div>
+
+              {extractState.text && (
+                <div
+                  className={`mt-2 text-[11px] leading-snug ${
+                    extractState.kind === "error"
+                      ? "text-amber-700"
+                      : extractState.kind === "ok"
+                        ? "text-emerald-700"
+                        : "text-slate-500"
+                  }`}
+                >
+                  {extractState.text}
+                  {extractState.kind === "error" && (
+                    <div className="mt-1 text-slate-500">
+                      Cách dùng thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán
+                      vào ô trên.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className="h-[44px] px-4 md:px-7 flex items-center justify-between bg-cream border-t border-slate-200 text-[11px]">

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { dealBadgeClass, dealLabel, scoreBadgeClass } from "@/lib/format";
+import { extractFromUrl, isBareUrl } from "@/lib/client-extract";
 import type { QuotaInfo } from "@/lib/types";
 
 interface BulkRow {
@@ -77,10 +78,24 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
       while (cursor < results.length && !stopped) {
         const i = cursor++;
         try {
+          // Gói Pro: dòng là URL thì lấy nội dung trang trước khi chấm
+          let text = results[i].text;
+          if (isPro && isBareUrl(text)) {
+            const extracted = await extractFromUrl(text);
+            if (extracted.ok) {
+              text = extracted.text;
+            } else {
+              results[i] = { ...results[i], error: extracted.message };
+              setRows(results.map((r) => ({ ...r })));
+              setDoneCount((c) => c + 1);
+              continue;
+            }
+          }
+
           const res = await fetch("/api/check", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: results[i].text }),
+            body: JSON.stringify({ text }),
           });
           const data = await res.json();
 
@@ -144,6 +159,7 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
           <p className="mt-1 text-[12px] text-slate-500">
             Upload .txt / .csv (mỗi dòng 1 tin, tối đa {MAX_LINES} tin) → AI chấm điểm hàng loạt
             {!isPro && " • Bulk là tính năng gói Pro"}
+            {isPro && " • Dòng là link sẽ được tự lấy nội dung trang"}
             {quota && (
               <>
                 {" "}

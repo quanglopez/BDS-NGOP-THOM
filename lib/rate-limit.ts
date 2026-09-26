@@ -69,8 +69,8 @@ export function clientIp(req: Request): string {
   );
 }
 
-export async function checkRateLimit(ip: string, limit = DEFAULT_LIMIT) {
-  const key = `ratelimit:check:${ip}`;
+export async function checkRateLimit(ip: string, limit = DEFAULT_LIMIT, scope = "check") {
+  const key = `ratelimit:${scope}:${ip}`;
 
   if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
     try {
