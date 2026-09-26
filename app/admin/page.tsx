@@ -340,7 +340,9 @@ export default async function AdminPage({
                             className={`px-2 py-1 rounded-full text-[11px] font-bold ${
                               p.status === "paid"
                                 ? "bg-emerald-600 text-white"
-                                : "bg-amber-400 text-amber-950"
+                                : p.status === "unmatched"
+                                  ? "bg-red-500 text-white"
+                                  : "bg-amber-400 text-amber-950"
                             }`}
                           >
                             {p.status}
@@ -350,8 +352,8 @@ export default async function AdminPage({
                           {fmtDate(p.created_at)}
                         </td>
                         <td className="px-4 py-2.5">
-                          {p.status === "pending" && (
-                            <AdminActions paymentId={p.id} plan={p.plan === "team" ? "pro" : "pro"} />
+                          {p.status !== "paid" && (
+                            <AdminActions paymentId={p.id} plan="pro" />
                           )}
                         </td>
                       </tr>

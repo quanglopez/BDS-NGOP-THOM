@@ -5,6 +5,8 @@ import { nextExpiry } from "@/lib/quota";
 
 // Webhook SePay: ngân hàng báo có tiền -> tự nâng plan
 // Doc: https://docs.sepay.vn - payload chứa content, transferAmount, referenceCode
+// Nguyên tắc: mọi khoản tiền vào đều phải có dấu vết trong bảng payments
+// (status=unmatched nếu không khớp), để admin đối chiếu và xử lý tay — không để mất dấu.
 export async function POST(req: NextRequest) {
   const apiKey = process.env.SEPAY_API_KEY;
   if (!apiKey) {
@@ -27,6 +29,27 @@ export async function POST(req: NextRequest) {
   const amount: number = Number(payload.transferAmount ?? payload.amount ?? 0);
   const ref: string | null = payload.referenceCode ?? payload.code ?? null;
 
+  // Service role: webhook không có session user, cần quyền ghi vượt RLS
+  const admin = createSupabaseAdmin(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { persistSession: false } },
+  );
+
+  // Ghi nhận một khoản tiền vào chưa nâng được gói (admin đối chiếu sau)
+  const recordUnmatched = async (userId: string | null, reason: string) => {
+    await admin.from("payments").insert({
+      user_id: userId,
+      plan: "unmatched",
+      amount,
+      transfer_content: `${content} (${reason})`.slice(0, 120),
+      status: "unmatched",
+      sepay_ref: ref,
+    });
+    console.log(`[sepay] UNMATCHED reason=${reason} amount=${amount} ref=${ref ?? "-"}`);
+    return NextResponse.json({ ok: true, unmatched: reason });
+  };
+
   // Chỉ xử lý tiền vào
   if (payload.transferType && payload.transferType !== "in") {
     return NextResponse.json({ ok: true, skipped: "not-inbound" });
@@ -35,21 +58,15 @@ export async function POST(req: NextRequest) {
   // Nhận diện user từ nội dung CK: NANGCAP {user_id}
   const match = content.match(/NANGCAP\s+([0-9a-f-]{36})/i);
   if (!match) {
-    return NextResponse.json({ ok: true, skipped: "no-match" });
+    return recordUnmatched(null, "khong-nhan-dien-duoc-nguoi-chuyen");
   }
   const userId = match[1];
 
   const plan = planFromAmount(amount);
   if (!plan || plan === "free") {
-    return NextResponse.json({ ok: true, skipped: "amount-too-low" });
+    // Có người chuyển nhưng số tiền chưa đủ gói -> vẫn ghi lại để admin biết
+    return recordUnmatched(userId, "so-tien-chua-du-goi");
   }
-
-  // Service role: webhook không có session user, cần quyền ghi vượt RLS
-  const admin = createSupabaseAdmin(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } },
-  );
 
   // Idempotent: đã ghi nhận giao dịch này thì bỏ qua
   if (ref) {
