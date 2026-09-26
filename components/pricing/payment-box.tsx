@@ -17,6 +17,8 @@ export function PaymentBox() {
   const [qrUrl, setQrUrl] = useState("");
   const [copied, setCopied] = useState(false);
   const [upgraded, setUpgraded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const bankName = process.env.NEXT_PUBLIC_SEPAY_BANK_NAME ?? "Ngân hàng (cấu hình SEPAY)";
@@ -27,22 +29,43 @@ export function PaymentBox() {
     setPlan(p);
     setPayment(null);
     setUpgraded(false);
-
-    const res = await fetch("/api/payments/create", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan: p }),
-    });
-    if (res.status === 401) {
-      setNeedLogin(true);
-      return;
+    setError("");
+    setBusy(true);
+    try {
+      const res = await fetch("/api/payments/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan: p }),
+      });
+      if (res.status === 401) {
+        setNeedLogin(true);
+        return;
+      }
+      const data = await res.json().catch(() => ({ error: "Phản hồi từ máy chủ không hợp lệ" }));
+      if (data.error) {
+        setError(data.error);
+        return;
+      }
+      if (!data.content) {
+        setError("Không tạo được nội dung chuyển khoản, thử lại sau.");
+        return;
+      }
+      setPayment({ content: data.content, amount: data.amount });
+      setQrUrl(vietQrImageUrl(data.amount, data.content));
+    } catch {
+      setError("Lỗi mạng, bấm lại để thử.");
+    } finally {
+      setBusy(false);
     }
-    const data = await res.json();
-    if (data.error) return;
-
-    setPayment({ content: data.content, amount: data.amount });
-    setQrUrl(vietQrImageUrl(data.amount, data.content));
   };
+
+  // Vào trang có #thanh-toan (bấm "Nâng cấp" từ dashboard) thì tạo QR luôn
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.hash.includes("thanh-toan")) {
+      void createPayment("pro");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Poll trạng thái: khi webhook nâng gói thì báo thành công
   useEffect(() => {
@@ -77,12 +100,13 @@ export function PaymentBox() {
         Chọn gói → quét QR hoặc chuyển khoản đúng nội dung → hệ thống tự kích hoạt.
       </p>
 
-      <div className="mt-5 flex flex-wrap gap-2">
+      <div className="mt-5 flex flex-wrap items-center gap-2">
         {(["pro"] as PlanKey[]).map((p) => (
           <button
             key={p}
             type="button"
             onClick={() => void createPayment(p)}
+            disabled={busy}
             className={`h-10 px-5 rounded-full text-[13px] font-bold border transition ${
               plan === p ? "bg-navy text-white border-navy" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
             }`}
@@ -90,6 +114,14 @@ export function PaymentBox() {
             {PLANS[p].label} - {PLANS[p].price.toLocaleString("vi-VN")}đ/tháng
           </button>
         ))}
+        <Button
+          type="button"
+          onClick={() => void createPayment(plan)}
+          disabled={busy}
+          className="h-10 px-5 rounded-full bg-gold text-navy text-[13px] font-bold hover:bg-[#d8ba7f]"
+        >
+          {busy ? "Đang tạo mã QR..." : payment ? "Tạo lại mã QR" : "Tạo mã QR chuyển khoản →"}
+        </Button>
       </div>
 
       {needLogin && (
@@ -99,6 +131,15 @@ export function PaymentBox() {
             đăng nhập
           </Link>{" "}
           để thanh toán và nhận nâng cấp.
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-5 rounded-[14px] bg-red-50 border border-red-200 p-4 text-[13px] text-red-700">
+          <b>Lỗi:</b> {error}
+          <div className="mt-1 text-[12px] text-red-600">
+            Nếu vẫn không được, chụp màn hình lỗi này gửi cho hỗ trợ.
+          </div>
         </div>
       )}
 
