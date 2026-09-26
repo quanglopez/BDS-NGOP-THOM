@@ -1,8 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { effectivePlan } from "@/lib/quota";
+import { effectivePlan, scanLimit, SCAN_LIMITS } from "@/lib/quota";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
-import { scanCategoryUrl } from "@/lib/chotot-category";
+import {
+  scanCategoryUrl,
+  normalizeScanFilters,
+  hasScanFilters,
+  type AreaOverride,
+} from "@/lib/chotot-category";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -48,7 +53,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { url } = await req.json().catch(() => ({ url: "" }));
+  const body = await req.json().catch(() => ({}) as Record<string, unknown>);
+  const url = (body.url ?? "") as unknown;
   if (typeof url !== "string" || !url.trim()) {
     return NextResponse.json(
       { ok: false, reason: "missing_url", message: "Thiếu đường dẫn danh mục." },
@@ -56,24 +62,34 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Filter giá/diện tích/phòng ngủ (gateway chỉ lọc hộ phòng ngủ)
+  const filters = normalizeScanFilters(body.filters);
+  // Ghi đè khu vực: chọn tỉnh/quận khác với khu vực ghi trong link
+  const rawArea = (body.areaOverride ?? {}) as Record<string, unknown>;
+  const areaOverride: AreaOverride | null =
+    typeof rawArea.provinceName === "string" || typeof rawArea.wardSlug === "string"
+      ? {
+          provinceName: typeof rawArea.provinceName === "string" ? rawArea.provinceName.trim() : null,
+          wardSlug: typeof rawArea.wardSlug === "string" ? rawArea.wardSlug.trim() : null,
+        }
+      : null;
+
   // Trần theo gói người dùng (dashboard đã đăng nhập)
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  let limit = 10;
+  let limit = SCAN_LIMITS.free;
   if (user) {
     const { data: profile } = await supabase
       .from("users")
       .select("plan, plan_expires_at")
       .eq("id", user.id)
       .single();
-    if (effectivePlan(profile?.plan, profile?.plan_expires_at) !== "free") {
-      limit = 50;
-    }
+    limit = scanLimit(effectivePlan(profile?.plan, profile?.plan_expires_at));
   }
 
-  const result = await scanCategoryUrl(url, limit);
+  const result = await scanCategoryUrl(url, limit, filters, areaOverride);
   if (!result.ok) {
     console.log(`[category] FAIL ${result.reason} ip=${ip} url=${url.slice(0, 120)}`);
     return NextResponse.json(
@@ -83,7 +99,7 @@ export async function POST(req: NextRequest) {
   }
 
   console.log(
-    `[category] OK ip=${ip} ward=${result.scan.scope.ward ?? "?"} region=${result.scan.scope.region ?? "?"} total=${result.scan.scope.total} items=${result.scan.items.length}`,
+    `[category] OK ip=${ip} ward=${result.scan.scope.ward ?? "?"} region=${result.scan.scope.region ?? "?"} total=${result.scan.scope.total} items=${result.scan.items.length} filtered=${hasScanFilters(filters)}`,
   );
   return NextResponse.json({ ok: true, limit, ...result.scan }, { headers: CORS });
 }

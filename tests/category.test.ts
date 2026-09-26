@@ -3,6 +3,12 @@
 
 import { strict as assert } from "node:assert";
 import { parseCategoryUrl, stripAdminPrefix } from "../lib/category-slug.ts";
+import {
+  normalizeScanFilters,
+  itemMatchesFilters,
+  hasScanFilters,
+  type CategoryItem,
+} from "../lib/chotot-category.ts";
 
 let pass = 0;
 let fail = 0;
@@ -78,6 +84,77 @@ async function main() {
     assert.equal(stripAdminPrefix("quan-go-vap"), "go-vap");
     assert.equal(stripAdminPrefix("thanh-pho-vung-tau"), "vung-tau");
     assert.equal(stripAdminPrefix("thuy-van"), "thuy-van");
+  });
+
+  console.log("\n== Bộ lọc quét (giá, diện tích, phòng) ==");
+
+  await check("filter rỗng -> null", () => {
+    assert.equal(normalizeScanFilters({}), null);
+    assert.equal(normalizeScanFilters(null), null);
+    assert.equal(normalizeScanFilters({ priceMin: 0, areaMin: -5 }), null);
+    assert.equal(hasScanFilters(null), false);
+  });
+
+  await check("chuẩn hóa số, bỏ giá trị rỗng, hoán min/max", () => {
+    const f = normalizeScanFilters({ priceMin: "5", priceMax: "2", areaMin: "3,5", minRooms: "3" });
+    assert.ok(f);
+    assert.equal(f!.priceMin, 2);
+    assert.equal(f!.priceMax, 5);
+    assert.equal(f!.areaMin, 3.5);
+    assert.equal(f!.minRooms, 3);
+    assert.equal(hasScanFilters(f), true);
+  });
+
+  await check("chặn ngưỡng bừa (giá > 1000 tỷ, dt > 10.000 m²)", () => {
+    const f = normalizeScanFilters({ priceMax: 5000, areaMax: 20000 });
+    assert.ok(f);
+    assert.equal(f!.priceMax, 1000);
+    assert.equal(f!.areaMax, 10000);
+  });
+
+  const mk = (p: Partial<CategoryItem>): CategoryItem => ({
+    id: "1",
+    url: "https://x/1",
+    title: "t",
+    text: "t".repeat(120),
+    priceHint: null,
+    areaHint: null,
+    price: null,
+    size: null,
+    rooms: null,
+    ward: "w",
+    region: "r",
+    image: null,
+    ...p,
+  });
+
+  await check("lọc theo khoảng giá (đơn vị tỷ, giá VND)", () => {
+    const f = normalizeScanFilters({ priceMin: 2, priceMax: 5 });
+    assert.ok(itemMatchesFilters(mk({ price: 3_500_000_000 }), f!));
+    assert.ok(!itemMatchesFilters(mk({ price: 1_000_000_000 }), f!));
+    assert.ok(!itemMatchesFilters(mk({ price: 7_000_000_000 }), f!));
+  });
+
+  await check("lọc theo khoảng diện tích", () => {
+    const f = normalizeScanFilters({ areaMin: 50, areaMax: 100 });
+    assert.ok(itemMatchesFilters(mk({ size: 80 }), f!));
+    assert.ok(!itemMatchesFilters(mk({ size: 30 }), f!));
+    assert.ok(!itemMatchesFilters(mk({ size: 150 }), f!));
+  });
+
+  await check("lọc số phòng ngủ là tối thiểu", () => {
+    const f = normalizeScanFilters({ minRooms: 3 });
+    assert.ok(itemMatchesFilters(mk({ rooms: 5 }), f!));
+    assert.ok(itemMatchesFilters(mk({ rooms: 3 }), f!));
+    assert.ok(!itemMatchesFilters(mk({ rooms: 2 }), f!));
+  });
+
+  await check("tin thiếu giá/diện tích/phòng bị loại khi có filter tương ứng", () => {
+    assert.ok(!itemMatchesFilters(mk({}), normalizeScanFilters({ priceMin: 1 })!));
+    assert.ok(!itemMatchesFilters(mk({}), normalizeScanFilters({ areaMax: 100 })!));
+    assert.ok(!itemMatchesFilters(mk({}), normalizeScanFilters({ minRooms: 2 })!));
+    // Không có filter thì tin thiếu số vẫn qua
+    assert.ok(itemMatchesFilters(mk({}), {}));
   });
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);

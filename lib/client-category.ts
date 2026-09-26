@@ -25,9 +25,24 @@ export interface CategoryScanOk {
     region: string | null;
     exact: boolean;
     total: number;
+    filtered: boolean;
   };
   items: CategoryScanItem[];
   truncated: boolean;
+}
+
+// Bộ lọc gửi kèm khi quét: giá theo tỷ, diện tích theo m², số phòng ngủ là tối thiểu
+export interface ScanFiltersInput {
+  priceMin?: number | null;
+  priceMax?: number | null;
+  areaMin?: number | null;
+  areaMax?: number | null;
+  minRooms?: number | null;
+}
+
+export interface AreaOverrideInput {
+  provinceName?: string | null;
+  wardSlug?: string | null;
 }
 
 export interface CategoryScanErr {
@@ -36,12 +51,20 @@ export interface CategoryScanErr {
   message: string;
 }
 
-export async function scanCategory(url: string): Promise<CategoryScanOk | CategoryScanErr> {
+export async function scanCategory(
+  url: string,
+  filters?: ScanFiltersInput | null,
+  areaOverride?: AreaOverrideInput | null,
+): Promise<CategoryScanOk | CategoryScanErr> {
   try {
     const res = await fetch("/api/category-scan", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        ...(filters ? { filters } : {}),
+        ...(areaOverride ? { areaOverride } : {}),
+      }),
     });
     const data = await res.json();
 

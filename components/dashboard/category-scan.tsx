@@ -4,7 +4,14 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { scanCategory, type CategoryScanItem, type CategoryScanOk } from "@/lib/client-category";
+import { PROVINCES } from "@/lib/provinces";
+import {
+  scanCategory,
+  type CategoryScanItem,
+  type CategoryScanOk,
+  type ScanFiltersInput,
+  type AreaOverrideInput,
+} from "@/lib/client-category";
 import { dealBadgeClass, dealLabel, scoreBadgeClass } from "@/lib/format";
 
 interface CheckedRow {
@@ -29,6 +36,42 @@ export function CategoryScan() {
   const [rows, setRows] = useState<CheckedRow[]>([]);
   const [doneCount, setDoneCount] = useState(0);
 
+  // Bộ lọc quét: giá (tỷ), diện tích (m²), số phòng ngủ (tối thiểu), khu vực (ghi đè link)
+  const [showFilters, setShowFilters] = useState(false);
+  const [priceMin, setPriceMin] = useState("");
+  const [priceMax, setPriceMax] = useState("");
+  const [areaMin, setAreaMin] = useState("");
+  const [areaMax, setAreaMax] = useState("");
+  const [minRooms, setMinRooms] = useState("");
+  const [provincePick, setProvincePick] = useState("");
+  const [wardPick, setWardPick] = useState("");
+
+  const filterSummary = (): string => {
+    const parts: string[] = [];
+    if (priceMin || priceMax) parts.push(`giá ${priceMin || "0"}-${priceMax || "?"} tỷ`);
+    if (areaMin || areaMax) parts.push(`dt ${areaMin || "0"}-${areaMax || "?"} m²`);
+    if (minRooms) parts.push(`${minRooms}+ phòng`);
+    if (provincePick || wardPick) parts.push(`khu vực ${wardPick ? `${wardPick}, ` : ""}${provincePick}`);
+    return parts.join(" • ");
+  };
+
+  const buildFilters = (): ScanFiltersInput | null => {
+    const n = (v: string) => (v.trim() ? Number(v.replace(",", ".")) : null);
+    const f: ScanFiltersInput = {
+      priceMin: n(priceMin),
+      priceMax: n(priceMax),
+      areaMin: n(areaMin),
+      areaMax: n(areaMax),
+      minRooms: minRooms ? Number(minRooms) : null,
+    };
+    return Object.values(f).some((v) => v != null) ? f : null;
+  };
+
+  const buildAreaOverride = (): AreaOverrideInput | null => {
+    if (!provincePick && !wardPick.trim()) return null;
+    return { provinceName: provincePick || null, wardSlug: wardPick.trim() || null };
+  };
+
   const handleScan = async () => {
     if (!url.trim() || phase === "scanning") return;
     setPhase("scanning");
@@ -37,7 +80,7 @@ export function CategoryScan() {
     setSelected(new Set());
     setRows([]);
 
-    const r = await scanCategory(url.trim());
+    const r = await scanCategory(url.trim(), buildFilters(), buildAreaOverride());
     if (!r.ok) {
       setPhase("idle");
       setNotice(r.message);
@@ -148,6 +191,107 @@ export function CategoryScan() {
         </Button>
       </div>
 
+      {/* Bộ lọc quét */}
+      <div className="mt-2.5">
+        <button
+          type="button"
+          onClick={() => setShowFilters((s) => !s)}
+          className="text-[12px] font-semibold text-navy hover:underline underline-offset-2"
+        >
+          {showFilters ? "▾" : "▸"} Bộ lọc (khu vực, giá, diện tích, phòng ngủ)
+          {filterSummary() && <span className="ml-2 text-slate-500 font-normal">({filterSummary()})</span>}
+        </button>
+
+        {showFilters && (
+          <div className="mt-2.5 rounded-[12px] border border-slate-200 bg-cream p-3.5">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
+              <label className="text-[11px] font-semibold text-slate-500">
+                Giá từ (tỷ)
+                <Input
+                  value={priceMin}
+                  onChange={(e) => setPriceMin(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="vd 2"
+                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                />
+              </label>
+              <label className="text-[11px] font-semibold text-slate-500">
+                Giá đến (tỷ)
+                <Input
+                  value={priceMax}
+                  onChange={(e) => setPriceMax(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="vd 5"
+                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                />
+              </label>
+              <label className="text-[11px] font-semibold text-slate-500">
+                Diện tích từ (m²)
+                <Input
+                  value={areaMin}
+                  onChange={(e) => setAreaMin(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="vd 50"
+                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                />
+              </label>
+              <label className="text-[11px] font-semibold text-slate-500">
+                Diện tích đến (m²)
+                <Input
+                  value={areaMax}
+                  onChange={(e) => setAreaMax(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="vd 120"
+                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                />
+              </label>
+              <label className="text-[11px] font-semibold text-slate-500">
+                Số phòng ngủ (từ)
+                <select
+                  value={minRooms}
+                  onChange={(e) => setMinRooms(e.target.value)}
+                  className="mt-1 h-10 w-full rounded-[10px] bg-white border border-slate-200 px-2.5 text-[13px]"
+                >
+                  <option value="">Tất cả</option>
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <option key={n} value={n}>
+                      {n}+
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="text-[11px] font-semibold text-slate-500">
+                Tỉnh/Thành (ghi đè link)
+                <select
+                  value={provincePick}
+                  onChange={(e) => setProvincePick(e.target.value)}
+                  className="mt-1 h-10 w-full rounded-[10px] bg-white border border-slate-200 px-2.5 text-[13px]"
+                >
+                  <option value="">Theo link</option>
+                  {PROVINCES.map((p) => (
+                    <option key={p} value={p}>
+                      {p}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="col-span-2 text-[11px] font-semibold text-slate-500">
+                Quận/Huyện (ghi đè link)
+                <Input
+                  value={wardPick}
+                  onChange={(e) => setWardPick(e.target.value)}
+                  placeholder="vd Gò Vấp, hoặc để trống theo link"
+                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                />
+              </label>
+            </div>
+            <p className="mt-2 text-[11px] text-slate-400">
+              Để trống = không lọc. Khu vực ghi đè sẽ thay cho quận/tỉnh trong link danh mục bạn dán.
+            </p>
+          </div>
+        )}
+      </div>
+
       {notice && (
         <div className="mt-2.5 rounded-[10px] bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800">
           {notice}
@@ -161,7 +305,13 @@ export function CategoryScan() {
             {scan.scope.ward && <> • <b className="text-navy">{scan.scope.ward.replace(/-/g, " ")}</b></>}
             {scan.scope.region && <> • <b className="text-navy">{scan.scope.region}</b></>}
             {" "}— tìm thấy <b className="text-navy">{scan.scope.total.toLocaleString("vi-VN")} tin bán</b>
-            {scan.truncated && <> (hiện {scan.items.length} tin mới nhất theo gói của bạn)</>}
+            {scan.scope.filtered && (
+              <>
+                {" "}• đã lọc {filterSummary() || "giá/diện tích/phòng ngủ"} trong{" "}
+                <b className="text-navy">{scan.items.length} tin</b> mới nhất
+              </>
+            )}
+            {!scan.scope.filtered && scan.truncated && <> (hiện {scan.items.length} tin mới nhất theo gói của bạn)</>}
             {!scan.scope.exact && (
               <div className="mt-1 text-amber-700">
                 Chưa lọc được đúng quận từ link này — danh sách đang ở cấp tỉnh, hãy tick kỹ trước khi check.

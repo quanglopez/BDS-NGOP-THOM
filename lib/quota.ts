@@ -6,6 +6,17 @@ export const PLAN_LIMITS: Record<string, number> = {
   team: 500,
 };
 
+// Số tin tối đa trả về cho 1 lần quét trang danh mục (khớp số liệu trên pricing)
+export const SCAN_LIMITS: Record<string, number> = {
+  free: 10,
+  pro: 50,
+  team: 50,
+};
+
+export function scanLimit(plan: string | null | undefined): number {
+  return SCAN_LIMITS[plan ?? "free"] ?? SCAN_LIMITS.free;
+}
+
 // 30 ngày mỗi lần thanh toán
 export const SUBSCRIPTION_DAYS = 30;
 

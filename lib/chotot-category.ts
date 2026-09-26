@@ -47,6 +47,68 @@ export interface CategoryScope {
   region: string | null;
   exact: boolean;
   total: number;
+  // true khi có filter giá/diện tích/phòng ngủ (tổng phía gateway là tổng thô)
+  filtered: boolean;
+}
+
+// Bộ lọc quét danh mục. Giá tính theo tỷ, diện tích theo m², phòng ngủ là tối thiểu.
+// Gateway Chợ Tốt chỉ lọc được rooms, còn giá/diện tích phải lọc phía mình.
+export interface ScanFilters {
+  priceMin?: number | null;
+  priceMax?: number | null;
+  areaMin?: number | null;
+  areaMax?: number | null;
+  minRooms?: number | null;
+}
+
+// Ghi đè khu vực: khi khách muốn lọc chỗ khác với khu vực ghi trong link danh mục
+export interface AreaOverride {
+  provinceName?: string | null;
+  wardSlug?: string | null;
+}
+
+// Chuẩn hóa filter từ request: bỏ giá trị rỗng, chặn số âm, min>max thì hoán cho nhau.
+// Trả về null nếu không có filter nào hợp lệ (để quét bình thường).
+export function normalizeScanFilters(raw: unknown): ScanFilters | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const toNum = (v: unknown): number | null => {
+    const n = typeof v === "string" ? Number(v.replace(",", ".")) : Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  let priceMin = toNum(r.priceMin);
+  let priceMax = toNum(r.priceMax);
+  let areaMin = toNum(r.areaMin);
+  let areaMax = toNum(r.areaMax);
+  const minRooms = toNum(r.minRooms);
+
+  if (priceMin && priceMax && priceMin > priceMax) [priceMin, priceMax] = [priceMax, priceMin];
+  if (areaMin && areaMax && areaMin > areaMax) [areaMin, areaMax] = [areaMax, areaMin];
+
+  // Ngưỡng chặn để không quét bừa: giá tối đa 1000 tỷ, diện tích tối đa 10.000 m²
+  if (priceMin && priceMin > 1000) priceMin = null;
+  if (priceMax && priceMax > 1000) priceMax = 1000;
+  if (areaMin && areaMin > 10000) areaMin = null;
+  if (areaMax && areaMax > 10000) areaMax = 10000;
+
+  const f: ScanFilters = { priceMin, priceMax, areaMin, areaMax, minRooms: minRooms ?? null };
+  const anySet = priceMin || priceMax || areaMin || areaMax || minRooms;
+  return anySet ? f : null;
+}
+
+export function hasScanFilters(f: ScanFilters | null | undefined): boolean {
+  return Boolean(f && (f.priceMin || f.priceMax || f.areaMin || f.areaMax || f.minRooms));
+}
+
+// Lọc 1 tin theo filter. Tin thiếu giá/diện tích/phòng bị loại khi có filter tương ứng
+// (không đoán bừa để khỏi đưa kèo sai vào danh sách khách chọn).
+export function itemMatchesFilters(item: CategoryItem, f: ScanFilters): boolean {
+  if (f.priceMin != null && (item.price == null || item.price < f.priceMin * 1_000_000_000)) return false;
+  if (f.priceMax != null && (item.price == null || item.price > f.priceMax * 1_000_000_000)) return false;
+  if (f.areaMin != null && (item.size == null || item.size < f.areaMin)) return false;
+  if (f.areaMax != null && (item.size == null || item.size > f.areaMax)) return false;
+  if (f.minRooms != null && (item.rooms == null || item.rooms < f.minRooms)) return false;
+  return true;
 }
 
 export interface CategoryScan {
@@ -201,44 +263,54 @@ function toItem(ad: Record<string, unknown>): CategoryItem | null {
 }
 
 // Quét danh mục: trả tối đa `limit` tin bán, ưu tiên lọc đúng quận.
-// `cgOverride` cho phép ép 1 mã cg khi kind là nha-dat gộp.
+// Khi có filter giá/diện tích thì quét sâu hơn (gateway không lọc hộ 2 mục này).
 async function scanOneCg(
   cg: number,
   parsed: CategorySlug,
   limit: number,
+  filters: ScanFilters | null,
+  override: AreaOverride | null,
 ): Promise<{ items: CategoryItem[]; ward: string | null; region: string | null }> {
   let regionV2: number | null = null;
   let areaV2: number | null = null;
   let region: string | null = null;
   let ward: string | null = null;
 
-  if (parsed.provinceName) {
-    regionV2 = await resolveRegionCode(cg, parsed.provinceName);
-    if (regionV2 !== null) region = parsed.provinceName;
-    if (regionV2 !== null && parsed.wardSlug) {
-      areaV2 = await resolveAreaCode(cg, regionV2, parsed.wardSlug);
-      if (areaV2 !== null) ward = parsed.wardSlug;
+  // Khu vực: ưu tiên ghi đè từ filter, không có thì lấy trong link danh mục
+  const provinceName = override?.provinceName || parsed.provinceName;
+  const wardSlug = override?.wardSlug || parsed.wardSlug;
+
+  if (provinceName) {
+    regionV2 = await resolveRegionCode(cg, provinceName);
+    if (regionV2 !== null) region = provinceName;
+    if (regionV2 !== null && wardSlug) {
+      areaV2 = await resolveAreaCode(cg, regionV2, wardSlug);
+      if (areaV2 !== null) ward = wardSlug;
     }
   }
 
+  // Gateway lọc hộ số phòng ngủ (rooms) — giá/diện tích lọc phía mình
+  const roomsParam = filters?.minRooms ? `&rooms=${Math.floor(filters.minRooms)}` : "";
+
   const base =
     areaV2 !== null
-      ? `cg=${cg}&area_v2=${areaV2}`
+      ? `cg=${cg}&area_v2=${areaV2}${roomsParam}`
       : regionV2 !== null
-        ? `cg=${cg}&region_v2=${regionV2}`
-        : `cg=${cg}`;
+        ? `cg=${cg}&region_v2=${regionV2}${roomsParam}`
+        : `cg=${cg}${roomsParam}`;
 
   const items: CategoryItem[] = [];
   let page = 1;
-  // Quét tối đa 3 trang (150 tin thô) để đủ `limit` sau khi loại tin thuê/thiếu nội dung
-  while (items.length < limit && page <= 3) {
+  // 3 trang (150 tin thô) khi không lọc; 8 trang (400 tin thô) khi có filter giá/diện tích
+  const maxPages = hasScanFilters(filters) ? 8 : 3;
+  while (items.length < limit && page <= maxPages) {
     const data = await gatewayGet(`${base}&limit=${PAGE_SIZE}&page=${page}`);
     if (!data) break;
     const ads = (data.ads ?? []) as Record<string, unknown>[];
     if (ads.length === 0) break;
     for (const ad of ads) {
       const item = toItem(ad);
-      if (item && item.text.length >= 120) {
+      if (item && item.text.length >= 120 && (!filters || itemMatchesFilters(item, filters))) {
         items.push(item);
         if (items.length >= limit) break;
       }
@@ -252,6 +324,8 @@ async function scanOneCg(
 export async function scanCategoryUrl(
   rawUrl: string,
   limit: number,
+  filters: ScanFilters | null = null,
+  override: AreaOverride | null = null,
 ): Promise<{ ok: true; scan: CategoryScan } | { ok: false; reason: string; message: string }> {
   const parsed = parseCategoryUrl(rawUrl);
   if (!parsed) {
@@ -272,7 +346,7 @@ export async function scanCategoryUrl(
   let total = 0;
 
   for (const cg of cgs) {
-    const r = await scanOneCg(cg, parsed, capped);
+    const r = await scanOneCg(cg, parsed, capped, filters, override);
     ward = ward ?? r.ward;
     region = region ?? r.region;
     items = items.concat(r.items);
@@ -310,6 +384,7 @@ export async function scanCategoryUrl(
         region,
         exact,
         total,
+        filtered: hasScanFilters(filters),
       },
       items,
       truncated: items.length >= capped,
