@@ -48,15 +48,15 @@ export default async function DashboardPage() {
 
   return (
     <main className="min-h-screen bg-cream">
-      <header className="sticky top-0 z-30 backdrop-blur-xl bg-white/80 border-b border-slate-200/60">
+      <header className="sticky top-0 z-30 backdrop-blur-xl bg-navy/90 border-b border-white/10">
         <div className="mx-auto max-w-[1120px] px-5 md:px-8 h-[64px] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-navy flex items-center justify-center text-gold font-black text-[14px] tracking-widest">
+            <div className="w-9 h-9 rounded-xl bg-gold flex items-center justify-center text-navy font-black text-[14px] tracking-widest">
               AI
             </div>
             <div className="leading-none">
-              <div className="font-extrabold text-[15px] tracking-tight text-navy">BĐS NGỘP THƠM</div>
-              <div className="text-[11px] tracking-[0.14em] font-semibold text-slate-500 mt-[2px]">DASHBOARD</div>
+              <div className="font-extrabold text-[15px] tracking-tight text-white">BĐS NGỘP THƠM</div>
+              <div className="text-[10px] tracking-[0.18em] font-semibold text-gold mt-[3px]">DASHBOARD</div>
             </div>
           </div>
           <SignOutButton />

@@ -24,17 +24,25 @@ const QA: { q: string; a: string }[] = [
 
 export function Faq() {
   return (
-    <section className="mx-auto max-w-[760px] px-5 md:px-8 py-10">
-      <h2 className="text-[22px] md:text-[28px] font-black tracking-tight text-navy text-center">
-        Câu hỏi thường gặp
-      </h2>
+    <section id="faq" className="mx-auto max-w-[760px] px-5 md:px-8 py-12 md:py-16 scroll-mt-20">
+      <div className="text-center">
+        <div className="text-[11px] font-black tracking-[0.2em] uppercase text-[#a5823f]">
+          Giải đáp
+        </div>
+        <h2 className="mt-3 text-[24px] md:text-[32px] font-black tracking-tight text-navy">
+          Câu hỏi thường gặp
+        </h2>
+      </div>
 
-      <div className="mt-6 space-y-4">
+      <div className="mt-8 space-y-3">
         {QA.map((item) => (
-          <details key={item.q} className="group rounded-[14px] border border-slate-200 bg-white p-5">
+          <details
+            key={item.q}
+            className="group rounded-[16px] border border-slate-200 bg-white p-5 hover:border-navy/25 hover:shadow-[0_12px_32px_-20px_rgba(11,29,58,0.35)] transition open:shadow-[0_12px_32px_-20px_rgba(11,29,58,0.35)] open:border-navy/25"
+          >
             <summary className="cursor-pointer list-none flex items-center justify-between gap-4 text-[14px] font-bold text-navy">
               {item.q}
-              <span className="text-slate-400 group-open:rotate-45 transition-transform text-[18px] leading-none">
+              <span className="shrink-0 w-7 h-7 rounded-full bg-cream border border-slate-200 flex items-center justify-center text-slate-500 group-open:rotate-45 group-open:bg-navy group-open:text-white group-open:border-navy transition text-[16px] leading-none">
                 +
               </span>
             </summary>

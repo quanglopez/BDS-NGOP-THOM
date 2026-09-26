@@ -1,39 +1,33 @@
-// Dải social proof - chỉ nói đúng những gì đang có thật
+// Dải niềm tin: chỉ nói đúng những gì đang có thật (beta + năng lực tool)
+const STATS = [
+  { v: "1 phút", l: "lọc 100 tin Bulk Check" },
+  { v: "6 tiêu chí", l: "AI chấm mỗi tin" },
+  { v: "63 tỉnh", l: "tự nhận diện khu vực" },
+  { v: "20 tin", l: "miễn phí mỗi ngày" },
+];
+
 export function SocialProof() {
   return (
     <section className="mx-auto max-w-[1120px] px-5 md:px-8 pt-10">
-      <div className="rounded-[18px] border border-slate-200 bg-white p-5 md:p-6 shadow-sm">
-        <div className="flex flex-wrap items-center gap-6">
-          <div className="flex -space-x-2">
-            {["MT", "TH", "HP", "NL", "VK"].map((a) => (
-              <div
-                key={a}
-                className="w-9 h-9 rounded-full bg-navy text-gold border-2 border-white flex items-center justify-center text-[11px] font-bold"
-              >
-                {a}
+      <div className="rounded-[20px] border border-slate-200 bg-white p-5 md:p-7 shadow-[0_10px_40px_-20px_rgba(11,29,58,0.25)]">
+        <div className="flex flex-col md:flex-row md:items-center gap-5">
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="w-10 h-10 rounded-full bg-emerald-100 border border-emerald-200 flex items-center justify-center text-[16px]">
+              🚀
+            </span>
+            <div>
+              <div className="text-[15px] font-black text-navy">Đang mở beta cho môi giới</div>
+              <div className="mt-0.5 text-[12px] text-slate-500">
+                Giới thiệu bạn dùng link của mình → <b className="text-navy">+10 check free</b>
               </div>
-            ))}
-            <div className="w-9 h-9 rounded-full bg-gold text-navy border-2 border-white flex items-center justify-center text-[10px] font-bold">
-              +?
             </div>
           </div>
 
-          <div>
-            <div className="text-[15px] font-black text-navy">Đang mở beta cho môi giới bất động sản</div>
-            <div className="mt-1 text-[12px] text-slate-500">
-              Mới ra mắt — mỗi môi giới giới thiệu được <b>+10 check free</b> khi bạn dùng link của họ.
-            </div>
-          </div>
-
-          <div className="ml-auto grid grid-cols-3 gap-4 text-center">
-            {[
-              { v: "1 phút", l: "lọc 100 tin" },
-              { v: "6 tiêu chí", l: "AI chấm mỗi tin" },
-              { v: "Free 20", l: "tin/ngày" },
-            ].map((s) => (
+          <div className="md:ml-auto grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-6 md:text-right w-full md:w-auto">
+            {STATS.map((s) => (
               <div key={s.l}>
-                <div className="text-[16px] font-black text-navy">{s.v}</div>
-                <div className="text-[11px] text-slate-500">{s.l}</div>
+                <div className="text-[18px] font-black text-navy tabular-nums">{s.v}</div>
+                <div className="text-[11px] text-slate-500 mt-0.5">{s.l}</div>
               </div>
             ))}
           </div>

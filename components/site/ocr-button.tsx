@@ -17,7 +17,7 @@ export default function OcrButton({
         type="button"
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
-        className="h-[48px] px-5 rounded-[12px] border border-slate-200 bg-white hover:bg-slate-50 disabled:opacity-50 text-[14px] font-semibold text-slate-700 flex items-center justify-center gap-2 transition"
+        className="h-[50px] px-5 rounded-[12px] border border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 disabled:opacity-50 text-[14px] font-semibold text-slate-700 flex items-center justify-center gap-2 transition"
       >
         <span>🖼</span> Ảnh chụp tin
       </button>

@@ -1,17 +1,39 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createServerClient, type CookieMethodsServer, type CookieOptions } from "@supabase/ssr";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { applyReferral } from "@/lib/referral";
 
 // Callback sau khi Google OAuth trả về: đổi code lấy session, áp dụng mã giới thiệu, về /dashboard
+// Cookie session được gom lại rồi đính vào response redirect trả về —
+// nếu không, browser không nhận cookie và login xong là mất.
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const next = searchParams.get("next") ?? "/dashboard";
   const ref = searchParams.get("ref");
 
+  // Gom Set-Cookie từ exchangeCodeForSession để đính vào redirect cuối
+  const pending: { name: string; value: string; options: CookieOptions }[] = [];
+  const cookieMethods: CookieMethodsServer = {
+    getAll() {
+      return request.cookies.getAll();
+    },
+    setAll(cookiesToSet) {
+      cookiesToSet.forEach(({ name, value, options }) => {
+        request.cookies.set(name, value);
+        pending.push({ name, value, options });
+      });
+    },
+  };
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: cookieMethods },
+  );
+
+  let dest = `${origin}/login?error=auth`;
+
   if (code) {
-    const supabase = await createClient();
     const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
     if (!error) {
@@ -28,9 +50,13 @@ export async function GET(request: NextRequest) {
           // bỏ qua
         }
       }
-      return NextResponse.redirect(`${origin}${next}`);
+      dest = `${origin}${next}`;
     }
   }
 
-  return NextResponse.redirect(`${origin}/login?error=auth`);
+  const response = NextResponse.redirect(dest);
+  for (const { name, value, options } of pending) {
+    response.cookies.set(name, value, options);
+  }
+  return response;
 }

@@ -60,7 +60,7 @@ export function Checker() {
     } catch {
       setExtractState({
         kind: "error",
-        text: "Trình duyệt không cho đọc clipboard. Hãu dán trực tiếp (Ctrl+V) vào ô bên dưới.",
+        text: "Trình duyệt không cho đọc clipboard. Hãy dán trực tiếp (Ctrl+V) vào ô bên dưới.",
       });
       return;
     }
@@ -95,62 +95,82 @@ export function Checker() {
     setExtractState({ kind: "error", text: result.message });
   };
 
-  // Anh chup man hinh tin rao (Zalo/Facebook): OCR ngay trong trinh duyet roi dien vao o
+  // Ảnh chụp màn hình tin rao (Zalo/Facebook): OCR ngay trong trình duyệt rồi điền vào ô
   const handleOcrFile = async (file: File) => {
     if (ocrState.busy) return;
     if (file.size > 12 * 1024 * 1024) {
-      setOcrState({ busy: false, progress: 0, text: "Anh qua nang (vuot 12MB). Hay chup lai gon hon." });
+      setOcrState({ busy: false, progress: 0, text: "Ảnh quá nặng (vượt 12MB). Hãy chụp lại gọn hơn." });
       return;
     }
-    setOcrState({ busy: true, progress: 0, text: "Dang tai bo nhan dang tieng Viet (lan dau hoi lau)..." });
+    setOcrState({ busy: true, progress: 0, text: "Đang tải bộ nhận dạng tiếng Việt (lần đầu hơi lâu)..." });
     try {
       const text = await ocrImageToText(file, (pct) =>
-        setOcrState({ busy: true, progress: pct, text: `Dang doc chu trong anh... ${pct}%` }),
+        setOcrState({ busy: true, progress: pct, text: `Đang đọc chữ trong ảnh... ${pct}%` }),
       );
       setText(text.slice(0, 1000));
-      setOcrState({ busy: false, progress: 100, text: `Da doc ${text.length} ky tu tu anh. Kiem tra roi bam Check.` });
+      setOcrState({ busy: false, progress: 100, text: `Đã đọc ${text.length} ký tự từ ảnh. Kiểm tra lại rồi bấm Check.` });
     } catch {
-      setOcrState({ busy: false, progress: 0, text: "Khong doc duoc chu trong anh nay. Thu anh ro net hon, hoac copy mo ta tin roi dan vao o." });
+      setOcrState({ busy: false, progress: 0, text: "Không đọc được chữ trong ảnh này. Thử ảnh rõ nét hơn, hoặc copy mô tả tin rồi dán vào ô." });
     }
   };
 
   return (
     <>
-      <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-navy" />
-        <div className="absolute inset-0 bg-gradient-to-br from-navy via-[#132A56] to-navy" />
-        <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-gold/10 rounded-full blur-[80px] -translate-y-1/2 translate-x-1/3" />
-        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-500/10 rounded-full blur-[90px] translate-y-1/2 -translate-x-1/4" />
+      <section className="relative overflow-hidden bg-navy">
+        {/* Nền: gradient + lưới mờ + quầng sáng */}
+        <div className="absolute inset-0 bg-gradient-to-br from-navy via-[#132A56] to-[#0B1D3A]" />
+        <div
+          className="absolute inset-0 opacity-[0.13]"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)",
+            backgroundSize: "44px 44px",
+            maskImage: "radial-gradient(ellipse 90% 70% at 50% 0%, black 30%, transparent 75%)",
+            WebkitMaskImage: "radial-gradient(ellipse 90% 70% at 50% 0%, black 30%, transparent 75%)",
+          }}
+        />
+        <div className="absolute -top-32 right-[-120px] w-[560px] h-[560px] bg-gold/15 rounded-full blur-[100px]" />
+        <div className="absolute bottom-[-200px] left-[-140px] w-[520px] h-[520px] bg-blue-600/20 rounded-full blur-[100px]" />
 
-        <div className="relative mx-auto max-w-[1120px] px-5 md:px-8 pt-12 md:pt-20 pb-16 md:pb-24">
-          <div className="max-w-[760px]">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 border border-white/15 text-[11px] tracking-[0.12em] text-amber-200 font-semibold mb-5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              CHẤM ĐIỂM 6 TIÊU CHÍ • LỌC KÈO NGỘP &gt;80 ĐIỂM
+        <div className="relative mx-auto max-w-[1120px] px-5 md:px-8 pt-12 md:pt-20 pb-14 md:pb-20">
+          <div className="max-w-[780px]">
+            <div className="flex flex-wrap items-center gap-2 mb-5">
+              <span className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-gold/15 border border-gold/30 text-[11px] tracking-[0.1em] text-gold font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                MIỄN PHÍ 20 TIN/NGÀY • KHÔNG CẦN THẺ
+              </span>
+              <span className="inline-flex items-center px-3 py-1.5 rounded-full bg-white/10 border border-white/15 text-[11px] tracking-[0.1em] text-slate-200 font-semibold">
+                63 TỈNH/THÀNH
+              </span>
             </div>
-            <h1 className="text-[32px] md:text-[54px] font-black leading-[0.95] tracking-[-0.03em] text-white">
-              Dán tin BĐS vào đây
+            <h1 className="text-[34px] md:text-[56px] font-black leading-[1.02] tracking-[-0.03em] text-white">
+              Dán tin BĐS vào đây,
               <br />
-              <span className="text-gold">Biết ngay kèo Ngộp</span>
-              <br />
-              hay Thơm
+              biết ngay <span className="text-transparent bg-clip-text bg-gradient-to-r from-gold to-[#e8cf9a]">kèo Ngộp</span> hay Thơm
             </h1>
-            <p className="mt-4 text-[16px] md:text-[18px] leading-[1.5] text-slate-300 font-medium max-w-[560px]">
-              AI chấm điểm tiềm năng đầu tư BĐS Việt Nam trong 1s. Phát hiện bán gấp, so sánh giá thị trường, đánh
-              giá pháp lý.
+            <p className="mt-4 text-[15px] md:text-[18px] leading-[1.55] text-slate-300 max-w-[600px]">
+              AI chấm điểm tiềm năng đầu tư theo <b className="text-white font-semibold">6 tiêu chí</b> —
+              phát hiện bán gấp, so sánh giá thị trường, đánh giá pháp lý — trong vài giây.
             </p>
+
+            <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px] text-slate-400">
+              <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Không lưu tin của bạn</span>
+              <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Link, ảnh chụp, text đều được</span>
+              <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Đăng nhập để dùng AI thật</span>
+            </div>
           </div>
 
-          <div className="mt-8 md:mt-10 bg-white rounded-[20px] md:rounded-[24px] shadow-[0_20px_80px_-20px_rgba(0,0,0,0.5)] border border-slate-200/70 overflow-hidden max-w-[760px]">
+          {/* Thẻ nhập tin */}
+          <div className="mt-8 md:mt-10 bg-white rounded-[20px] md:rounded-[24px] shadow-[0_24px_90px_-20px_rgba(0,0,0,0.55)] border border-white/40 overflow-hidden max-w-[780px]">
             <div className="p-4 md:p-7">
               <div className="flex items-center justify-between mb-3">
                 <label
                   htmlFor="listing"
                   className="text-[12px] font-bold tracking-[0.12em] text-slate-500 uppercase"
                 >
-                  Tin rao Batdongsan / Chotot / Facebook
+                  ① Đưa tin vào — dán text, link hoặc ảnh chụp
                 </label>
-                <span className="text-[11px] text-slate-400">{text.length}/1000</span>
+                <span className="text-[11px] tabular-nums text-slate-400">{text.length}/1000</span>
               </div>
 
               <Textarea
@@ -159,7 +179,7 @@ export function Checker() {
                 onChange={(e) => setText(e.target.value)}
                 maxLength={1000}
                 placeholder="Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ (rẻ hơn thị trường 1 tỷ), sổ hồng riêng, hẻm xe hơi..."
-                className="w-full min-h-[132px] md:min-h-[148px] resize-none rounded-[14px] bg-cream border-slate-200 px-4 py-3.5 text-[15px] leading-[1.6] placeholder:text-slate-400 focus-visible:ring-[#0B1D3A]/10 focus-visible:border-[#0B1D3A]/20"
+                className="w-full min-h-[132px] md:min-h-[148px] resize-none rounded-[14px] bg-cream border-slate-200 px-4 py-3.5 text-[15px] leading-[1.6] placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy/15 focus-visible:border-navy/30"
               />
 
               <div className="mt-3 flex flex-wrap gap-2">
@@ -168,9 +188,9 @@ export function Checker() {
                     key={i}
                     type="button"
                     onClick={() => setText(ex)}
-                    className="text-[11px] px-2.5 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 border border-slate-200 transition"
+                    className="text-[11px] px-3 py-1.5 rounded-full bg-slate-100 hover:bg-navy hover:text-white text-slate-600 border border-slate-200 transition"
                   >
-                    Ví dụ {i + 1}: {ex.slice(0, 36)}...
+                    Thử ví dụ {i + 1}: {ex.slice(0, 32)}...
                   </button>
                 ))}
               </div>
@@ -180,7 +200,7 @@ export function Checker() {
                   type="button"
                   variant="outline"
                   onClick={handlePaste}
-                  className="h-[48px] px-5 rounded-[12px] border-slate-200 bg-white hover:bg-slate-50 text-[14px] font-semibold text-slate-700"
+                  className="h-[50px] px-5 rounded-[12px] border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-[14px] font-semibold text-slate-700"
                 >
                   {extractState.kind === "loading" && (
                     <span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
@@ -194,7 +214,7 @@ export function Checker() {
                   type="button"
                   onClick={handleCheck}
                   disabled={!text.trim() || loading}
-                  className="h-[48px] flex-1 rounded-[12px] bg-navy hover:bg-[#112a5a] disabled:opacity-50 text-white text-[15px] font-bold shadow-[0_8px_24px_-8px_rgba(11,29,58,0.6)]"
+                  className="h-[50px] flex-1 rounded-[12px] bg-gradient-to-r from-navy to-[#16305f] hover:from-[#0e2547] hover:to-[#1a3868] disabled:opacity-50 text-white text-[15px] font-bold shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)]"
                 >
                   {loading ? (
                     <>
@@ -203,65 +223,76 @@ export function Checker() {
                     </>
                   ) : (
                     <>
-                      <span>🔍</span> Check bằng AI
+                      <span>🔍</span> ② Check bằng AI
                     </>
                   )}
                 </Button>
               </div>
 
               <div className="mt-3 flex items-start gap-2 text-[11px] text-slate-500">
-                <span className="w-1 h-1 rounded-full bg-emerald-500 mt-1" />
+                <span className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${source === "ai" ? "bg-emerald-500" : "bg-amber-500"}`} />
                 <div>
-                  {source === "ai"
-                    ? "Chấm điểm bằng AI thật"
-                    : "Chấm điểm local • Đăng nhập để dùng AI thật"}
-                  {" • "}Q qua{" "}
-                  <code className="px-1.5 py-0.5 rounded bg-slate-100 border">/api/check</code>
+                  {source === "ai" ? (
+                    <>Chấm điểm bằng <b>AI thật</b> • {analyzedAt ? `lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}` : ""}</>
+                  ) : (
+                    <>Đang chấm bằng <b>công thức dự phòng</b> • <a href="/login" className="text-navy font-semibold underline underline-offset-2">Đăng nhập</a> để dùng AI thật</>
+                  )}
                 </div>
               </div>
 
-              {ocrState.text && (
-                <div
-                  className={`mt-2 text-[11px] leading-snug ${
-                    ocrState.busy
-                      ? "text-slate-500"
-                      : ocrState.text.startsWith("Đã") || ocrState.text.startsWith("Da")
-                        ? "text-emerald-700"
-                        : "text-amber-700"
-                  }`}
-                >
-                  {ocrState.text}
-                </div>
-              )}
-
-              {extractState.text && (
-                <div
-                  className={`mt-2 text-[11px] leading-snug ${
-                    extractState.kind === "error"
-                      ? "text-amber-700"
-                      : extractState.kind === "ok"
-                        ? "text-emerald-700"
-                        : "text-slate-500"
-                  }`}
-                >
-                  {extractState.text}
-                  {extractState.kind === "error" && (
-                    <div className="mt-1 text-slate-500">
-                      Cách dùng thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán
-                      vào ô trên.
+              {(ocrState.text || extractState.text) && (
+                <div className="mt-2 space-y-1.5">
+                  {ocrState.text && (
+                    <div
+                      className={`text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
+                        ocrState.busy
+                          ? "bg-slate-100 text-slate-600"
+                          : ocrState.text.startsWith("Đã")
+                            ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                            : "bg-amber-50 text-amber-800 border border-amber-200"
+                      }`}
+                    >
+                      {ocrState.busy && (
+                        <span className="inline-block w-full h-1 rounded-full bg-slate-200 overflow-hidden mb-1.5">
+                          <span
+                            className="block h-full bg-navy transition-all"
+                            style={{ width: `${ocrState.progress}%` }}
+                          />
+                        </span>
+                      )}
+                      {ocrState.text}
+                    </div>
+                  )}
+                  {extractState.text && (
+                    <div
+                      className={`text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
+                        extractState.kind === "error"
+                          ? "bg-amber-50 text-amber-800 border border-amber-200"
+                          : extractState.kind === "ok"
+                            ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                            : "bg-slate-100 text-slate-600"
+                      }`}
+                    >
+                      {extractState.text}
+                      {extractState.kind === "error" && (
+                        <div className="mt-1 text-slate-500">
+                          Cách dùng thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán
+                          vào ô trên.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               )}
             </div>
 
-            <div className="h-[44px] px-4 md:px-7 flex items-center justify-between bg-cream border-t border-slate-200 text-[11px]">
-              <div className="flex items-center gap-3 text-slate-500">
-                <span>🛡️ Không lưu tin của bạn</span>
-                <span className="hidden sm:inline">•</span>
-                <span className="hidden sm:inline">Phân tích trong 0.8s</span>
+            <div className="px-4 md:px-7 h-[44px] flex items-center justify-between bg-cream border-t border-slate-200 text-[11px]">
+              <div className="flex items-center gap-2 text-slate-500">
+                <span>🛡️ Tin chỉ dùng để chấm điểm, không chia sẻ</span>
               </div>
-              <div className="text-slate-400">Vercel-ready • Edge Function</div>
+              <a href="/pricing" className="font-semibold text-navy hover:underline">
+                Cần check số lượng lớn? Xem gói Pro →
+              </a>
             </div>
           </div>
         </div>

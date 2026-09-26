@@ -62,64 +62,67 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
   };
 
   return (
-    <div className="bg-white rounded-[24px] border border-slate-200 shadow-[0_20px_60px_-24px_rgba(0,0,0,0.25)] overflow-hidden">
-      {/* Đầu thẻ: vòng điểm + tag + thông tin trích xuất */}
-      <div className="px-6 md:px-8 py-5 flex flex-wrap items-center justify-between gap-4 border-b border-slate-100 bg-gradient-to-r from-white to-[#FFFEFB]">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className={`w-[88px] h-[88px] shrink-0 rounded-full flex items-center justify-center border-[6px] relative ${ringClass}`}>
-            <div className="text-center leading-none">
-              <div className="text-[28px] font-black tracking-tight">{t.overall}</div>
-              <div className="text-[11px] font-bold tracking-widest mt-0.5">/100</div>
-            </div>
-            <svg className="absolute inset-[-6px] w-[88px] h-[88px] -rotate-90" viewBox="0 0 88 88">
-              <circle
-                cx="44"
-                cy="44"
-                r="38"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="6"
-                strokeLinecap="round"
-                strokeDasharray={`${(t.overall / 100) * 238} 238`}
-                className="opacity-30"
-              />
-            </svg>
-          </div>
-
-          <div className="min-w-0">
-            <div
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
-                isAi
-                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                  : "bg-amber-50 text-amber-800 border-amber-200"
-              }`}
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${isAi ? "bg-emerald-500" : "bg-amber-500"}`} />
-              {isAi ? "Phân tích bằng AI" : "Ước tính nhanh – AI đang bận, dùng công thức dự phòng"}
-            </div>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <div
-                className={`inline-flex px-3 py-1 rounded-full text-[11px] font-black tracking-[0.12em] border ${tagClass}`}
-              >
-                {t.tag}
+    <div className="bg-white rounded-[24px] border border-slate-200 shadow-[0_24px_70px_-24px_rgba(11,29,58,0.4)] overflow-hidden">
+      {/* Đầu thẻ: nền navy + vòng điểm + tag + thông tin trích xuất */}
+      <div className="relative px-6 md:px-8 py-6 overflow-hidden bg-gradient-to-br from-navy via-[#132A56] to-navy">
+        <div className="absolute -top-20 right-10 w-[280px] h-[280px] bg-gold/15 rounded-full blur-[70px]" />
+        <div className="relative flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-4 md:gap-5">
+            <div className={`w-[92px] h-[92px] shrink-0 rounded-full flex items-center justify-center border-[6px] relative bg-white ${ringClass}`}>
+              <div className="text-center leading-none">
+                <div className="text-[30px] font-black tracking-tight">{t.overall}</div>
+                <div className="text-[10px] font-bold tracking-widest mt-0.5 opacity-70">/100 ĐIỂM</div>
               </div>
-              <span className="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200">💰 {t.extracted.price}</span>
-              <span className="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200">📐 {t.extracted.area}</span>
-              <span className="px-2.5 py-1 rounded-full bg-navy text-white">📍 {t.extracted.street}</span>
+              <svg className="absolute inset-[-6px] w-[92px] h-[92px] -rotate-90" viewBox="0 0 92 92">
+                <circle
+                  cx="46"
+                  cy="46"
+                  r="40"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="6"
+                  strokeLinecap="round"
+                  strokeDasharray={`${(t.overall / 100) * 251} 251`}
+                  className="opacity-30"
+                />
+              </svg>
             </div>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <div className="text-right hidden sm:block">
-            <div className="text-[11px] tracking-widest font-bold text-slate-400">ĐIỂM SỐ</div>
-            <div className="text-[13px] font-semibold text-slate-700">
-              {analyzedAt
-                ? `Phân tích lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}`
-                : "Ước tính bằng công thức dự phòng"}
+            <div className="min-w-0">
+              <div
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                  isAi
+                    ? "bg-emerald-400/15 text-emerald-300 border-emerald-400/30"
+                    : "bg-amber-400/15 text-amber-300 border-amber-400/30"
+                }`}
+              >
+                <span className={`w-1.5 h-1.5 rounded-full ${isAi ? "bg-emerald-400" : "bg-amber-400"}`} />
+                {isAi ? "Phân tích bằng AI" : "Ước tính nhanh – AI đang bận, dùng công thức dự phòng"}
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                <div
+                  className={`inline-flex px-3 py-1 rounded-full text-[11px] font-black tracking-[0.12em] border ${tagClass}`}
+                >
+                  {t.tag}
+                </div>
+                <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-slate-200 text-[11px] font-semibold">💰 {t.extracted.price}</span>
+                <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-slate-200 text-[11px] font-semibold">📐 {t.extracted.area}</span>
+                <span className="px-2.5 py-1 rounded-full bg-gold text-navy text-[11px] font-bold">📍 {t.extracted.street}</span>
+              </div>
             </div>
           </div>
-          <div className={`w-3 h-3 rounded-full ${dotClass} animate-pulse`} />
+
+          <div className="flex items-center gap-2">
+            <div className="text-right hidden sm:block">
+              <div className="text-[10px] tracking-[0.18em] font-bold text-slate-400">THỜI GIAN</div>
+              <div className="mt-1 text-[13px] font-semibold text-slate-200">
+                {analyzedAt
+                  ? `Phân tích lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}`
+                  : "Ước tính bằng công thức dự phòng"}
+              </div>
+            </div>
+            <div className={`w-2.5 h-2.5 rounded-full ${dotClass} animate-pulse`} />
+          </div>
         </div>
       </div>
 
