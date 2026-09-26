@@ -1,22 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
-import { planFromAmount, transferContent } from "@/lib/payments";
+import { parseUserIdFromContent, planFromAmount, transferContent } from "@/lib/payments";
 import { nextExpiry } from "@/lib/quota";
 
 // Webhook SePay: ngân hàng báo có tiền -> tự nâng plan
-// Doc: https://docs.sepay.vn - payload chứa content, transferAmount, referenceCode
+// Doc: https://docs.sepay.vn
 // Nguyên tắc: mọi khoản tiền vào đều phải có dấu vết trong bảng payments
 // (status=unmatched nếu không khớp), để admin đối chiếu và xử lý tay — không để mất dấu.
+
+// Chuẩn hoá token xác thực SePay gửi lên: chấp nhận "Apikey X", "Bearer X" hoặc X
+function readAuth(req: NextRequest): string {
+  const raw =
+    req.headers.get("authorization") ??
+    req.headers.get("x-api-key") ??
+    req.headers.get("x-sepay-api-key") ??
+    "";
+  return raw.replace(/^(apikey|bearer)\s+/i, "").trim();
+}
+
+// Chỉ log vài ký tự đầu để đối chiếu, không để lộ key
+function mask(token: string): string {
+  return token ? `${token.slice(0, 4)}…(${token.length} ký tự)` : "(rỗng)";
+}
+
 export async function POST(req: NextRequest) {
   const apiKey = process.env.SEPAY_API_KEY;
   if (!apiKey) {
+    console.error("[sepay] MISSING_SEPAY_API_KEY");
     return NextResponse.json({ error: "Chưa cấu hình SEPAY_API_KEY" }, { status: 500 });
   }
 
-  // SePay gửi Authorization: Apikey <key> (cũng chấp nhận Bearer / X-API-Key)
-  const auth = req.headers.get("authorization") ?? req.headers.get("x-api-key") ?? "";
-  const token = auth.replace(/^(apikey|bearer)\s+/i, "");
+  const token = readAuth(req);
   if (token !== apiKey) {
+    console.warn(`[sepay] AUTH_FAIL got=${mask(token)} expect=${mask(apiKey)}`);
     return NextResponse.json({ error: "Sai API key" }, { status: 401 });
   }
 
@@ -42,7 +58,7 @@ export async function POST(req: NextRequest) {
       user_id: userId,
       plan: "unmatched",
       amount,
-      transfer_content: `${content} (${reason})`.slice(0, 120),
+      transfer_content: `${content} (${reason})`.slice(0, 200),
       status: "unmatched",
       sepay_ref: ref,
     });
@@ -55,12 +71,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, skipped: "not-inbound" });
   }
 
-  // Nhận diện user từ nội dung CK: NANGCAP {user_id}
-  const match = content.match(/NANGCAP\s+([0-9a-f-]{36})/i);
-  if (!match) {
+  // Nhận diện user từ nội dung CK: NANGCAP {uuid} (ngân hàng có thể bỏ dấu gạch)
+  const userId = parseUserIdFromContent(content);
+  if (!userId) {
+    console.warn(`[sepay] NO_MATCH content=${content.slice(0, 120)}`);
     return recordUnmatched(null, "khong-nhan-dien-duoc-nguoi-chuyen");
   }
-  const userId = match[1];
 
   const plan = planFromAmount(amount);
   if (!plan || plan === "free") {
@@ -100,7 +116,7 @@ export async function POST(req: NextRequest) {
       user_id: userId,
       plan,
       amount,
-      transfer_content: content.slice(0, 120),
+      transfer_content: content.slice(0, 200),
       status: "paid",
       sepay_ref: ref,
     });
@@ -116,7 +132,7 @@ export async function POST(req: NextRequest) {
   const expiresAt = nextExpiry(payer?.plan_expires_at);
   await admin.from("users").update({ plan, plan_expires_at: expiresAt }).eq("id", userId);
 
-  console.log(`[sepay] plan=${plan} user=${userId} expires=${expiresAt} ref=${ref ?? "-"}`);
+  console.log(`[sepay] plan=${plan} user=${userId} amount=${amount} expires=${expiresAt} ref=${ref ?? "-"}`);
 
   return NextResponse.json({ ok: true, plan, plan_expires_at: expiresAt });
 }

@@ -1,6 +1,6 @@
 // Self-check: gói suy ra từ số tiền + nội dung CK. Chạy: npm test
 import { strict as assert } from "node:assert";
-import { planFromAmount, transferContent, PLANS } from "../lib/payments.ts";
+import { planFromAmount, transferContent, parseUserIdFromContent, PLANS } from "../lib/payments.ts";
 
 let pass = 0;
 let fail = 0;
@@ -62,6 +62,25 @@ async function main() {
     const m = `NANGCAP ${uid} chuyen tien nang cap`.match(/NANGCAP\s+([0-9a-f-]{36})/i);
     assert.ok(m);
     assert.equal(m![1], uid);
+  });
+
+  await check("ngân hàng bỏ dấu gạch UUID vẫn nhận ra", () => {
+    const uid = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+    const flat = uid.replace(/-/g, "");
+    // Chuẩn bị content thật SePay trả về: có mã giao dịch phía trước + không gạch
+    const bankContent = `MBVCB.16240052286.538407.NANGCAP ${flat}.CT tu 0421000467132 NGUYEN VAN A`;
+    assert.equal(parseUserIdFromContent(bankContent), uid);
+  });
+
+  await check("content dạng chuẩn (có gạch) vẫn nhận ra", () => {
+    const uid = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+    assert.equal(parseUserIdFromContent(transferContent(uid)), uid);
+  });
+
+  await check("UUID sai độ dài / không có NANGCAP thì trả null", () => {
+    assert.equal(parseUserIdFromContent("NANGCAP 3f2504e04f89"), null);
+    assert.equal(parseUserIdFromContent("MBVCB.123.CT tu NGUYEN VAN A"), null);
+    assert.equal(parseUserIdFromContent(""), null);
   });
 
   await check("nội dung không có NANGCAP thì không match", () => {

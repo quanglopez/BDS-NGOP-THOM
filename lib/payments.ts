@@ -21,6 +21,24 @@ export function vietQrImageUrl(amount: number, content: string): string {
   return `https://img.vietqr.io/image/${bank}-${account}-qr_only.png?amount=${amount}&addInfo=${encodeURIComponent(content)}`;
 }
 
+// Trích mã tài khoản từ nội dung CK ngân hàng trả về.
+// Ngân hàng thường bỏ dấu gạch của UUID (NANGCAP d7d8a114c5fc... thay vì
+// NANGCAP d7d8a114-c5fc-...) và chèn thêm mã giao dịch phía trước, nên phải
+// chấp nhận cả 2 dạng rồi chuẩn hoá về UUID có gạch.
+export function parseUserIdFromContent(content: string): string | null {
+  const m = content.match(/NANGCAP\s+([0-9a-fA-F-]{20,40})/);
+  if (!m) return null;
+  const hex = m[1].replace(/-/g, "").toLowerCase();
+  if (hex.length !== 32) return null;
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
+}
+
 // Gói suy ra từ số tiền chuyển khoản
 export function planFromAmount(amount: number): PlanKey | null {
   if (amount >= PLANS.team.price) return "team";
