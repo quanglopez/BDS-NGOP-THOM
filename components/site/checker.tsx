@@ -6,46 +6,33 @@ import { Button } from "@/components/ui/button";
 import { exampleListings } from "@/lib/market-data";
 import { runCheck, type CheckSource } from "@/lib/client-check";
 import { extractFromUrl, firstUrl, isBareUrl } from "@/lib/client-extract";
-import { ocrImageToText } from "@/lib/ocr";
+import { parseCategoryUrl } from "@/lib/category-slug";
 import type { AnalysisResult } from "@/lib/types";
 import { ResultCard } from "@/components/site/result-card";
-import OcrButton from "@/components/site/ocr-button";
+import { CategoryScan } from "@/components/dashboard/category-scan";
 
-// Chỉ hiện domain trong thông báo, không lộ toàn bộ URL
-function safeDomain(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, "");
-  } catch {
-    return "trang";
-  }
-}
+type Status = { kind: "idle" | "loading" | "ok" | "error"; text: string; reason?: string };
 
-// Hero + ô dán tin + nút chấm điểm
+// Hero + ô nhập duy nhất: dán link tin / link danh mục / mô tả tin -> Check bằng AI
 export function Checker() {
   const [text, setText] = useState("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [source, setSource] = useState<CheckSource>("local");
   const [analyzedAt, setAnalyzedAt] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(false);
-  const [extractState, setExtractState] = useState<{
-    kind: "idle" | "loading" | "ok" | "error";
-    text: string;
-    reason?: string;
-  }>({
-    kind: "idle",
-    text: "",
-  });
-  const [ocrState, setOcrState] = useState<{ busy: boolean; progress: number; text: string }>({ busy: false, progress: 0, text: "" });
+  const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
+  const [categoryUrl, setCategoryUrl] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
-  const handleCheck = async () => {
-    if (!text.trim() || loading) return;
+  const doCheck = async (payload: string, listingUrl?: string | null) => {
     setLoading(true);
+    setStatus({ kind: "loading", text: "AI đang chấm điểm..." });
     try {
-      const outcome = await runCheck(text);
+      const outcome = await runCheck(payload, { listingUrl: listingUrl ?? null });
       setResult(outcome.result);
       setSource(outcome.source);
       setAnalyzedAt(outcome.analyzedAt);
+      setStatus({ kind: "idle", text: "" });
       setTimeout(
         () => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
         100,
@@ -55,67 +42,43 @@ export function Checker() {
     }
   };
 
-  // Dán link tin rao: nếu clipboard chứa URL thì tự lấy nội dung trang,
-  // lấy được thì điền vào ô; không được thì báo rõ để khách copy tay
-  const handlePaste = async () => {
-    let clip = "";
-    try {
-      clip = await navigator.clipboard.readText();
-    } catch {
-      setExtractState({
-        kind: "error",
-        text: "Trình duyệt không cho đọc clipboard. Hãy dán trực tiếp (Ctrl+V) vào ô bên dưới.",
-      });
+  const handleCheck = async () => {
+    const raw = text.trim();
+    if (!raw || loading) return;
+
+    // 1) Link danh mục Chợ Tốt/Nhà Tốt -> quét danh sách nhiều tin
+    const url = isBareUrl(raw) ? raw : firstUrl(raw);
+    if (url && parseCategoryUrl(url)) {
+      setCategoryUrl(url);
+      setResult(null);
+      setStatus({ kind: "idle", text: "" });
       return;
     }
 
-    if (!clip.trim()) {
-      setExtractState({ kind: "error", text: "Clipboard trống — hãy copy link hoặc mô tả tin rồi dán." });
+    // 2) Link 1 tin -> lấy nội dung trang rồi chấm
+    if (url) {
+      setCategoryUrl(null);
+      setStatus({ kind: "loading", text: "Đang lấy nội dung tin từ link..." });
+      const r = await extractFromUrl(url);
+      if (!r.ok) {
+        setStatus({ kind: "error", text: r.message, reason: r.reason });
+        return;
+      }
+      setText(r.text);
+      await doCheck(r.text, url);
       return;
     }
 
-    const url = isBareUrl(clip) ? clip.trim() : firstUrl(clip);
-    if (!url) {
-      // Không phải link -> dán luôn nội dung mô tả tin
-      setText(clip);
-      setExtractState({ kind: "idle", text: "" });
-      return;
-    }
-
-    setExtractState({ kind: "loading", text: `Đang đọc trang ${safeDomain(url)}...` });
-    const result = await extractFromUrl(url);
-
-    if (result.ok) {
-      setText(result.text);
-      setExtractState({
-        kind: "ok",
-        text: `Đã lấy nội dung từ ${result.domain} (${result.text.length} ký tự). Kiểm tra rồi bấm Check.`,
-      });
-      return;
-    }
-
-    // Giữ lại phần text khách đã dán kèm (nếu có) để không mất gì
-    setText(isBareUrl(clip) ? "" : clip);
-    setExtractState({ kind: "error", text: result.message, reason: result.reason });
+    // 3) Văn bản thuần -> chấm thẳng
+    setCategoryUrl(null);
+    await doCheck(raw);
   };
 
-  // Ảnh chụp màn hình tin rao (Zalo/Facebook): OCR ngay trong trình duyệt rồi điền vào ô
-  const handleOcrFile = async (file: File) => {
-    if (ocrState.busy) return;
-    if (file.size > 12 * 1024 * 1024) {
-      setOcrState({ busy: false, progress: 0, text: "Ảnh quá nặng (vượt 12MB). Hãy chụp lại gọn hơn." });
-      return;
-    }
-    setOcrState({ busy: true, progress: 0, text: "Đang tải bộ nhận dạng tiếng Việt (lần đầu hơi lâu)..." });
-    try {
-      const text = await ocrImageToText(file, (pct) =>
-        setOcrState({ busy: true, progress: pct, text: `Đang đọc chữ trong ảnh... ${pct}%` }),
-      );
-      setText(text.slice(0, 1000));
-      setOcrState({ busy: false, progress: 100, text: `Đã đọc ${text.length} ký tự từ ảnh. Kiểm tra lại rồi bấm Check.` });
-    } catch {
-      setOcrState({ busy: false, progress: 0, text: "Không đọc được chữ trong ảnh này. Thử ảnh rõ nét hơn, hoặc copy mô tả tin rồi dán vào ô." });
-    }
+  const resetToInput = () => {
+    setCategoryUrl(null);
+    setResult(null);
+    setText("");
+    setStatus({ kind: "idle", text: "" });
   };
 
   return (
@@ -150,7 +113,9 @@ export function Checker() {
             <h1 className="text-[34px] md:text-[56px] font-black leading-[1.02] tracking-[-0.03em] text-white">
               Dán tin BĐS vào đây,
               <br />
-              biết ngay <span className="text-transparent bg-clip-text bg-gradient-to-r from-gold to-[#e8cf9a]">kèo Ngộp</span> hay Thơm
+              biết ngay{" "}
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-gold to-[#e8cf9a]">kèo Ngộp</span>{" "}
+              hay Thơm
             </h1>
             <p className="mt-4 text-[15px] md:text-[18px] leading-[1.55] text-slate-300 max-w-[600px]">
               AI chấm điểm tiềm năng đầu tư theo <b className="text-white font-semibold">6 tiêu chí</b> —
@@ -158,9 +123,15 @@ export function Checker() {
             </p>
 
             <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 text-[12px] text-slate-400">
-              <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Không lưu tin của bạn</span>
-              <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Link, ảnh chụp, text đều được</span>
-              <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Đăng nhập để dùng AI thật</span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-emerald-400">✓</span> Không lưu tin của bạn
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-emerald-400">✓</span> Link 1 tin, link danh mục, text đều được
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="text-emerald-400">✓</span> Đăng nhập để dùng AI thật
+              </span>
             </div>
           </div>
 
@@ -172,7 +143,7 @@ export function Checker() {
                   htmlFor="listing"
                   className="text-[12px] font-bold tracking-[0.12em] text-slate-500 uppercase"
                 >
-                  ① Đưa tin vào — dán text, link hoặc ảnh chụp
+                  Dán mô tả tin, link tin hoặc link danh mục
                 </label>
                 <span className="text-[11px] tabular-nums text-slate-400">{text.length}/1000</span>
               </div>
@@ -182,7 +153,7 @@ export function Checker() {
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 maxLength={1000}
-                placeholder="Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ (rẻ hơn thị trường 1 tỷ), sổ hồng riêng, hẻm xe hơi..."
+                placeholder="Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ (rẻ hơn thị trường 1 tỷ), sổ hồng riêng, hẻm xe hơi... hoặc dán link tin / link danh mục"
                 className="w-full min-h-[132px] md:min-h-[148px] resize-none rounded-[14px] bg-cream border-slate-200 px-4 py-3.5 text-[15px] leading-[1.6] placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy/15 focus-visible:border-navy/30"
               />
 
@@ -202,20 +173,6 @@ export function Checker() {
               <div className="mt-5 flex flex-col sm:flex-row gap-3">
                 <Button
                   type="button"
-                  variant="outline"
-                  onClick={handlePaste}
-                  className="h-[50px] px-5 rounded-[12px] border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300 text-[14px] font-semibold text-slate-700"
-                >
-                  {extractState.kind === "loading" && (
-                    <span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
-                  )}
-                  <span>📋</span> Dán link tin rao
-                </Button>
-
-                <OcrButton onFile={handleOcrFile} disabled={ocrState.busy} />
-
-                <Button
-                  type="button"
                   onClick={handleCheck}
                   disabled={!text.trim() || loading}
                   className="h-[50px] flex-1 rounded-[12px] bg-gradient-to-r from-navy to-[#16305f] hover:from-[#0e2547] hover:to-[#1a3868] disabled:opacity-50 text-white text-[15px] font-bold shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)]"
@@ -227,83 +184,69 @@ export function Checker() {
                     </>
                   ) : (
                     <>
-                      <span>🔍</span> ② Check bằng AI
+                      <span>🔍</span> Check bằng AI
                     </>
                   )}
                 </Button>
               </div>
 
               <div className="mt-3 flex items-start gap-2 text-[11px] text-slate-500">
-                <span className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${source === "ai" ? "bg-emerald-500" : "bg-amber-500"}`} />
+                <span
+                  className={`w-1.5 h-1.5 rounded-full mt-1 shrink-0 ${
+                    source === "ai" ? "bg-emerald-500" : "bg-amber-500"
+                  }`}
+                />
                 <div>
                   {source === "ai" ? (
-                    <>Chấm điểm bằng <b>AI thật</b> • {analyzedAt ? `lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}` : ""}</>
+                    <>
+                      Chấm điểm bằng <b>AI thật</b>{" "}
+                      {analyzedAt ? `• lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}` : ""}
+                    </>
                   ) : (
-                    <>Đang chấm bằng <b>công thức dự phòng</b> • <a href="/login" className="text-navy font-semibold underline underline-offset-2">Đăng nhập</a> để dùng AI thật</>
+                    <>
+                      Đang chấm bằng <b>công thức dự phòng</b> •{" "}
+                      <a href="/login" className="text-navy font-semibold underline underline-offset-2">
+                        Đăng nhập
+                      </a>{" "}
+                      để dùng AI thật
+                    </>
                   )}
                 </div>
               </div>
 
-              {(ocrState.text || extractState.text) && (
-                <div className="mt-2 space-y-1.5">
-                  {ocrState.text && (
-                    <div
-                      className={`text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
-                        ocrState.busy
-                          ? "bg-slate-100 text-slate-600"
-                          : ocrState.text.startsWith("Đã")
-                            ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                            : "bg-amber-50 text-amber-800 border border-amber-200"
-                      }`}
-                    >
-                      {ocrState.busy && (
-                        <span className="inline-block w-full h-1 rounded-full bg-slate-200 overflow-hidden mb-1.5">
-                          <span
-                            className="block h-full bg-navy transition-all"
-                            style={{ width: `${ocrState.progress}%` }}
-                          />
-                        </span>
-                      )}
-                      {ocrState.text}
+              {status.text && (
+                <div
+                  className={`mt-3 text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
+                    status.kind === "error"
+                      ? "bg-amber-50 text-amber-800 border border-amber-200"
+                      : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {status.text}
+                  {status.kind === "error" && (
+                    <div className="mt-1 text-slate-500">
+                      Cách thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô
+                      trên.
                     </div>
                   )}
-                  {extractState.text && (
-                    <div
-                      className={`text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
-                        extractState.kind === "error"
-                          ? "bg-amber-50 text-amber-800 border border-amber-200"
-                          : extractState.kind === "ok"
-                            ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                            : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {extractState.text}
-                      {extractState.kind === "error" && (
-                        <div className="mt-2">
-                          {["blocked_by_site", "login_required", "no_content", "not_found"].includes(
-                            extractState.reason ?? "",
-                          ) ? (
-                            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                              <span className="text-slate-500">
-                                Cách nhanh nhất: chụp màn hình tin rồi tải ảnh lên, AI tự đọc chữ:
-                              </span>
-                              <OcrButton
-                                onFile={handleOcrFile}
-                                disabled={ocrState.busy}
-                                compact
-                                label="Tải ảnh tin lên"
-                              />
-                            </div>
-                          ) : (
-                            <div className="text-slate-500">
-                              Cách dùng thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi
-                              dán vào ô trên.
-                            </div>
-                          )}
-                        </div>
-                      )}
+                </div>
+              )}
+
+              {categoryUrl && (
+                <div className="mt-4">
+                  <div className="flex items-center justify-between">
+                    <div className="text-[12px] font-bold tracking-[0.12em] text-slate-500 uppercase">
+                      Đang quét danh mục
                     </div>
-                  )}
+                    <button
+                      type="button"
+                      onClick={resetToInput}
+                      className="text-[12px] font-bold text-navy hover:underline underline-offset-2"
+                    >
+                      ← Check tin khác
+                    </button>
+                  </div>
+                  <CategoryScan url={categoryUrl} />
                 </div>
               )}
             </div>
@@ -329,7 +272,7 @@ export function Checker() {
             result={result}
             source={source}
             analyzedAt={analyzedAt}
-            onCheckAnother={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+            onCheckAnother={resetToInput}
           />
         </section>
       )}

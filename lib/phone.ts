@@ -1,4 +1,4 @@
-// Trích số điện thoại liên hệ từ nội dung tin rao (text người dùng dán / OCR / API).
+// Trích số điện thoại liên hệ từ nội dung tin rao (text người dùng dán hoặc lấy từ link).
 // Định dạng Việt Nam: 0xxxxxxxxx, 0xx xxx xxxx, 09xx.xxx.xxx, +84xxxxxxxxx, 84xxxxxxxxx.
 
 // Các đầu số di động VN hợp lệ hiện hành

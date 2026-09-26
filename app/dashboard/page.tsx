@@ -40,7 +40,7 @@ export default async function DashboardPage() {
     supabase
       .from("checks")
       .select(
-        "id, original_text, score, deal_type, is_ngop, province, price_billion, area_m2, created_at, phone, contact_name, listing_url",
+        "id, original_text, score, deal_type, is_ngop, province, price_billion, area_m2, bedrooms, created_at, listing_url",
       )
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +13,6 @@ import {
   type AreaOverrideInput,
 } from "@/lib/client-category";
 import { dealBadgeClass, dealLabel, scoreBadgeClass } from "@/lib/format";
-import { formatPhone } from "@/lib/phone";
 
 interface CheckedRow {
   item: CategoryScanItem;
@@ -25,19 +24,18 @@ interface CheckedRow {
 
 const CONCURRENCY = 3;
 
-// Tab "Danh mục": dán link trang danh mục Chợ Tốt/Nhà Tốt -> quét ra tin bán ->
-// chọn tin -> check hàng loạt bằng /api/check (đã đăng nhập nên AI thật + lưu lịch sử).
-export function CategoryScan() {
+// Luồng danh mục: nhận URL trang danh mục Chợ Tốt/Nhà Tốt -> quét ra tin bán ->
+// lọc -> chọn tin -> check hàng loạt bằng /api/check (lưu lịch sử kèm SĐT + link gốc).
+export function CategoryScan({ url }: { url: string }) {
   const router = useRouter();
-  const [url, setUrl] = useState("");
-  const [phase, setPhase] = useState<"idle" | "scanning" | "picked" | "checking" | "done">("idle");
+  const [phase, setPhase] = useState<"scanning" | "picked" | "checking" | "done">("scanning");
   const [scan, setScan] = useState<CategoryScanOk | null>(null);
   const [notice, setNotice] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rows, setRows] = useState<CheckedRow[]>([]);
   const [doneCount, setDoneCount] = useState(0);
 
-  // Bộ lọc quét: giá (tỷ), diện tích (m²), số phòng ngủ (tối thiểu), khu vực (ghi đè link)
+  // Bộ lọc quét: giá (tỷ), diện tích (m²), số phòng (tối thiểu), khu vực (ghi đè link)
   const [showFilters, setShowFilters] = useState(false);
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
@@ -73,25 +71,31 @@ export function CategoryScan() {
     return { provinceName: provincePick || null, wardSlug: wardPick.trim() || null };
   };
 
-  const handleScan = async () => {
-    if (!url.trim() || phase === "scanning") return;
+  const handleScan = useCallback(async () => {
     setPhase("scanning");
     setNotice("");
     setScan(null);
     setSelected(new Set());
     setRows([]);
 
-    const r = await scanCategory(url.trim(), buildFilters(), buildAreaOverride());
+    const r = await scanCategory(url, buildFilters(), buildAreaOverride());
     if (!r.ok) {
-      setPhase("idle");
+      setPhase("picked");
       setNotice(r.message);
       return;
     }
 
     setScan(r);
-    setSelected(new Set(r.items.slice(0, Math.min(10, r.items.length)).map((i) => i.id)));
+    setSelected(new Set(r.items.map((i) => i.id)));
     setPhase("picked");
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, priceMin, priceMax, areaMin, areaMax, minRooms, provincePick, wardPick]);
+
+  // Tự quét khi có URL mới (không cần bấm nút riêng)
+  useEffect(() => {
+    if (url) void handleScan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -138,7 +142,10 @@ export function CategoryScan() {
             }),
           });
           const data = await res.json();
-          if (res.status === 429) {
+          if (res.status === 401) {
+            stopped = true;
+            setNotice("Cần đăng nhập để check tin bằng AI. Đăng nhập rồi thử lại.");
+          } else if (res.status === 429) {
             stopped = true;
             setNotice(data.error || "Đã hết lượt check hôm nay.");
           } else if (!res.ok || data.error) {
@@ -164,41 +171,12 @@ export function CategoryScan() {
     router.refresh();
   };
 
-  const fmtPrice = (v: number | null) => {
-    if (v === null) return "";
-    if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(v % 1_000_000_000 === 0 ? 0 : 2)} tỷ`;
-    if (v >= 1_000_000) return `${Math.round(v / 1_000_000)} tr`;
-    return String(v);
-  };
+  const selCls = "h-10 w-full rounded-[10px] bg-white border border-slate-200 px-2.5 text-[13px]";
 
   return (
-    <div>
-      <div className="flex flex-col sm:flex-row gap-2.5">
-        <Input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="Dán link trang danh mục, vd nhatot.com/mua-ban-nha-dat-quan-go-vap-tp-ho-chi-minh"
-          className="h-[46px] rounded-[12px] bg-cream border-slate-200 text-[13px]"
-        />
-        <Button
-          type="button"
-          onClick={handleScan}
-          disabled={!url.trim() || phase === "scanning"}
-          className="h-[46px] px-5 rounded-[12px] bg-navy text-white text-[13px] font-bold shrink-0"
-        >
-          {phase === "scanning" ? (
-            <>
-              <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              Đang quét...
-            </>
-          ) : (
-            <>🗂 Quét danh mục</>
-          )}
-        </Button>
-      </div>
-
+    <div className="mt-4">
       {/* Bộ lọc quét */}
-      <div className="mt-2.5">
+      <div>
         <button
           type="button"
           onClick={() => setShowFilters((s) => !s)}
@@ -253,11 +231,7 @@ export function CategoryScan() {
               </label>
               <label className="text-[11px] font-semibold text-slate-500">
                 Số phòng ngủ (từ)
-                <select
-                  value={minRooms}
-                  onChange={(e) => setMinRooms(e.target.value)}
-                  className="mt-1 h-10 w-full rounded-[10px] bg-white border border-slate-200 px-2.5 text-[13px]"
-                >
+                <select value={minRooms} onChange={(e) => setMinRooms(e.target.value)} className={selCls}>
                   <option value="">Tất cả</option>
                   {[1, 2, 3, 4, 5].map((n) => (
                     <option key={n} value={n}>
@@ -268,11 +242,7 @@ export function CategoryScan() {
               </label>
               <label className="text-[11px] font-semibold text-slate-500">
                 Tỉnh/Thành (ghi đè link)
-                <select
-                  value={provincePick}
-                  onChange={(e) => setProvincePick(e.target.value)}
-                  className="mt-1 h-10 w-full rounded-[10px] bg-white border border-slate-200 px-2.5 text-[13px]"
-                >
+                <select value={provincePick} onChange={(e) => setProvincePick(e.target.value)} className={selCls}>
                   <option value="">Theo link</option>
                   {PROVINCES.map((p) => (
                     <option key={p} value={p}>
@@ -291,29 +261,65 @@ export function CategoryScan() {
                 />
               </label>
             </div>
-            <p className="mt-2 text-[11px] text-slate-400">
-              Để trống = không lọc. Khu vực ghi đè sẽ thay cho quận/tỉnh trong link danh mục bạn dán.
-            </p>
+            <div className="mt-2.5 flex items-center gap-3">
+              <Button
+                type="button"
+                onClick={() => void handleScan()}
+                disabled={phase === "scanning" || phase === "checking"}
+                className="h-9 px-4 rounded-[10px] bg-navy text-white text-[12px] font-bold"
+              >
+                Quét lại với bộ lọc
+              </Button>
+              <p className="text-[11px] text-slate-400">
+                Để trống = không lọc. Khu vực ghi đè sẽ thay cho quận/tỉnh trong link danh mục.
+              </p>
+            </div>
           </div>
         )}
       </div>
 
+      {phase === "scanning" && (
+        <div className="mt-4 flex items-center gap-2 text-[13px] text-slate-500">
+          <span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
+          Đang quét danh sách tin bán từ link danh mục...
+        </div>
+      )}
+
       {notice && (
-        <div className="mt-2.5 rounded-[10px] bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800">
+        <div className="mt-3 rounded-[10px] bg-amber-50 border border-amber-200 px-3 py-2 text-[12px] text-amber-800">
           {notice}
+          {notice.includes("Đăng nhập") && (
+            <>
+              {" "}
+              <a href="/login" className="font-bold underline">
+                Đăng nhập →
+              </a>
+            </>
+          )}
         </div>
       )}
 
       {scan && (
-        <div className="mt-4">
-          <div className="rounded-[12px] bg-cream border border-slate-200 px-4 py-3 text-[12px] text-slate-600 leading-relaxed">
+        <div>
+          <div className="mt-3 rounded-[12px] bg-cream border border-slate-200 px-4 py-3 text-[12px] text-slate-600 leading-relaxed">
             Đang lọc: <b className="text-navy">{scan.scope.kindLabel}</b>
-            {scan.scope.ward && <> • <b className="text-navy">{scan.scope.ward.replace(/-/g, " ")}</b></>}
-            {scan.scope.region && <> • <b className="text-navy">{scan.scope.region}</b></>}
-            {" "}— tìm thấy <b className="text-navy">{scan.scope.total.toLocaleString("vi-VN")} tin bán</b>
+            {scan.scope.ward && (
+              <>
+                {" "}
+                • <b className="text-navy">{scan.scope.ward.replace(/-/g, " ")}</b>
+              </>
+            )}
+            {scan.scope.region && (
+              <>
+                {" "}
+                • <b className="text-navy">{scan.scope.region}</b>
+              </>
+            )}{" "}
+            — tìm thấy <b className="text-navy">{scan.scope.total.toLocaleString("vi-VN")} tin bán</b>
             {scan.scope.filtered && (
               <>
-                {" "}• đã lọc {filterSummary() || "giá/diện tích/phòng ngủ"} trong{" "}
+                {" "}
+                • đã lọc {filterSummary() || "giá/diện tích/phòng ngủ"} trong{" "}
                 <b className="text-navy">{scan.items.length} tin</b> mới nhất
               </>
             )}
@@ -329,7 +335,7 @@ export function CategoryScan() {
             <label className="flex items-center gap-2 text-[12px] font-semibold text-slate-600 cursor-pointer">
               <input
                 type="checkbox"
-                checked={selected.size === scan.items.length}
+                checked={selected.size === scan.items.length && scan.items.length > 0}
                 onChange={toggleAll}
                 className="w-4 h-4 accent-[#0B1D3A]"
               />
@@ -341,7 +347,9 @@ export function CategoryScan() {
               disabled={selected.size === 0 || phase === "checking"}
               className="h-10 px-5 rounded-[10px] bg-gradient-to-r from-navy to-[#16305f] text-white text-[13px] font-bold disabled:opacity-50"
             >
-              {phase === "checking" ? `Đang check ${doneCount}/${rows.length}...` : `🔍 Check ${selected.size} tin đã chọn`}
+              {phase === "checking"
+                ? `Đang check ${doneCount}/${rows.length}...`
+                : `🔍 Check ${selected.size} tin đã chọn`}
             </Button>
           </div>
 
@@ -387,38 +395,26 @@ export function CategoryScan() {
                       {item.rooms !== null && <span>{item.rooms} PN</span>}
                       {item.ward && <span>📍 {item.ward}</span>}
                       {item.contactName && <span>👤 {item.contactName}</span>}
-                      {item.phone && (
-                        <a href={"tel:" + item.phone} className="font-bold text-emerald-700 hover:underline">
-                          📞 {formatPhone(item.phone)}
-                        </a>
-                      )}
-                      {!item.phone && item.url && (
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-bold text-navy hover:underline"
-                        >
-                          Xem SĐT ↗
-                        </a>
-                      )}
-                      {item.price !== null && item.price < 1_000_000_000 && (
-                        <span className="text-slate-400">({fmtPrice(item.price)})</span>
-                      )}
                     </div>
                     {row && (row.score !== null || row.error) && (
                       <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                         {row.score !== null ? (
                           <>
-                            <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${scoreBadgeClass(row.score)}`}>
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${scoreBadgeClass(row.score)}`}
+                            >
                               {row.score}/100
                             </span>
                             {row.dealType && (
-                              <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${dealBadgeClass(row.dealType)}`}>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${dealBadgeClass(row.dealType)}`}
+                              >
                                 {dealLabel(row.dealType)}
                               </span>
                             )}
-                            {row.isNgop !== null && <span className="text-[11px] font-mono text-slate-500">Ngộp {row.isNgop}%</span>}
+                            {row.isNgop !== null && (
+                              <span className="text-[11px] font-mono text-slate-500">Ngộp {row.isNgop}%</span>
+                            )}
                           </>
                         ) : (
                           <span className="text-[11px] text-red-600">{row.error}</span>

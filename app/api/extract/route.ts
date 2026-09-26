@@ -36,10 +36,10 @@ function blockedHint(url: string, reason: string): string | null {
     return null;
   }
   if (host.endsWith("batdongsan.com.vn")) {
-    return "Batdongsan.com.vn chặn đọc tự động. Mở tin, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô — hoặc chụp màn hình tin và dùng nút Ảnh chụp tin.";
+    return "Batdongsan.com.vn chặn đọc tự động. Mở tin, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô bên trái.";
   }
   if (host.endsWith("facebook.com") || host.endsWith("fb.com") || host.endsWith("zalo.me")) {
-    return "Link này cần đăng nhập nên server không đọc được. Mở tin, copy đoạn mô tả rồi dán vào ô — hoặc chụp màn hình tin và dùng nút Ảnh chụp tin.";
+    return "Link này cần đăng nhập nên server không đọc được. Mở tin, copy đoạn mô tả rồi dán vào ô bên trái.";
   }
   return null;
 }

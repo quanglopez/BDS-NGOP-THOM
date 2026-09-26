@@ -5,6 +5,7 @@ import { planLimit, vnDayStartISO, effectivePlan } from "@/lib/quota";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { detectProvince, provinceLabel } from "@/lib/provinces";
 import { extractPhone } from "@/lib/phone";
+import { extractBedrooms } from "@/lib/bedrooms";
 
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
 // Cần đăng nhập (session Supabase) + có quota trong ngày.
@@ -239,6 +240,7 @@ export async function POST(req: NextRequest) {
     const areaMatch = text.match(/(\d+)\s*m2/i);
     const priceBillion = priceMatch ? Number(priceMatch[1].replace(",", ".")) : null;
     const areaM2 = areaMatch ? Number(areaMatch[1]) : null;
+    const bedrooms = extractBedrooms(text);
 
     let jevRes: Response;
     try {
@@ -302,6 +304,7 @@ export async function POST(req: NextRequest) {
       province: detectedProvince,
       price_billion: priceBillion,
       area_m2: areaM2,
+      bedrooms,
       phone: contactPhone,
       contact_name: contactName,
       listing_url: listingUrl,
@@ -334,6 +337,7 @@ export async function POST(req: NextRequest) {
         province: detectedProvince,
         price_billion: priceBillion,
         area_m2: areaM2,
+        bedrooms,
         analyzed_at: new Date().toISOString(),
         quota,
         raw: data,

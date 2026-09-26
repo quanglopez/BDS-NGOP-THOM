@@ -23,7 +23,7 @@ export function SalesHero() {
             </h2>
 
             <p className="mt-4 text-[15px] md:text-[17px] leading-[1.6] text-slate-300 max-w-[520px]">
-              Dán tin, upload file Zalo, AI chấm điểm 6 tiêu chí và lọc ra kèo ngộp &gt;80 điểm. Bạn chỉ việc gọi
+              Dán mô tả tin, link tin hoặc link danh mục — AI chấm điểm 6 tiêu chí và lọc ra kèo ngộp &gt;80 điểm. Bạn chỉ việc gọi
               chủ nhà.
             </p>
 
