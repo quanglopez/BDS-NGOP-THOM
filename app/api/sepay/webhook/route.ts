@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
-import { parseUserIdFromContent, planFromAmount, transferContent } from "@/lib/payments";
+import {
+  parseMonthsFromContent,
+  parseUserIdFromContent,
+  planFromAmount,
+  transferContent,
+} from "@/lib/payments";
 import { nextExpiry } from "@/lib/quota";
 
 // Webhook SePay: ngân hàng báo có tiền -> tự nâng plan
@@ -78,7 +83,10 @@ export async function POST(req: NextRequest) {
     return recordUnmatched(null, "khong-nhan-dien-duoc-nguoi-chuyen");
   }
 
-  const plan = planFromAmount(amount);
+  // Gói mua nhiều tháng ghi trong nội dung CK (NANGCAP {uuid} T12):
+  // cứ có số tháng là gói Pro — tránh suy theo tiền bị nhầm sang gói Team.
+  const months = parseMonthsFromContent(content);
+  const plan = months > 1 ? "pro" : planFromAmount(amount);
   if (!plan || plan === "free") {
     // Có người chuyển nhưng số tiền chưa đủ gói -> vẫn ghi lại để admin biết
     return recordUnmatched(userId, "so-tien-chua-du-goi");
@@ -100,7 +108,7 @@ export async function POST(req: NextRequest) {
     .from("payments")
     .select("id")
     .eq("user_id", userId)
-    .eq("transfer_content", transferContent(userId))
+    .eq("transfer_content", transferContent(userId, months))
     .eq("status", "pending")
     .order("created_at", { ascending: false })
     .limit(1)
@@ -122,17 +130,19 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Nâng gói user: mỗi lần thanh toán cộng 30 ngày vào hạn đang có
+  // Nâng gói user: cộng dồn months × 30 ngày vào hạn đang có
   const { data: payer } = await admin
     .from("users")
     .select("plan_expires_at")
     .eq("id", userId)
     .maybeSingle();
 
-  const expiresAt = nextExpiry(payer?.plan_expires_at);
+  const expiresAt = nextExpiry(payer?.plan_expires_at, months);
   await admin.from("users").update({ plan, plan_expires_at: expiresAt }).eq("id", userId);
 
-  console.log(`[sepay] plan=${plan} user=${userId} amount=${amount} expires=${expiresAt} ref=${ref ?? "-"}`);
+  console.log(
+    `[sepay] plan=${plan} months=${months} user=${userId} amount=${amount} expires=${expiresAt} ref=${ref ?? "-"}`,
+  );
 
-  return NextResponse.json({ ok: true, plan, plan_expires_at: expiresAt });
+  return NextResponse.json({ ok: true, plan, months, plan_expires_at: expiresAt });
 }

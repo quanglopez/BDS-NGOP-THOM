@@ -8,13 +8,15 @@ import { runCheck, type CheckSource } from "@/lib/client-check";
 import { extractFromUrl, firstUrl, isBareUrl } from "@/lib/client-extract";
 import { parseCategoryUrl } from "@/lib/category-slug";
 import type { AnalysisResult } from "@/lib/types";
+import type { QuotaInfo } from "@/lib/types";
+import { trackEvent } from "@/lib/analytics";
 import { ResultCard } from "@/components/site/result-card";
 import { CategoryScan } from "@/components/dashboard/category-scan";
+import { UpgradeModal } from "@/components/site/upgrade-modal";
 
 type Status = { kind: "idle" | "loading" | "ok" | "error"; text: string; reason?: string };
 
-// Ô check duy nhất trong dashboard: dán link tin / link danh mục / văn bản
-// rồi bấm "Check bằng AI" — tool tự nhận biết nên làm gì tiếp.
+// Ô check duy nhất trong dashboard: dán link tin / link danh mục / mô tả tin -> Check bằng AI
 export function QuickCheck() {
   const router = useRouter();
   const [text, setText] = useState("");
@@ -25,18 +27,33 @@ export function QuickCheck() {
   const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
   // Link danh mục -> chuyển sang luồng quét danh mục
   const [categoryUrl, setCategoryUrl] = useState<string | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
+
+  // Sau mỗi lần check: nếu hết lượt thì mời nâng cấp (chỉ khi đã thật sự hết)
+  const maybeShowUpgrade = async () => {
+    try {
+      const res = await fetch("/api/check");
+      if (!res.ok) return;
+      const q = (await res.json()) as QuotaInfo;
+      if (typeof q.remaining === "number" && q.remaining <= 0) {
+        trackEvent("free_limit_reached", { plan: q.plan });
+        setUpgradeOpen(true);
+      }
+    } catch {
+      // bỏ qua — không được làm hỏng luồng chính
+    }
+  };
 
   const doCheck = async (payload: string, listingUrl?: string | null) => {
     setLoading(true);
-    setStatus({ kind: "loading", text: "AI đang chấm điểm..." });
+    setStatus({ kind: "loading", text: "AI đang phân tích tin của bạn..." });
     try {
       const outcome = await runCheck(payload, { listingUrl: listingUrl ?? null });
       setResult(outcome.result);
       setSource(outcome.source);
       setAnalyzedAt(outcome.analyzedAt);
       setStatus({ kind: "idle", text: "" });
-      // /api/check đã lưu lịch sử + trừ quota -> refresh stats/bảng phía server
       router.refresh();
       setTimeout(
         () => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
@@ -44,6 +61,7 @@ export function QuickCheck() {
       );
     } finally {
       setLoading(false);
+      void maybeShowUpgrade();
     }
   };
 
@@ -79,7 +97,6 @@ export function QuickCheck() {
     await doCheck(raw);
   };
 
-  // Quay lại ô nhập từ luồng danh mục / kết quả
   const resetToInput = () => {
     setCategoryUrl(null);
     setResult(null);
@@ -88,86 +105,95 @@ export function QuickCheck() {
   };
 
   return (
-    <section className="mt-6 rounded-[20px] border border-slate-200 bg-white shadow-[0_16px_50px_-24px_rgba(11,29,58,0.3)] overflow-hidden">
-      <div className="p-5 md:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-[18px] font-black tracking-tight text-navy">Check tin bằng AI</h2>
-            <p className="mt-1 text-[12px] text-slate-500">
-              Dán <b>link 1 tin</b>, <b>link trang danh mục</b> hoặc <b>mô tả tin</b> — bấm Check, tool tự xử lý.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {categoryUrl && (
-              <button
-                type="button"
-                onClick={resetToInput}
-                className="text-[12px] font-bold text-navy hover:underline underline-offset-2"
-              >
-                ← Check tin khác
-              </button>
-            )}
-            <span className="text-[11px] tabular-nums text-slate-400">{text.length}/1000</span>
-          </div>
-        </div>
-
-        {!categoryUrl && (
-          <>
-            <Textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              maxLength={1000}
-              placeholder="Bán gấp! Nhà mặt tiền Thùy Vân 80m2, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng... (hoặc dán link tin / link danh mục)"
-              className="mt-4 w-full min-h-[130px] resize-none rounded-[14px] bg-cream border-slate-200 px-4 py-3 text-[14px] leading-[1.6] placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy/15 focus-visible:border-navy/30"
-            />
-
-            <div className="mt-4">
-              <Button
-                type="button"
-                onClick={handleCheck}
-                disabled={!text.trim() || loading}
-                className="h-[50px] w-full rounded-[12px] bg-gradient-to-r from-navy to-[#16305f] hover:from-[#0e2547] hover:to-[#1a3868] disabled:opacity-50 text-white text-[15px] font-bold shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)]"
-              >
-                {loading ? (
-                  <>
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    AI đang chấm...
-                  </>
-                ) : (
-                  <>
-                    <span>🔍</span> Check bằng AI
-                  </>
-                )}
-              </Button>
+    <>
+      <section className="mt-6 rounded-[20px] border border-slate-200 bg-white shadow-[0_16px_50px_-24px_rgba(11,29,58,0.3)] overflow-hidden">
+        <div className="p-5 md:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-[18px] font-black tracking-tight text-navy">Check tin bằng AI</h2>
+              <p className="mt-1 text-[12px] text-slate-500">
+                Dán <b>link 1 tin</b>, <b>link trang danh mục</b> hoặc <b>mô tả tin</b> — bấm Check, tool tự xử lý.
+              </p>
             </div>
-          </>
-        )}
+            <div className="flex items-center gap-3">
+              {categoryUrl && (
+                <button
+                  type="button"
+                  onClick={resetToInput}
+                  className="text-[12px] font-bold text-navy hover:underline underline-offset-2"
+                >
+                  ← Check tin khác
+                </button>
+              )}
+              <span className="text-[11px] tabular-nums text-slate-400">{text.length}/1000</span>
+            </div>
+          </div>
 
-        {status.text && (
-          <div
-            className={`mt-3 text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
-              status.kind === "error"
-                ? "bg-amber-50 text-amber-800 border border-amber-200"
-                : "bg-slate-100 text-slate-600"
-            }`}
-          >
-            {status.text}
-            {status.kind === "error" && (
-              <div className="mt-1 text-slate-500">
-                Cách thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô trên.
+          {!categoryUrl && (
+            <>
+              <Textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                maxLength={1000}
+                placeholder="Bán gấp! Nhà mặt tiền Thùy Vân 80m2, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng... (hoặc dán link tin / link danh mục)"
+                className="mt-4 w-full min-h-[130px] resize-none rounded-[14px] bg-cream border-slate-200 px-4 py-3 text-[14px] leading-[1.6] placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy/15 focus-visible:border-navy/30"
+              />
+
+              <div className="mt-4">
+                <Button
+                  type="button"
+                  onClick={handleCheck}
+                  disabled={!text.trim() || loading}
+                  className="h-[50px] w-full rounded-[12px] bg-gradient-to-r from-navy to-[#16305f] hover:from-[#0e2547] hover:to-[#1a3868] disabled:opacity-50 text-white text-[15px] font-bold shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)]"
+                >
+                  {loading ? (
+                    <>
+                      <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      AI đang phân tích...
+                    </>
+                  ) : (
+                    <>
+                      <span>🔍</span> Check bằng AI
+                    </>
+                  )}
+                </Button>
               </div>
-            )}
+            </>
+          )}
+
+          {status.text && (
+            <div
+              className={`mt-3 text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
+                status.kind === "error"
+                  ? "bg-amber-50 text-amber-800 border border-amber-200"
+                  : "bg-slate-100 text-slate-600"
+              }`}
+            >
+              {status.text}
+              {status.kind === "error" && (
+                <div className="mt-1 text-slate-500">
+                  Cách thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô trên.
+                </div>
+              )}
+            </div>
+          )}
+
+          {categoryUrl && <CategoryScan url={categoryUrl} />}
+        </div>
+
+        {result && (
+          <div ref={resultRef} className="px-5 md:px-6 pb-5 md:pb-6 scroll-mt-24">
+            <ResultCard result={result} source={source} analyzedAt={analyzedAt} onCheckAnother={resetToInput} />
           </div>
         )}
+      </section>
 
-        {categoryUrl && <CategoryScan url={categoryUrl} />}
-      </div>
-
-      {result && (
-        <div ref={resultRef} className="px-5 md:px-6 pb-5 md:pb-6 scroll-mt-24">
-          <ResultCard result={result} source={source} analyzedAt={analyzedAt} onCheckAnother={resetToInput} />
-        </div>
-      )}
-    </section>
+      <UpgradeModal
+        open={upgradeOpen}
+        dailyLimit={20}
+        plan="free"
+        onClose={() => setUpgradeOpen(false)}
+      />
+    </>
   );
 }

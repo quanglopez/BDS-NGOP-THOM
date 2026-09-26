@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { Button } from "@/components/ui/button";
+import { trackEvent } from "@/lib/analytics";
 
-// Form đăng nhập bằng Google OAuth (SĐT/OTP SMS sẽ thêm sau)
+// Đăng nhập Google — chỉ 1 nút, không form, không yêu cầu email/SĐT trước login
 export function LoginForm() {
   const searchParams = useSearchParams();
   const next = searchParams.get("next") || "/dashboard";
@@ -16,6 +16,7 @@ export function LoginForm() {
   const handleGoogle = async () => {
     setError("");
     setLoading(true);
+    trackEvent("login_clicked", { from: "login_page" });
     try {
       const supabase = createClient();
       const { error: err } = await supabase.auth.signInWithOAuth({
@@ -26,7 +27,7 @@ export function LoginForm() {
       });
       if (err) setError(err.message);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Không kết nối được Supabase");
+      setError(e instanceof Error ? e.message : "Không kết nối được máy chủ");
     } finally {
       setLoading(false);
     }
@@ -34,12 +35,11 @@ export function LoginForm() {
 
   return (
     <div className="rounded-[18px] bg-white p-6 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.5)]">
-      <Button
+      <button
         type="button"
-        variant="outline"
         onClick={handleGoogle}
         disabled={loading}
-        className="w-full h-[46px] rounded-[12px] text-[14px] font-semibold"
+        className="w-full h-[52px] rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[15px] font-black flex items-center justify-center gap-3 hover:from-[#d8ba7f] hover:to-[#e3ca92] transition disabled:opacity-60"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
           <path
@@ -59,13 +59,25 @@ export function LoginForm() {
             d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
           />
         </svg>
-        {loading ? "Đang chuyển tới Google..." : "Tiếp tục với Google"}
-      </Button>
+        {loading ? "Đang chuyển tới Google..." : "Đăng nhập bằng Google"}
+      </button>
 
-      {error && <p className="mt-3 text-[12px] text-red-600">{error}</p>}
+      <p className="mt-4 text-center text-[12px] text-slate-500">
+        Miễn phí 20 tin/ngày • Không cần thẻ • Không cần nhập SĐT
+      </p>
 
-      <p className="mt-4 text-[11px] text-slate-400 leading-snug">
-        Bằng việc đăng nhập, bạn đồng ý điều khoản sử dụng. Tool chỉ phân tích tin rao, không lưu tin của bạn.
+      {error && <p className="mt-3 text-[12px] text-red-600 text-center">{error}</p>}
+
+      <p className="mt-4 text-[11px] text-slate-400 leading-snug text-center">
+        Bằng việc đăng nhập, bạn đồng ý{" "}
+        <a href="/dieu-khoan" className="font-semibold text-navy hover:underline">
+          điều khoản sử dụng
+        </a>{" "}
+        và{" "}
+        <a href="/bao-mat" className="font-semibold text-navy hover:underline">
+          chính sách bảo mật
+        </a>
+        .
       </p>
     </div>
   );

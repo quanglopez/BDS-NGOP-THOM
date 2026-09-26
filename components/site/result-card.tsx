@@ -1,14 +1,18 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Link from "next/link";
 import type { AnalysisResult } from "@/lib/types";
 import type { CheckSource } from "@/lib/client-check";
+import { scoreContributions } from "@/lib/score-explain";
+import { trackEvent } from "@/lib/analytics";
 import { ShareImage } from "@/components/site/share-image";
 
 interface Props {
   result: AnalysisResult;
   source: CheckSource;
   analyzedAt?: string;
+  authRequired?: boolean;
   onCheckAnother: () => void;
 }
 
@@ -38,8 +42,8 @@ function ScoreCard({
   );
 }
 
-// Thẻ kết quả: vòng điểm tròn, badge nguồn, 6 chỉ số, panel AI phân tích + hành động
-export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props) {
+// Thẻ kết quả: vòng điểm, giải thích tại sao được điểm đó, 6 chỉ số, hành động
+export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAnother }: Props) {
   const t = result;
   const isAi = source === "ai";
   const ringClass =
@@ -57,6 +61,8 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
   const dotClass =
     t.tagColor === "green" ? "bg-emerald-500" : t.tagColor === "yellow" ? "bg-amber-400" : "bg-red-500";
 
+  const contributions = scoreContributions(t);
+
   const copyAnalysis = () => {
     navigator.clipboard.writeText(`${t.reasoning}\n\n${t.action}`);
   };
@@ -68,7 +74,9 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
         <div className="absolute -top-20 right-10 w-[280px] h-[280px] bg-gold/15 rounded-full blur-[70px]" />
         <div className="relative flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4 md:gap-5">
-            <div className={`w-[92px] h-[92px] shrink-0 rounded-full flex items-center justify-center border-[6px] relative bg-white ${ringClass}`}>
+            <div
+              className={`w-[92px] h-[92px] shrink-0 rounded-full flex items-center justify-center border-[6px] relative bg-white ${ringClass}`}
+            >
               <div className="text-center leading-none">
                 <div className="text-[30px] font-black tracking-tight">{t.overall}</div>
                 <div className="text-[10px] font-bold tracking-widest mt-0.5 opacity-70">/100 ĐIỂM</div>
@@ -93,11 +101,11 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
                 className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
                   isAi
                     ? "bg-emerald-400/15 text-emerald-300 border-emerald-400/30"
-                    : "bg-amber-400/15 text-amber-300 border-amber-400/30"
+                    : "bg-white/10 text-slate-200 border-white/20"
                 }`}
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${isAi ? "bg-emerald-400" : "bg-amber-400"}`} />
-                {isAi ? "Phân tích bằng AI" : "Ước tính nhanh – AI đang bận, dùng công thức dự phòng"}
+                <span className={`w-1.5 h-1.5 rounded-full ${isAi ? "bg-emerald-400" : "bg-slate-300"}`} />
+                {isAi ? "Phân tích bằng AI" : "Phân tích theo mô hình CheckBDS"}
               </div>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <div
@@ -105,9 +113,15 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
                 >
                   {t.tag}
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-slate-200 text-[11px] font-semibold">💰 {t.extracted.price}</span>
-                <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-slate-200 text-[11px] font-semibold">📐 {t.extracted.area}</span>
-                <span className="px-2.5 py-1 rounded-full bg-gold text-navy text-[11px] font-bold">📍 {t.extracted.street}</span>
+                <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-slate-200 text-[11px] font-semibold">
+                  💰 {t.extracted.price}
+                </span>
+                <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-slate-200 text-[11px] font-semibold">
+                  📐 {t.extracted.area}
+                </span>
+                <span className="px-2.5 py-1 rounded-full bg-gold text-navy text-[11px] font-bold">
+                  📍 {t.extracted.street}
+                </span>
               </div>
             </div>
           </div>
@@ -116,9 +130,7 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
             <div className="text-right hidden sm:block">
               <div className="text-[10px] tracking-[0.18em] font-bold text-slate-400">THỜI GIAN</div>
               <div className="mt-1 text-[13px] font-semibold text-slate-200">
-                {analyzedAt
-                  ? `Phân tích lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}`
-                  : "Ước tính bằng công thức dự phòng"}
+                {analyzedAt ? `Phân tích lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}` : "Vừa xong"}
               </div>
             </div>
             <div className={`w-2.5 h-2.5 rounded-full ${dotClass} animate-pulse`} />
@@ -126,9 +138,57 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
         </div>
       </div>
 
-      {/* Thân thẻ: 6 chỉ số + 2 panel */}
+      {/* Chưa đăng nhập: kết quả là bản xem trước -> CTA đăng nhập ngay sau aha moment */}
+      {authRequired && (
+        <div className="px-6 md:px-8 py-5 bg-gradient-to-r from-[#FFFBF0] to-white border-b border-slate-100">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="flex-1">
+              <div className="text-[14px] font-black text-navy">
+                Bạn đang xem bản xem trước. Đăng nhập để nhận phân tích AI đầy đủ.
+              </div>
+              <div className="mt-1 text-[12px] text-slate-500">
+                Miễn phí 20 tin/ngày • Không cần thẻ • Đăng nhập Google trong 10 giây
+              </div>
+            </div>
+            <Link
+              href="/login"
+              onClick={() => trackEvent("login_clicked", { from: "result_card" })}
+              className="h-[46px] px-6 rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[13px] font-black flex items-center justify-center whitespace-nowrap hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
+            >
+              Đăng nhập Google →
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {/* Thân thẻ: giải thích điểm + 6 chỉ số + 2 panel */}
       <div className="p-6 md:p-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Tại sao được điểm đó */}
+        <div className="rounded-[16px] border border-slate-200 bg-[#FFFEFB] p-4 md:p-5">
+          <div className="text-[13px] font-black text-navy">Tại sao tin này được {t.overall} điểm?</div>
+          <div className="mt-3 space-y-2">
+            {contributions.map((c) => (
+              <div key={c.label} className="flex items-start gap-3">
+                <span
+                  className={`mt-0.5 w-[52px] shrink-0 text-right text-[13px] font-black tabular-nums ${
+                    c.kind === "plus" ? "text-emerald-600" : c.kind === "minus" ? "text-red-600" : "text-slate-400"
+                  }`}
+                >
+                  {c.delta > 0 ? `+${c.delta}` : c.delta < 0 ? `${c.delta}` : "±0"}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-[13px] font-bold text-slate-800">{c.label}</div>
+                  <div className="text-[12px] text-slate-500 leading-snug">{c.note}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3 pt-3 border-t border-slate-200 text-[11px] text-slate-400">
+            Điểm khởi đầu 50 • Cộng/trừ theo trọng số của mô hình chấm điểm CheckBDS
+          </div>
+        </div>
+
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
           <ScoreCard
             title="💰 NGỘP BANK"
             badge={
@@ -185,11 +245,7 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
                 {t.breakdown.giaThiTruong.label}
               </span>
             }
-            label={`${t.breakdown.giaThiTruong.diffAmount}${
-              t.breakdown.giaThiTruong.diffPercent > 0
-                ? ` (~${Math.abs(t.breakdown.giaThiTruong.diffPercent) > 10 ? "1 tỷ" : "600tr"})`
-                : ""
-            }`}
+            label={`${t.breakdown.giaThiTruong.diffAmount}`}
             detail={t.breakdown.giaThiTruong.detail}
             cardClass={`rounded-[16px] border p-4 ${
               t.breakdown.giaThiTruong.diffPercent > 0
@@ -208,7 +264,7 @@ export function ResultCard({ result, source, analyzedAt, onCheckAnother }: Props
 
         <div className="mt-6 grid md:grid-cols-[1.2fr_0.8fr] gap-6">
           <div className="rounded-[16px] bg-navy text-slate-200 p-5 md:p-6">
-            <div className="text-[11px] font-bold tracking-[0.14em] text-gold">AI PHÂN TÍCH</div>
+            <div className="text-[11px] font-bold tracking-[0.14em] text-gold">NHẬN XÉT</div>
             <p className="mt-3 text-[14px] leading-[1.7] text-slate-100">{t.reasoning}</p>
           </div>
 

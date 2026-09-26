@@ -3,30 +3,41 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { PLANS, vietQrImageUrl, type PlanKey } from "@/lib/payments";
+import { DURATIONS, quotePrice, vietQrImageUrl, type PlanKey } from "@/lib/payments";
+import { trackEvent } from "@/lib/analytics";
 
 type PaymentInfo = { content: string; amount: number };
 
-// Khung thanh toán VietQR: chọn gói -> hiện QR NANGCAP {user_id} -> chờ webhook nâng gói
+const TRUST = [
+  "🔒 Thanh toán an toàn",
+  "✓ Hoàn tiền 100% trong 3 ngày",
+  "✓ Không tự động gia hạn",
+];
+
+// Khung thanh toán VietQR: chọn thời hạn -> hiện QR + thông tin CK -> chờ webhook nâng gói.
+// Ưu tiên thao tác một tay trên điện thoại: copy STK / copy nội dung CK.
 export function PaymentBox() {
-  const [plan, setPlan] = useState<PlanKey>("pro");
+  const [plan] = useState<PlanKey>("pro");
+  const [months, setMonths] = useState(3);
   const [payment, setPayment] = useState<PaymentInfo | null>(null);
   const [planName, setPlanName] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [needLogin, setNeedLogin] = useState(false);
   const [qrUrl, setQrUrl] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
   const [upgraded, setUpgraded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const bankName = process.env.NEXT_PUBLIC_SEPAY_BANK_NAME ?? "Ngân hàng (cấu hình SEPAY)";
-  const bankAccount = process.env.NEXT_PUBLIC_SEPAY_ACCOUNT ?? "Chưa cấu hình tài khoản nhận";
+  const bankName = process.env.NEXT_PUBLIC_SEPAY_BANK_NAME ?? "";
+  const bankAccount = process.env.NEXT_PUBLIC_SEPAY_ACCOUNT ?? "";
+  const accountName = process.env.NEXT_PUBLIC_SEPAY_ACCOUNT_NAME ?? "";
+  const quote = quotePrice(months);
 
-  // Tạo bản ghi thanh toán + lấy nội dung CK
-  const createPayment = async (p: PlanKey) => {
-    setPlan(p);
+  const createPayment = async (m: number) => {
+    setMonths(m);
     setPayment(null);
     setUpgraded(false);
     setError("");
@@ -35,7 +46,7 @@ export function PaymentBox() {
       const res = await fetch("/api/payments/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: p }),
+        body: JSON.stringify({ plan, months: m }),
       });
       if (res.status === 401) {
         setNeedLogin(true);
@@ -50,6 +61,7 @@ export function PaymentBox() {
         setError("Không tạo được nội dung chuyển khoản, thử lại sau.");
         return;
       }
+      trackEvent("checkout_started", { months: m, amount: data.amount });
       setPayment({ content: data.content, amount: data.amount });
       setQrUrl(vietQrImageUrl(data.amount, data.content));
     } catch {
@@ -59,10 +71,9 @@ export function PaymentBox() {
     }
   };
 
-  // Vào trang có #thanh-toan (bấm "Nâng cấp" từ dashboard) thì tạo QR luôn
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.hash.includes("thanh-toan")) {
-      void createPayment("pro");
+      void createPayment(3);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -78,57 +89,101 @@ export function PaymentBox() {
       setExpiresAt(data.plan_expires_at ?? null);
       if (data.plan === plan) {
         setUpgraded(true);
+        trackEvent("payment_completed", { months, amount: payment.amount });
         if (timer.current) clearInterval(timer.current);
       }
     }, 5000);
     return () => {
       if (timer.current) clearInterval(timer.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payment, plan, upgraded]);
 
-  const copyContent = async () => {
-    if (!payment) return;
-    await navigator.clipboard.writeText(payment.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copy = async (key: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(key);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      setError("Trình duyệt không cho copy — hãy giữ đè vào số để copy thủ công.");
+    }
   };
 
   return (
-    <div className="rounded-[20px] border border-slate-200 bg-white p-6 md:p-8">
-      <h2 className="text-[18px] font-black text-navy">Thanh toán VietQR - tự nâng gói trong 1-2 phút</h2>
-      <p className="mt-1 text-[13px] text-slate-500">
-        Chọn gói → quét QR hoặc chuyển khoản đúng nội dung → hệ thống tự kích hoạt.
-      </p>
+    <div className="rounded-[20px] border border-slate-200 bg-white p-5 md:p-8">
+      <h2 className="text-[18px] font-black text-navy">Thanh toán chuyển khoản VietQR</h2>
+      <p className="mt-1 text-[13px] text-slate-500">Tự kích hoạt gói trong 1–2 phút sau khi tiền vào.</p>
 
-      <div className="mt-5 flex flex-wrap items-center gap-2">
-        {(["pro"] as PlanKey[]).map((p) => (
-          <button
-            key={p}
-            type="button"
-            onClick={() => void createPayment(p)}
-            disabled={busy}
-            className={`h-10 px-5 rounded-full text-[13px] font-bold border transition ${
-              plan === p ? "bg-navy text-white border-navy" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
-            }`}
-          >
-            {PLANS[p].label} - {PLANS[p].price.toLocaleString("vi-VN")}đ/tháng
-          </button>
-        ))}
+      {/* Chọn thời hạn */}
+      <div className="mt-5">
+        <div className="text-[11px] font-black tracking-[0.14em] text-slate-500">CHỌN THỜI HẠN</div>
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {DURATIONS.map((d) => {
+            const q = quotePrice(d.months);
+            const active = months === d.months;
+            return (
+              <button
+                key={d.months}
+                type="button"
+                onClick={() => {
+                  setMonths(d.months);
+                  setPayment(null);
+                  setUpgraded(false);
+                  trackEvent("upgrade_clicked", { months: d.months, from: "duration" });
+                }}
+                className={`relative rounded-[12px] border px-3 py-3 text-center transition ${
+                  active
+                    ? "border-navy bg-navy text-white shadow-[0_8px_24px_-10px_rgba(11,29,58,0.6)]"
+                    : "border-slate-200 bg-white text-slate-700 hover:border-navy/40"
+                }`}
+              >
+                {d.badge && (
+                  <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-gold text-navy text-[9px] font-black whitespace-nowrap">
+                    {d.badge}
+                  </span>
+                )}
+                <div className="text-[13px] font-black">{d.label}</div>
+                <div className={`mt-1 text-[12px] font-bold ${active ? "text-gold" : "text-navy"}`}>
+                  {q.total.toLocaleString("vi-VN")}đ
+                </div>
+                {q.saved > 0 && (
+                  <div className={`mt-0.5 text-[10px] ${active ? "text-slate-300" : "text-emerald-600"}`}>
+                    Tiết kiệm {q.saved.toLocaleString("vi-VN")}đ
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-2 text-[11px] text-slate-400">
+          {quote.saved > 0 ? (
+            <>
+              Giá gốc <s>{quote.fullPrice.toLocaleString("vi-VN")}đ</s> →{" "}
+              <b className="text-navy">{quote.total.toLocaleString("vi-VN")}đ</b> (≈{" "}
+              {quote.perMonth.toLocaleString("vi-VN")}đ/tháng)
+            </>
+          ) : (
+            <>299.000đ/tháng — hủy bất kỳ lúc nào</>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-5">
         <Button
           type="button"
-          onClick={() => void createPayment(plan)}
+          onClick={() => void createPayment(months)}
           disabled={busy}
-          className="h-10 px-5 rounded-full bg-gold text-navy text-[13px] font-bold hover:bg-[#d8ba7f]"
+          className="h-[52px] w-full rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[15px] font-black hover:from-[#d8ba7f] hover:to-[#e3ca92] disabled:opacity-50"
         >
-          {busy ? "Đang tạo mã QR..." : payment ? "Tạo lại mã QR" : "Tạo mã QR chuyển khoản →"}
+          {busy ? "Đang tạo mã QR..." : payment ? "Tạo lại thông tin chuyển khoản" : "Tạo thông tin chuyển khoản →"}
         </Button>
       </div>
 
       {needLogin && (
         <div className="mt-5 rounded-[14px] bg-amber-50 border border-amber-200 p-4 text-[13px] text-amber-800">
           Bạn cần{" "}
-          <Link href="/login" className="font-bold underline">
-            đăng nhập
+          <Link href="/login" onClick={() => trackEvent("login_clicked", { from: "checkout" })} className="font-bold underline">
+            đăng nhập Google
           </Link>{" "}
           để thanh toán và nhận nâng cấp.
         </div>
@@ -137,59 +192,97 @@ export function PaymentBox() {
       {error && (
         <div className="mt-5 rounded-[14px] bg-red-50 border border-red-200 p-4 text-[13px] text-red-700">
           <b>Lỗi:</b> {error}
-          <div className="mt-1 text-[12px] text-red-600">
-            Nếu vẫn không được, chụp màn hình lỗi này gửi cho hỗ trợ.
-          </div>
         </div>
       )}
 
       {payment && !upgraded && (
-        <div className="mt-6 grid md:grid-cols-[220px_1fr] gap-6 items-start">
-          <div className="rounded-[14px] border border-slate-200 p-3 bg-white">
-            {qrUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={qrUrl} alt="VietQR" className="w-full rounded-[10px]" />
-            ) : (
-              <div className="aspect-square flex items-center justify-center text-[11px] text-slate-400 text-center p-3">
-                Chưa cấu hình NEXT_PUBLIC_SEPAY_BANK / NEXT_PUBLIC_SEPAY_ACCOUNT để sinh QR
+        <div className="mt-6">
+          {/* QR: chỉ hiện khi khách bấm (đa số chuyển bằng máy tính) */}
+          {qrUrl && (
+            <div className="mb-5">
+              <button
+                type="button"
+                onClick={() => setShowQr((s) => !s)}
+                className="text-[13px] font-bold text-navy hover:underline underline-offset-2"
+              >
+                {showQr ? "▾ Ẩn mã QR" : "▸ Hiện mã QR (khi bạn đang dùng máy tính)"}
+              </button>
+              {showQr && (
+                <div className="mt-3 rounded-[14px] border border-slate-200 p-3 bg-white inline-block">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={qrUrl} alt="Mã QR chuyển khoản VietQR" className="w-[220px] rounded-[10px]" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Thông tin CK — ưu tiên copy bằng một tay trên điện thoại */}
+          <dl className="space-y-2.5 text-[13px]">
+            {bankName && (
+              <div className="flex items-center justify-between gap-4 rounded-[10px] bg-cream border border-slate-200 px-3 py-2.5">
+                <dt className="text-slate-500 shrink-0">Ngân hàng</dt>
+                <dd className="font-bold text-slate-800 text-right">{bankName}</dd>
               </div>
             )}
+            {accountName && (
+              <div className="flex items-center justify-between gap-4 rounded-[10px] bg-cream border border-slate-200 px-3 py-2.5">
+                <dt className="text-slate-500 shrink-0">Chủ tài khoản</dt>
+                <dd className="font-bold text-slate-800 text-right">{accountName}</dd>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 rounded-[10px] bg-cream border border-slate-200 px-3 py-2.5">
+              <div className="min-w-0">
+                <dt className="text-slate-500 text-[11px]">Số tài khoản</dt>
+                <dd className="font-black text-navy text-[15px] font-mono truncate">{bankAccount || "—"}</dd>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => copy("stk", bankAccount)}
+                className="h-10 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
+              >
+                {copied === "stk" ? "Đã copy" : "Sao chép"}
+              </Button>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-[10px] bg-cream border border-slate-200 px-3 py-2.5">
+              <div className="min-w-0">
+                <dt className="text-slate-500 text-[11px]">Số tiền</dt>
+                <dd className="font-black text-navy text-[15px]">{payment.amount.toLocaleString("vi-VN")}đ</dd>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => copy("amount", String(payment.amount))}
+                className="h-10 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
+              >
+                {copied === "amount" ? "Đã copy" : "Sao chép"}
+              </Button>
+            </div>
+            <div className="rounded-[10px] bg-cream border border-slate-200 px-3 py-2.5">
+              <dt className="text-slate-500 text-[11px]">Nội dung chuyển khoản</dt>
+              <dd className="mt-1 flex items-center justify-between gap-3">
+                <code className="text-[14px] font-black text-navy font-mono break-all">{payment.content}</code>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => copy("content", payment.content)}
+                  className="h-10 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
+                >
+                  {copied === "content" ? "Đã copy" : "Sao chép"}
+                </Button>
+              </dd>
+            </div>
+          </dl>
+
+          <div className="mt-4 rounded-[12px] bg-[#FFFBF0] border border-gold/40 px-4 py-3 text-[12px] text-slate-700 leading-relaxed">
+            <b>Cách nhanh nhất trên điện thoại:</b> bấm <b>Sao chép</b> từng dòng, mở app ngân hàng →
+            chuyển khoản với đúng số tiền và nội dung trên. Nếu bạn đang dùng máy tính thì mở app ngân hàng
+            trên điện thoại và quét mã QR.
           </div>
 
-          <div className="text-[13px]">
-            <dl className="space-y-2">
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Ngân hàng</dt>
-                <dd className="font-semibold text-slate-800">{bankName}</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Số tài khoản</dt>
-                <dd className="font-semibold text-slate-800">{bankAccount}</dd>
-              </div>
-              <div className="flex justify-between gap-4">
-                <dt className="text-slate-500">Số tiền</dt>
-                <dd className="font-semibold text-navy">{payment.amount.toLocaleString("vi-VN")}đ</dd>
-              </div>
-              <div className="flex items-center justify-between gap-4">
-                <dt className="text-slate-500">Nội dung CK</dt>
-                <dd className="flex items-center gap-2">
-                  <code className="px-2 py-1 rounded bg-slate-100 border text-[12px] font-bold">{payment.content}</code>
-                  <Button type="button" variant="outline" size="sm" onClick={copyContent} className="h-8 rounded-full">
-                    {copied ? "Đã copy" : "Copy"}
-                  </Button>
-                </dd>
-              </div>
-            </dl>
-
-            <p className="mt-4 text-[12px] text-slate-500 leading-relaxed">
-              Lưu ý: nội dung CK phải đúng <b>{payment.content}</b> (có dấu cách). Sai nội dung sẽ không tự kích hoạt
-              được, cần liên hệ hỗ trợ.
-            </p>
-
-            <div className="mt-3 flex items-center gap-2 text-[12px] text-emerald-700 font-semibold">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              Đang chờ xác nhận từ ngân hàng...
-            </div>
+          <div className="mt-3 flex items-center gap-2 text-[12px] text-emerald-700 font-semibold">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            Đang chờ xác nhận từ ngân hàng...
           </div>
         </div>
       )}
@@ -202,8 +295,7 @@ export function PaymentBox() {
             {expiresAt && (
               <>
                 {" "}
-                • hết hạn{" "}
-                <b>{new Date(expiresAt).toLocaleDateString("vi-VN")}</b>
+                • hết hạn <b>{new Date(expiresAt).toLocaleDateString("vi-VN")}</b>
               </>
             )}
             . Vào Dashboard để dùng Bulk Check ngay.
@@ -216,6 +308,13 @@ export function PaymentBox() {
           </Link>
         </div>
       )}
+
+      {/* Trust signals */}
+      <div className="mt-6 pt-4 border-t border-slate-200 flex flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-slate-500">
+        {TRUST.map((t) => (
+          <span key={t}>{t}</span>
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,26 @@
 import Link from "next/link";
 import { Logo } from "@/components/site/logo";
 
-// Footer cuối trang: brand + điều hướng + cam kết dữ liệu
+const SẢN_PHẨM = [
+  { href: "#tinh-nang", label: "Tính năng" },
+  { href: "#cach-hoat-dong", label: "Cách hoạt động" },
+  { href: "#bang-gia", label: "Bảng giá" },
+  { href: "/dashboard", label: "Dashboard" },
+];
+
+const HỖ_TRỢ = [
+  { href: "#faq", label: "Câu hỏi thường gặp" },
+  { href: "/lien-he", label: "Liên hệ" },
+  { href: "/login", label: "Đăng nhập" },
+];
+
+const PHÁP_LÝ = [
+  { href: "/dieu-khoan", label: "Điều khoản sử dụng" },
+  { href: "/bao-mat", label: "Chính sách bảo mật" },
+  { href: "/hoan-tien", label: "Chính sách hoàn tiền" },
+];
+
+// Footer: điều hướng + link pháp lý + cam kết dữ liệu
 export function SiteFooter() {
   return (
     <footer className="bg-navy text-slate-300">
@@ -10,25 +29,43 @@ export function SiteFooter() {
           <div className="max-w-[320px]">
             <Logo height={26} />
             <p className="mt-4 text-[12px] leading-relaxed text-slate-400">
-              Tool chấm điểm kèo bất động sản cho môi giới Việt Nam — phát hiện bán gấp,
-              so sánh giá, đánh giá pháp lý trong vài giây.
+              Công cụ lọc tin bất động sản cho môi giới Việt Nam — phát hiện bán gấp, so sánh giá,
+              đánh giá pháp lý trong vài giây.
             </p>
+            <div className="mt-4 flex items-center gap-1.5 text-[12px] text-slate-400">
+              <span>🔒</span> Thanh toán an toàn • Hoàn tiền 100% trong 3 ngày
+            </div>
           </div>
 
-          <div className="flex gap-12 md:gap-16 text-[13px]">
+          <div className="flex flex-wrap gap-10 md:gap-14 text-[13px]">
             <div>
               <div className="text-[11px] font-black tracking-[0.16em] text-slate-500 mb-3">SẢN PHẨM</div>
               <div className="flex flex-col gap-2.5">
-                <Link href="#tinh-nang" className="hover:text-white transition">Tính năng</Link>
-                <Link href="/pricing" className="hover:text-white transition">Bảng giá</Link>
-                <Link href="/dashboard" className="hover:text-white transition">Dashboard</Link>
+                {SẢN_PHẨM.map((l) => (
+                  <Link key={l.label} href={l.href} className="hover:text-white transition">
+                    {l.label}
+                  </Link>
+                ))}
               </div>
             </div>
             <div>
               <div className="text-[11px] font-black tracking-[0.16em] text-slate-500 mb-3">HỖ TRỢ</div>
               <div className="flex flex-col gap-2.5">
-                <Link href="#faq" className="hover:text-white transition">Câu hỏi thường gặp</Link>
-                <Link href="/login" className="hover:text-white transition">Đăng nhập</Link>
+                {HỖ_TRỢ.map((l) => (
+                  <Link key={l.label} href={l.href} className="hover:text-white transition">
+                    {l.label}
+                  </Link>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-[11px] font-black tracking-[0.16em] text-slate-500 mb-3">PHÁP LÝ</div>
+              <div className="flex flex-col gap-2.5">
+                {PHÁP_LÝ.map((l) => (
+                  <Link key={l.label} href={l.href} className="hover:text-white transition">
+                    {l.label}
+                  </Link>
+                ))}
               </div>
             </div>
           </div>

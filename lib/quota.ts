@@ -17,7 +17,7 @@ export function scanLimit(plan: string | null | undefined): number {
   return SCAN_LIMITS[plan ?? "free"] ?? SCAN_LIMITS.free;
 }
 
-// 30 ngày mỗi lần thanh toán
+// 30 ngày mỗi lần thanh toán (1 tháng)
 export const SUBSCRIPTION_DAYS = 30;
 
 export function planLimit(plan: string | null | undefined): number {
@@ -34,12 +34,15 @@ export function effectivePlan(
   return new Date(planExpiresAt).getTime() > Date.now() ? plan : "free";
 }
 
-// Ngày hết hạn mới khi gia hạn: cộng dồn vào ngày đang có, không cộng vào ngày đã qua
-export function nextExpiry(currentExpiry: string | null | undefined): string {
-  const base = currentExpiry && new Date(currentExpiry).getTime() > Date.now()
-    ? new Date(currentExpiry)
-    : new Date();
-  base.setDate(base.getDate() + SUBSCRIPTION_DAYS);
+// Ngày hết hạn mới khi gia hạn: cộng dồn vào ngày đang có, không cộng vào ngày đã qua.
+// months > 1 cho gói mua nhiều tháng (mỗi tháng 30 ngày).
+export function nextExpiry(currentExpiry: string | null | undefined, months = 1): string {
+  const base =
+    currentExpiry && new Date(currentExpiry).getTime() > Date.now()
+      ? new Date(currentExpiry)
+      : new Date();
+  const n = Math.max(1, Math.floor(months));
+  base.setDate(base.getDate() + SUBSCRIPTION_DAYS * n);
   return base.toISOString();
 }
 

@@ -49,7 +49,7 @@ export function LeadForm({ planInterest }: { planInterest?: string }) {
 
   return (
     <div className="rounded-[18px] border border-slate-200 bg-white p-5 md:p-6">
-      <div className="text-[15px] font-black text-navy">Dùng thử miễn phí</div>
+      <div className="text-[15px] font-black text-navy">Gửi yêu cầu</div>
       <p className="mt-1 text-[12px] text-slate-500">
         20 tin/ngày, không cần thẻ. Nhận link truy cập qua email/Zalo.
       </p>
@@ -87,7 +87,7 @@ export function LeadForm({ planInterest }: { planInterest?: string }) {
           disabled={status === "sending" || !email.includes("@")}
           className="h-11 px-6 rounded-[12px] text-[13px] font-bold"
         >
-          {status === "sending" ? "Đang gửi..." : "Dùng thử"}
+          {status === "sending" ? "Đang gửi..." : "Gửi"}
         </Button>
       </div>
 
