@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
-import { planLimit, vnDayStartISO } from "@/lib/quota";
+import { planLimit, vnDayStartISO, effectivePlan } from "@/lib/quota";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { StatsCards } from "@/components/dashboard/stats-cards";
 import { HistoryTable, type CheckRow } from "@/components/dashboard/history-table";
@@ -22,7 +22,7 @@ export default async function DashboardPage() {
   if (!user) redirect("/login");
 
   const [{ data: profile }, today, total, good, history] = await Promise.all([
-    supabase.from("users").select("name, phone, plan, credits").eq("id", user.id).single(),
+    supabase.from("users").select("name, phone, plan, credits, plan_expires_at").eq("id", user.id).single(),
     supabase
       .from("checks")
       .select("id", { count: "exact", head: true })
@@ -42,7 +42,8 @@ export default async function DashboardPage() {
       .limit(100),
   ]);
 
-  const plan = profile?.plan ?? "free";
+  // Gói đã hết hạn = Free
+  const plan = effectivePlan(profile?.plan, profile?.plan_expires_at);
   const rows = (history.data ?? []) as CheckRow[];
 
   return (
@@ -74,6 +75,13 @@ export default async function DashboardPage() {
                 {plan}
               </span>{" "}
               • Credits: <b>{profile?.credits ?? 0}</b>
+              {plan !== "free" && profile?.plan_expires_at && (
+                <>
+                  {" "}
+                  • Hết hạn:{" "}
+                  <b>{new Date(profile.plan_expires_at).toLocaleDateString("vi-VN")}</b>
+                </>
+              )}
             </p>
           </div>
         </div>

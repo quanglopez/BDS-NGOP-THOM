@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { effectivePlan } from "@/lib/quota";
 
 // Trạng thái thanh toán gần nhất + gói hiện tại (client poll để biết khi nào được nâng)
 export async function GET() {
@@ -13,7 +14,7 @@ export async function GET() {
   }
 
   const [{ data: profile }, { data: payment }] = await Promise.all([
-    supabase.from("users").select("plan").eq("id", user.id).single(),
+    supabase.from("users").select("plan, plan_expires_at").eq("id", user.id).single(),
     supabase
       .from("payments")
       .select("plan, amount, status, created_at")
@@ -23,5 +24,12 @@ export async function GET() {
       .maybeSingle(),
   ]);
 
-  return NextResponse.json({ plan: profile?.plan ?? "free", payment: payment ?? null });
+  // Gói đã hết hạn thì báo free để client hiện đúng
+  const plan = effectivePlan(profile?.plan, profile?.plan_expires_at);
+
+  return NextResponse.json({
+    plan,
+    plan_expires_at: profile?.plan_expires_at ?? null,
+    payment: payment ?? null,
+  });
 }

@@ -12,6 +12,7 @@ export function PaymentBox() {
   const [plan, setPlan] = useState<PlanKey>("pro");
   const [payment, setPayment] = useState<PaymentInfo | null>(null);
   const [planName, setPlanName] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [needLogin, setNeedLogin] = useState(false);
   const [qrUrl, setQrUrl] = useState("");
   const [copied, setCopied] = useState(false);
@@ -51,6 +52,7 @@ export function PaymentBox() {
       if (!res.ok) return;
       const data = await res.json();
       setPlanName(data.plan);
+      setExpiresAt(data.plan_expires_at ?? null);
       if (data.plan === plan) {
         setUpgraded(true);
         if (timer.current) clearInterval(timer.current);
@@ -155,7 +157,15 @@ export function PaymentBox() {
         <div className="mt-6 rounded-[14px] bg-emerald-50 border border-emerald-200 p-5">
           <div className="text-[15px] font-black text-emerald-700">Nâng cấp thành công 🎉</div>
           <p className="mt-1 text-[13px] text-emerald-800">
-            Gói hiện tại: <b>{(planName ?? plan).toUpperCase()}</b>. Vào Dashboard để dùng Bulk Check ngay.
+            Gói hiện tại: <b>{(planName ?? plan).toUpperCase()}</b>
+            {expiresAt && (
+              <>
+                {" "}
+                • hết hạn{" "}
+                <b>{new Date(expiresAt).toLocaleDateString("vi-VN")}</b>
+              </>
+            )}
+            . Vào Dashboard để dùng Bulk Check ngay.
           </p>
           <Link
             href="/dashboard"

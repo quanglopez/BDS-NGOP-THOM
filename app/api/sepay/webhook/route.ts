@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { planFromAmount, transferContent } from "@/lib/payments";
+import { nextExpiry } from "@/lib/quota";
 
 // Webhook SePay: ngân hàng báo có tiền -> tự nâng plan
 // Doc: https://docs.sepay.vn - payload chứa content, transferAmount, referenceCode
@@ -88,8 +89,17 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // Nâng gói user
-  await admin.from("users").update({ plan }).eq("id", userId);
+  // Nâng gói user: mỗi lần thanh toán cộng 30 ngày vào hạn đang có
+  const { data: payer } = await admin
+    .from("users")
+    .select("plan_expires_at")
+    .eq("id", userId)
+    .maybeSingle();
 
-  return NextResponse.json({ ok: true, plan });
+  const expiresAt = nextExpiry(payer?.plan_expires_at);
+  await admin.from("users").update({ plan, plan_expires_at: expiresAt }).eq("id", userId);
+
+  console.log(`[sepay] plan=${plan} user=${userId} expires=${expiresAt} ref=${ref ?? "-"}`);
+
+  return NextResponse.json({ ok: true, plan, plan_expires_at: expiresAt });
 }

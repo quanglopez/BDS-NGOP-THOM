@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { planLimit, vnDayStartISO } from "@/lib/quota";
+import { planLimit, vnDayStartISO, effectivePlan } from "@/lib/quota";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { detectProvince, provinceLabel } from "@/lib/provinces";
 
@@ -83,11 +83,13 @@ export async function OPTIONS(req: NextRequest) {
 async function getQuota(supabase: SupabaseClient, userId: string) {
   const { data: profile } = await supabase
     .from("users")
-    .select("plan, credits")
+    .select("plan, credits, plan_expires_at")
     .eq("id", userId)
     .single();
 
-  const limit = planLimit(profile?.plan);
+  // Gói đã hết hạn = Free
+  const plan = effectivePlan(profile?.plan, profile?.plan_expires_at);
+  const limit = planLimit(plan);
   const { count } = await supabase
     .from("checks")
     .select("id", { count: "exact", head: true })
@@ -97,7 +99,8 @@ async function getQuota(supabase: SupabaseClient, userId: string) {
   const used = count ?? 0;
   const credits = profile?.credits ?? 0;
   return {
-    plan: profile?.plan ?? "free",
+    plan,
+    plan_expires_at: profile?.plan_expires_at ?? null,
     limit,
     used,
     credits,
