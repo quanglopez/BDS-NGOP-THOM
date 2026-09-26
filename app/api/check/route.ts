@@ -13,6 +13,8 @@ export const maxDuration = 60;
 
 // Chỉ cho phép gọi từ site của mình (kèm localhost để dev)
 const ALLOWED_ORIGINS = new Set([
+  "https://checkbds.online",
+  "http://checkbds.online",
   "https://check-bds-ngop.vercel.app",
   "https://check-bds-ngop-quangs-projects-cc2709cd.vercel.app",
   "http://localhost:3000",

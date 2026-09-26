@@ -8,6 +8,8 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const ALLOWED_ORIGINS = new Set([
+  "https://checkbds.online",
+  "http://checkbds.online",
   "https://check-bds-ngop.vercel.app",
   "https://check-bds-ngop-quangs-projects-cc2709cd.vercel.app",
   "http://localhost:3000",

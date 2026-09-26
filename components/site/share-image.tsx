@@ -67,7 +67,7 @@ export function ShareImage({ result }: { result: AnalysisResult }) {
       // Footer
       ctx.fillStyle = "#C9A86A";
       ctx.font = "700 30px Inter, sans-serif";
-      ctx.fillText("check-bds-ngop.vercel.app • AI chấm điểm BĐS Việt Nam", 80, 1030);
+      ctx.fillText("checkbds.online • AI chấm điểm BĐS Việt Nam", 80, 1030);
 
       const url = canvas.toDataURL("image/png");
       setPreview(url);

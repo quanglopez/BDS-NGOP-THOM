@@ -1,6 +1,9 @@
-// Verify live endpoints
+// Verify live endpoints. BASE có thể override qua biến môi trường:
+// BASE=https://checkbds.online node tests/verify-live.ts
 export {};
-const BASE = "https://check-bds-ngop.vercel.app";
+const ENV_BASE =
+  typeof process !== "undefined" && typeof process.env.BASE === "string" ? process.env.BASE : "";
+const BASE = ENV_BASE || "https://check-bds-ngop.vercel.app";
 const ORIGIN = BASE;
 
 async function post(path: string, body: unknown) {
