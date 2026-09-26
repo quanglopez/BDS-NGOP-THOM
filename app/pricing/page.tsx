@@ -1,61 +1,58 @@
-import type { Metadata } from "next";
+"use client";
+
+import { useState } from "react";
 import Link from "next/link";
 import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { PaymentBox } from "@/components/pricing/payment-box";
 import { PricingTracker } from "@/components/pricing/pricing-tracker";
 import { DURATIONS, quotePrice } from "@/lib/payments";
-
-export const metadata: Metadata = {
-  title: "Bảng giá – CheckBDS.online",
-  description:
-    "Gói Free 20 tin/ngày. PRO 299.000đ/tháng: 500 tin/ngày, Bulk Check 100 tin/lần, quét trang danh mục. Hoàn tiền 100% trong 3 ngày.",
-};
-
-const FREE = [
-  "20 tin/ngày",
-  "Check từng tin",
-  "AI scoring 6 tiêu chí",
-  "Phân tích cơ bản",
-  "Không cần thẻ",
-];
-
-const PRO = [
-  "500 tin/ngày",
-  "Bulk Check 100 tin/lần",
-  "Quét cả trang danh mục",
-  "Phân tích nâng cao + giải thích điểm",
-  "Lọc nhanh tin tiềm năng",
-  "Ưu tiên tin điểm cao",
-  "Hỗ trợ môi giới chuyên nghiệp",
-];
-
-const FAQ = [
-  {
-    q: "Thanh toán thế nào? Có hoàn tiền không?",
-    a: "Chuyển khoản VietQR — hệ thống tự kích hoạt gói trong 1–2 phút. Hoàn tiền 100% trong 3 ngày đầu nếu công cụ không hữu ích cho bạn.",
-  },
-  {
-    q: "Gói có tự động gia hạn không?",
-    a: "Không. Khi hết hạn hệ thống tự về gói Free, bạn chỉ mất lượt check nâng cao. Gia hạn bất cứ lúc nào bằng cách mua thêm.",
-  },
-  {
-    q: "Mua nhiều tháng thì sao?",
-    a: "Chọn gói 3 tháng hoặc 1 năm để được giảm giá thật (tổng tiền thấp hơn mua lẻ từng tháng). Mỗi lần mua cộng dồn vào hạn đang có, không mất ngày.",
-  },
-  {
-    q: "Tôi có thể hủy PRO không?",
-    a: "Có, hủy bất kỳ lúc nào — vì gói không tự động gia hạn nên bạn không phải làm gì thêm.",
-  },
-  {
-    q: "Tin rao của tôi có bị lưu không?",
-    a: "Nội dung tin chỉ dùng để chấm điểm tại thời điểm check. Điểm số và link tin được lưu vào lịch sử của riêng bạn, không chia sẻ cho bên thứ ba.",
-  },
-];
+import { trackEvent } from "@/lib/analytics";
 
 export default function PricingPage() {
-  const q3 = quotePrice(3);
-  const q12 = quotePrice(12);
+  const [months, setMonths] = useState(3);
+  const q = quotePrice(months);
+
+  const FREE = [
+    "20 tin/ngày",
+    "Check từng tin",
+    "AI scoring 6 tiêu chí",
+    "Phân tích cơ bản",
+    "Không cần thẻ",
+  ];
+
+  const PRO = [
+    "500 tin/ngày",
+    "Bulk Check 100 tin/lần",
+    "Quét cả trang danh mục",
+    "Phân tích nâng cao + giải thích điểm",
+    "Lọc nhanh tin tiềm năng",
+    "Ưu tiên tin điểm cao",
+    "Hỗ trợ môi giới chuyên nghiệp",
+  ];
+
+  const FAQ = [
+    {
+      q: "Thanh toán thế nào? Có hoàn tiền không?",
+      a: "Chuyển khoản VietQR — hệ thống tự kích hoạt gói trong 1–2 phút. Hoàn tiền 100% trong 3 ngày đầu nếu công cụ không hữu ích cho bạn.",
+    },
+    {
+      q: "Gói có tự động gia hạn không?",
+      a: "Không. Khi hết hạn hệ thống tự về gói Free, bạn chỉ mất lượt check nâng cao.",
+    },
+    {
+      q: "Mua nhiều tháng thì sao?",
+      a: "Chọn gói 3 tháng hoặc 1 năm để được giảm giá thật (tổng tiền thấp hơn mua lẻ từng tháng). Mỗi lần mua cộng dồn vào hạn đang có, không mất ngày.",
+    },
+    {
+      q: "Tôi có thể hủy PRO không?",
+      a: "Có, hủy bất kỳ lúc nào — vì gói không tự động gia hạn nên bạn không phải làm gì thêm.",
+    },
+    {
+      q: "Tin rao của tôi có bị lưu không?",
+      a: "Nội dung tin chỉ dùng để chấm điểm tại thời điểm check. Điểm số và link tin được lưu vào lịch sử của riêng bạn để tra cứu, không chia sẻ cho bên thứ ba.",
+    },
+  ];
 
   return (
     <main className="min-h-screen bg-cream">
@@ -71,7 +68,7 @@ export default function PricingPage() {
             1 kèo ngộp ngon = vài trăm triệu biên lợi nhuận
           </h1>
           <p className="mt-3 text-[14px] text-slate-500">
-            Miễn phí 20 tin/ngày. Nâng cấp PRO khi bạn cần lọc hàng trăm tin mỗi ngày.
+            Bắt đầu miễn phí. Nâng cấp PRO khi bạn cần lọc hàng trăm tin mỗi ngày.
           </p>
         </div>
 
@@ -108,11 +105,19 @@ export default function PricingPage() {
               <span className="px-2 py-0.5 rounded-full bg-gold text-navy text-[10px] font-black">PHỔ BIẾN</span>
             </div>
             <div className="relative mt-3 flex items-baseline gap-2">
-              <div className="text-[38px] font-black">299.000đ</div>
+              <div className="text-[38px] font-black">{q.perMonth.toLocaleString("vi-VN")}đ</div>
               <div className="text-[13px] text-slate-300">/ tháng</div>
             </div>
             <div className="relative mt-1 text-[12px] text-gold font-semibold">
-              Mua 3 tháng: {q3.total.toLocaleString("vi-VN")}đ • Mua 1 năm: {q12.total.toLocaleString("vi-VN")}đ
+              {q.saved > 0 ? (
+                <>
+                  Giá gốc <s>{q.fullPrice.toLocaleString("vi-VN")}đ</s> → tổng{" "}
+                  <b>{q.total.toLocaleString("vi-VN")}đ</b> · tiết kiệm{" "}
+                  {q.saved.toLocaleString("vi-VN")}đ
+                </>
+              ) : (
+                <>299.000đ/tháng</>
+              )}
             </div>
             <ul className="relative mt-5 space-y-2.5 flex-1">
               {PRO.map((f) => (
@@ -124,6 +129,7 @@ export default function PricingPage() {
             </ul>
             <a
               href="#thanh-toan"
+              onClick={() => trackEvent("upgrade_clicked", { from: "pricing_pro", months })}
               className="relative mt-6 h-[48px] rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[14px] font-black flex items-center justify-center hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
             >
               Nâng cấp PRO
@@ -140,39 +146,48 @@ export default function PricingPage() {
           <h2 className="text-[15px] font-black text-navy">Mua dài hạn, giá tốt hơn</h2>
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-5 gap-3">
             {DURATIONS.map((d) => {
-              const q = quotePrice(d.months);
+              const qq = quotePrice(d.months);
               return (
-                <div key={d.months} className="relative rounded-[12px] border border-slate-200 p-3 text-center">
+                <button
+                  key={d.months}
+                  type="button"
+                  onClick={() => setMonths(d.months)}
+                  className={`relative rounded-[12px] border px-3 py-3 text-center transition ${
+                    months === d.months ? "border-navy bg-navy text-white" : "border-slate-200 bg-white text-slate-700 hover:border-navy/40"
+                  }`}
+                >
                   {d.badge && (
                     <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-gold text-navy text-[9px] font-black whitespace-nowrap">
                       {d.badge}
                     </span>
                   )}
-                  <div className="text-[13px] font-black text-navy">{d.label}</div>
-                  {q.saved > 0 ? (
+                  <div className="text-[13px] font-black">{d.label}</div>
+                  {qq.saved > 0 ? (
                     <>
-                      <div className="mt-1 text-[11px] text-slate-400 line-through">
-                        {q.fullPrice.toLocaleString("vi-VN")}đ
+                      <div className={`mt-1 text-[11px] line-through ${months === d.months ? "text-slate-300" : "text-slate-400"}`}>
+                        {qq.fullPrice.toLocaleString("vi-VN")}đ
                       </div>
-                      <div className="text-[14px] font-black text-navy">{q.total.toLocaleString("vi-VN")}đ</div>
+                      <div className="text-[14px] font-black text-navy">{qq.total.toLocaleString("vi-VN")}đ</div>
                       <div className="mt-0.5 text-[10px] text-emerald-600 font-bold">
-                        Tiết kiệm {q.saved.toLocaleString("vi-VN")}đ
+                        Tiết kiệm {qq.saved.toLocaleString("vi-VN")}đ
                       </div>
                     </>
                   ) : (
                     <>
-                      <div className="mt-1 text-[14px] font-black text-navy">{q.total.toLocaleString("vi-VN")}đ</div>
-                      <div className="mt-0.5 text-[10px] text-slate-400">Không giảm giá</div>
+                      <div className="mt-1 text-[14px] font-black text-navy">{qq.total.toLocaleString("vi-VN")}đ</div>
+                      <div className={`mt-0.5 text-[10px] ${months === d.months ? "text-slate-300" : "text-slate-400"}`}>
+                        Không giảm giá
+                      </div>
                     </>
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
         </div>
 
         <div id="thanh-toan" className="mt-10 scroll-mt-24">
-          <PaymentBox />
+          <PaymentBox months={months} onMonthsChange={setMonths} />
         </div>
 
         <div className="mt-12 rounded-[18px] border border-slate-200 bg-white p-6">

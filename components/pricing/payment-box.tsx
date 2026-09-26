@@ -16,9 +16,8 @@ const TRUST = [
 
 // Khung thanh toán VietQR: chọn thời hạn -> hiện QR + thông tin CK -> chờ webhook nâng gói.
 // Ưu tiên thao tác một tay trên điện thoại: copy STK / copy nội dung CK.
-export function PaymentBox() {
+export function PaymentBox({ months, onMonthsChange }: { months: number; onMonthsChange: (m: number) => void }) {
   const [plan] = useState<PlanKey>("pro");
-  const [months, setMonths] = useState(3);
   const [payment, setPayment] = useState<PaymentInfo | null>(null);
   const [planName, setPlanName] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
@@ -37,7 +36,7 @@ export function PaymentBox() {
   const quote = quotePrice(months);
 
   const createPayment = async (m: number) => {
-    setMonths(m);
+    onMonthsChange(m);
     setPayment(null);
     setUpgraded(false);
     setError("");
@@ -126,7 +125,7 @@ export function PaymentBox() {
                 key={d.months}
                 type="button"
                 onClick={() => {
-                  setMonths(d.months);
+                  onMonthsChange(d.months);
                   setPayment(null);
                   setUpgraded(false);
                   trackEvent("upgrade_clicked", { months: d.months, from: "duration" });
