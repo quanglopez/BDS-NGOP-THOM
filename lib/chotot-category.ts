@@ -236,10 +236,11 @@ async function resolveAreaCode(
 }
 
 // URL tin thật trên Chợ Tốt/Nhà Tốt: /mua-ban-nha-dat-{quận}-{tỉnh}/{id}.htm
-function buildListingUrl(id: string, areaName: string, regionName: string): string {
+export function buildListingUrl(id: string, areaName: string, regionName: string): string {
   const slug = (v: string) => normName(v).replace(/ /g, "-").replace(/-+/g, "-");
-  const parts = ["mua-ban-nha-dat", slug(areaName), slug(regionName)].filter((x) => x && x !== "mua-ban-nha-dat");
-  return `https://www.nhatot.com/${parts.join("-")}/${id}.htm`;
+  const parts = [slug(areaName), slug(regionName)].filter(Boolean).join("-");
+  const tail = parts ? `-${parts}` : "";
+  return `https://www.nhatot.com/mua-ban-nha-dat${tail}/${id}.htm`;
 }
 
 function toItem(ad: Record<string, unknown>): CategoryItem | null {

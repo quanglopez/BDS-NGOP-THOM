@@ -7,6 +7,7 @@ import {
   normalizeScanFilters,
   itemMatchesFilters,
   hasScanFilters,
+  buildListingUrl,
   type CategoryItem,
 } from "../lib/chotot-category.ts";
 
@@ -126,6 +127,20 @@ async function main() {
     region: "r",
     image: null,
     ...p,
+  });
+
+  await check("URL tin thật dựng đúng định dạng nhatot", () => {
+    // Định dạng chuẩn đã kiểm chứng: /mua-ban-nha-dat-{quận}-{tỉnh}/{id}.htm
+    const r = buildListingUrl("134384271", "Quận Gò Vấp", "Tp Hồ Chí Minh");
+    assert.equal(
+      r,
+      "https://www.nhatot.com/mua-ban-nha-dat-quan-go-vap-tp-ho-chi-minh/134384271.htm",
+    );
+  });
+
+  await check("URL tin thật thiếu tên thì vẫn ra đuôi id.htm", () => {
+    const r = buildListingUrl("134384271", "", "");
+    assert.equal(r, "https://www.nhatot.com/mua-ban-nha-dat/134384271.htm");
   });
 
   await check("lọc theo khoảng giá (đơn vị tỷ, giá VND)", () => {
