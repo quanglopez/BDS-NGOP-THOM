@@ -1,4 +1,5 @@
 import { dealBadgeClass, dealLabel, scoreBadgeClass } from "@/lib/format";
+import { formatPhone } from "@/lib/phone";
 
 export interface CheckRow {
   id: string;
@@ -10,9 +11,13 @@ export interface CheckRow {
   price_billion: number | null;
   area_m2: number | null;
   created_at: string;
+  // Thông tin người đăng (SĐT trích từ tin, tên + link xem SĐT trên trang rao)
+  phone: string | null;
+  contact_name: string | null;
+  listing_url: string | null;
 }
 
-// Bảng lịch sử 100 tin đã check gần nhất
+// Bảng lịch sử 100 tin đã check gần nhất — kèm cột liên hệ người đăng
 export function HistoryTable({ rows }: { rows: CheckRow[] }) {
   return (
     <div className="mt-8">
@@ -28,14 +33,15 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                 <th className="px-5 py-3">ĐIỂM</th>
                 <th className="px-5 py-3">LOẠI KÈO</th>
                 <th className="px-5 py-3">NGỘP</th>
+                <th className="px-5 py-3">LIÊN HỆ</th>
                 <th className="px-5 py-3">THỜI GIAN</th>
               </tr>
             </thead>
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
-                    Chưa có tin nào. Dán tin vào trang chủ để check.
+                  <td colSpan={7} className="px-5 py-8 text-center text-slate-400">
+                    Chưa có tin nào. Dán tin vào ô trên để check.
                   </td>
                 </tr>
               ) : (
@@ -43,6 +49,16 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                   <tr key={r.id} className="border-b border-slate-100 last:border-0 hover:bg-[#FFFEFB]">
                     <td className="px-5 py-3.5 max-w-[360px]">
                       <div className="truncate text-slate-700">{r.original_text}</div>
+                      {r.listing_url && (
+                        <a
+                          href={r.listing_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-navy hover:underline"
+                        >
+                          Mở tin gốc ↗
+                        </a>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 whitespace-nowrap">
                       {r.province ? (
@@ -67,6 +83,33 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                       </span>
                     </td>
                     <td className="px-5 py-3.5 font-mono">{r.is_ngop ?? 0}%</td>
+                    <td className="px-5 py-3.5 whitespace-nowrap">
+                      {r.phone ? (
+                        <a
+                          href={`tel:${r.phone}`}
+                          className="font-mono text-[12px] font-bold text-emerald-700 hover:underline"
+                          title="Gọi ngay"
+                        >
+                          {formatPhone(r.phone)}
+                        </a>
+                      ) : r.contact_name ? (
+                        <div className="text-[12px] text-slate-600 max-w-[140px] truncate" title={r.contact_name}>
+                          {r.contact_name}
+                        </div>
+                      ) : (
+                        <span className="text-[12px] text-slate-400">-</span>
+                      )}
+                      {r.listing_url && (
+                        <a
+                          href={r.listing_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-semibold text-navy hover:underline"
+                        >
+                          {r.phone ? "Xem tin ↗" : "Xem SĐT ↗"}
+                        </a>
+                      )}
+                    </td>
                     <td className="px-5 py-3.5 text-slate-500 whitespace-nowrap">
                       {new Date(r.created_at).toLocaleString("vi-VN")}
                     </td>

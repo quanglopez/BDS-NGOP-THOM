@@ -13,6 +13,8 @@ export interface CategoryScanItem {
   ward: string;
   region: string;
   image: string | null;
+  contactName: string | null;
+  phone: string | null;
 }
 
 export interface CategoryScanOk {

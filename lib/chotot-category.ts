@@ -5,6 +5,7 @@
 
 import { assertPublicUrl, FETCH_UA } from "@/lib/url-guard";
 import { adToListing } from "@/lib/chotot";
+import { extractPhone } from "@/lib/phone";
 import {
   parseCategoryUrl,
   stripAdminPrefix,
@@ -38,6 +39,9 @@ export interface CategoryItem {
   ward: string;
   region: string;
   image: string | null;
+  // Người đăng + SĐT (SĐT lấy từ nội dung tin, gateway Chợ Tốt không trả SĐT thật)
+  contactName: string | null;
+  phone: string | null;
 }
 
 export interface CategoryScope {
@@ -231,6 +235,13 @@ async function resolveAreaCode(
   return null;
 }
 
+// URL tin thật trên Chợ Tốt/Nhà Tốt: /mua-ban-nha-dat-{quận}-{tỉnh}/{id}.htm
+function buildListingUrl(id: string, areaName: string, regionName: string): string {
+  const slug = (v: string) => normName(v).replace(/ /g, "-").replace(/-+/g, "-");
+  const parts = ["mua-ban-nha-dat", slug(areaName), slug(regionName)].filter((x) => x && x !== "mua-ban-nha-dat");
+  return `https://www.nhatot.com/${parts.join("-")}/${id}.htm`;
+}
+
 function toItem(ad: Record<string, unknown>): CategoryItem | null {
   const id = str(ad.list_id) || String(num(ad.list_id) ?? "");
   if (!id) return null;
@@ -243,9 +254,13 @@ function toItem(ad: Record<string, unknown>): CategoryItem | null {
   const listing = adToListing(ad, `https://www.nhatot.com/tin/${id}.htm`);
   const text = listing?.text ?? "";
 
+  // SĐT: ưu tiên SĐT ghi trong mô tả tin (thật), không có thì bỏ trống —
+  // gateway Chợ Tốt chỉ trả SĐT đã che (vd 089899****)
+  const phone = extractPhone(text) ?? null;
+
   return {
     id,
-    url: `https://www.nhatot.com/chi-tiet/${id}.htm`,
+    url: buildListingUrl(id, area, region),
     title: str(ad.subject) || listing?.title || `Tin ${id}`,
     text,
     priceHint: str(ad.price_string) || listing?.priceHint || null,
@@ -259,6 +274,8 @@ function toItem(ad: Record<string, unknown>): CategoryItem | null {
     ward: ward || area,
     region: region || "",
     image: str(ad.image) || str(ad.thumbnail_image) || null,
+    contactName: str(ad.account_name) || str(ad.full_name) || null,
+    phone,
   };
 }
 

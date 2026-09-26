@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "node --experimental-strip-types --import ./tests/register-loader.mjs tests/extract.test.ts && node --experimental-strip-types --import ./tests/register-loader.mjs tests/scoring.test.ts && node --experimental-strip-types --import ./tests/register-loader.mjs tests/category.test.ts",
+    "test": "node --experimental-strip-types --import ./tests/register-loader.mjs tests/extract.test.ts && node --experimental-strip-types --import ./tests/register-loader.mjs tests/scoring.test.ts && node --experimental-strip-types --import ./tests/register-loader.mjs tests/category.test.ts && node --experimental-strip-types --import ./tests/register-loader.mjs tests/phone.test.ts",
     "test:ocr": "node --experimental-strip-types tests/ocr.test.ts",
     "verify-live": "node --experimental-strip-types tests/verify-live.ts"
   },

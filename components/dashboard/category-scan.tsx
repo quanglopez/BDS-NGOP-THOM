@@ -13,6 +13,7 @@ import {
   type AreaOverrideInput,
 } from "@/lib/client-category";
 import { dealBadgeClass, dealLabel, scoreBadgeClass } from "@/lib/format";
+import { formatPhone } from "@/lib/phone";
 
 interface CheckedRow {
   item: CategoryScanItem;
@@ -129,7 +130,12 @@ export function CategoryScan() {
           const res = await fetch("/api/check", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: targets[i].item.text }),
+            body: JSON.stringify({
+              text: targets[i].item.text,
+              contactName: targets[i].item.contactName,
+              phone: targets[i].item.phone,
+              listingUrl: targets[i].item.url,
+            }),
           });
           const data = await res.json();
           if (res.status === 429) {
@@ -366,12 +372,36 @@ export function CategoryScan() {
                     <img src={item.image} alt="" className="w-16 h-16 rounded-[10px] object-cover shrink-0 bg-slate-100" />
                   )}
                   <div className="min-w-0 flex-1">
-                    <div className="text-[13px] font-bold text-navy leading-snug line-clamp-2">{item.title}</div>
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[13px] font-bold text-navy leading-snug line-clamp-2 hover:underline underline-offset-2"
+                      title="Mở tin trên Chợ Tốt / Nhà Tốt"
+                    >
+                      {item.title} ↗
+                    </a>
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
                       {item.priceHint && <span className="font-bold text-emerald-700">{item.priceHint}</span>}
                       {item.areaHint && <span>{item.areaHint}</span>}
                       {item.rooms !== null && <span>{item.rooms} PN</span>}
                       {item.ward && <span>📍 {item.ward}</span>}
+                      {item.contactName && <span>👤 {item.contactName}</span>}
+                      {item.phone && (
+                        <a href={"tel:" + item.phone} className="font-bold text-emerald-700 hover:underline">
+                          📞 {formatPhone(item.phone)}
+                        </a>
+                      )}
+                      {!item.phone && item.url && (
+                        <a
+                          href={item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="font-bold text-navy hover:underline"
+                        >
+                          Xem SĐT ↗
+                        </a>
+                      )}
                       {item.price !== null && item.price < 1_000_000_000 && (
                         <span className="text-slate-400">({fmtPrice(item.price)})</span>
                       )}

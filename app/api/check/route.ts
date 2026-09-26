@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { planLimit, vnDayStartISO, effectivePlan } from "@/lib/quota";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { detectProvince, provinceLabel } from "@/lib/provinces";
+import { extractPhone } from "@/lib/phone";
 
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
 // Cần đăng nhập (session Supabase) + có quota trong ngày.
@@ -185,6 +186,12 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
     const text: string = body?.text ?? "";
+    // Thông tin liên hệ: client gửi kèm (từ quét danh mục) hoặc tự trích từ text tin
+    const contactName: string | null = body?.contactName ? String(body.contactName).slice(0, 80) : null;
+    const listingUrl: string | null = body?.listingUrl ? String(body.listingUrl).slice(0, 300) : null;
+    const contactPhone: string | null = body?.phone
+      ? String(body.phone).replace(/\D/g, "").slice(0, 11) || null
+      : extractPhone(text);
 
     if (!text || text.length < 20) {
       return NextResponse.json({ error: "Tin BĐS quá ngắn" }, { status: 400, headers: CORS });
@@ -295,6 +302,9 @@ export async function POST(req: NextRequest) {
       province: detectedProvince,
       price_billion: priceBillion,
       area_m2: areaM2,
+      phone: contactPhone,
+      contact_name: contactName,
+      listing_url: listingUrl,
     });
 
     // Nếu check bằng credits thưởng thì trừ 1

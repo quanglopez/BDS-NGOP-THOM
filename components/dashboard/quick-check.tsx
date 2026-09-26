@@ -26,6 +26,8 @@ function safeDomain(url: string): string {
 export function QuickCheck() {
   const router = useRouter();
   const [text, setText] = useState("");
+  // Link tin gốc (nếu khách dán link) để lưu vào lịch sử kèm SĐT người đăng
+  const [sourceUrl, setSourceUrl] = useState<string | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [source, setSource] = useState<CheckSource>("local");
   const [analyzedAt, setAnalyzedAt] = useState<string | undefined>(undefined);
@@ -47,7 +49,7 @@ export function QuickCheck() {
     if (!text.trim() || loading) return;
     setLoading(true);
     try {
-      const outcome = await runCheck(text);
+      const outcome = await runCheck(text, { listingUrl: sourceUrl });
       setResult(outcome.result);
       setSource(outcome.source);
       setAnalyzedAt(outcome.analyzedAt);
@@ -91,6 +93,7 @@ export function QuickCheck() {
 
     if (r.ok) {
       setText(r.text);
+      setSourceUrl(url);
       setExtractState({
         kind: "ok",
         text: `Đã lấy nội dung từ ${r.domain} (${r.text.length} ký tự). Kiểm tra rồi bấm Check.`,

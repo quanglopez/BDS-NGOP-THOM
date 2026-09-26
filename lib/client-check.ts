@@ -10,15 +10,22 @@ export interface CheckOutcome {
   analyzedAt?: string;
 }
 
+// Thông tin người đăng kèm theo khi check (có từ quét danh mục / link tin)
+export interface ContactInfo {
+  contactName?: string | null;
+  phone?: string | null;
+  listingUrl?: string | null;
+}
+
 // Gọi /api/check; nếu server thiếu key hoặc AI lỗi thì fallback scoring local để demo luôn chạy được
-export async function runCheck(text: string): Promise<CheckOutcome> {
+export async function runCheck(text: string, contact?: ContactInfo): Promise<CheckOutcome> {
   const local = analyzeListing(text);
 
   try {
     const res = await fetch("/api/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(contact ?? {}) }),
     });
 
     if (!res.ok) return { result: local, source: "local" };
