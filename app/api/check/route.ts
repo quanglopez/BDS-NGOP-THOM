@@ -8,7 +8,8 @@ import { detectProvince, provinceLabel } from "@/lib/provinces";
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
 // Cần đăng nhập (session Supabase) + có quota trong ngày.
 export const runtime = "nodejs";
-export const maxDuration = 10;
+// Jev đôi khi chậm 20-40s; Hobby cho tối đa 300s nên để 60s cho chắc
+export const maxDuration = 60;
 
 // Chỉ cho phép gọi từ site của mình (kèm localhost để dev)
 const ALLOWED_ORIGINS = new Set([
@@ -74,6 +75,44 @@ const QUESTIONS = {
     },
   },
 } as const;
+
+// Gọi Jev 1 lần với timeout riêng (tránh treo hết maxDuration mà không rõ lý do)
+async function callJevOnce(key: string, body: unknown, timeoutMs: number) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch("https://api.typesafe.ai/v1/systemone", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Gọi Jev tối đa 2 lần: retry khi timeout/mạng sập/lỗi 5xx.
+// Lỗi 4xx là do request sai nên không retry.
+async function callJev(key: string, body: unknown, requestId: string, logPrefix: string) {
+  const TIMEOUT_MS = 25000;
+  let lastError = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await callJevOnce(key, body, TIMEOUT_MS);
+      if (res.ok || (res.status >= 400 && res.status < 500)) return res;
+      lastError = `status=${res.status} body=${(await res.text()).slice(0, 300)}`;
+      console.warn(`[check:${requestId}] JEV_RETRY attempt=${attempt} ${lastError} ${logPrefix}`);
+    } catch (e) {
+      lastError = e instanceof Error ? e.name : "fetch_error";
+      console.warn(`[check:${requestId}] JEV_RETRY attempt=${attempt} error=${lastError} ${logPrefix}`);
+    }
+  }
+  throw new Error(`Jev không phản hồi sau 2 lần thử (${lastError})`);
+}
 
 export async function OPTIONS(req: NextRequest) {
   return new NextResponse(null, { status: 204, headers: corsHeaders(req) });
@@ -192,19 +231,26 @@ export async function POST(req: NextRequest) {
     const priceBillion = priceMatch ? Number(priceMatch[1].replace(",", ".")) : null;
     const areaM2 = areaMatch ? Number(areaMatch[1]) : null;
 
-    const jevRes = await fetch("https://api.typesafe.ai/v1/systemone", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${JEV_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "jev-latest",
-        // Chèn hint khu vực để AI chấm vị trí/tăng giá đúng tỉnh
-        state: `Khu vực: ${provinceLabel(detectedProvince)}\n${text.slice(0, 5900)}`,
-        questions: QUESTIONS,
-      }),
-    });
+    let jevRes: Response;
+    try {
+      jevRes = await callJev(
+        JEV_KEY,
+        {
+          model: "jev-latest",
+          // Chèn hint khu vực để AI chấm vị trí/tăng giá đúng tỉnh
+          state: `Khu vực: ${provinceLabel(detectedProvince)}\n${text.slice(0, 5900)}`,
+          questions: QUESTIONS,
+        },
+        requestId,
+        `ip=${ip}`,
+      );
+    } catch (e) {
+      console.error(`[check:${requestId}] JEV_UNAVAILABLE ip=${ip}`, e);
+      return NextResponse.json(
+        { error: "AI đang bận, vui lòng thử lại sau ít phút." },
+        { status: 503, headers: CORS },
+      );
+    }
 
     const raw = await jevRes.text();
     if (!jevRes.ok) {

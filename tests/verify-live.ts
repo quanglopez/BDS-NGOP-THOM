@@ -1,4 +1,5 @@
 // Verify live endpoints
+export {};
 const BASE = "https://check-bds-ngop.vercel.app";
 const ORIGIN = BASE;
 

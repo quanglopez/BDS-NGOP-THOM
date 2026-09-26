@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 export function LeadForm({ planInterest }: { planInterest?: string }) {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  // Honeypot chống bot: input ẩn, người thật không thấy/không điền
+  const [website, setWebsite] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [message, setMessage] = useState("");
 
@@ -18,7 +20,7 @@ export function LeadForm({ planInterest }: { planInterest?: string }) {
       const res = await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, phone, planInterest }),
+        body: JSON.stringify({ email, phone, planInterest, website }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -67,6 +69,17 @@ export function LeadForm({ planInterest }: { planInterest?: string }) {
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           className="h-11 rounded-[12px]"
+        />
+        {/* Bẫy bot: ẩn với người dùng, bot tự điền sẽ bị server từ chối ngầm */}
+        <input
+          type="text"
+          name="website"
+          value={website}
+          onChange={(e) => setWebsite(e.target.value)}
+          autoComplete="off"
+          tabIndex={-1}
+          aria-hidden="true"
+          className="absolute -left-[9999px] h-px w-px opacity-0"
         />
         <Button
           type="button"

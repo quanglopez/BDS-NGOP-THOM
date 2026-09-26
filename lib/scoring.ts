@@ -240,6 +240,10 @@ export function analyzeListing(input: string): AnalysisResult {
 
 // Đánh giá từ phản hồi AI: nhận điểm tổng hợp + 5 chỉ số phụ rồi ánh xạ về cùng model UI
 export function fromApiResponse(data: CheckApiResponse, local: AnalysisResult): AnalysisResult {
+  // AI không trả tín hiệu gì (lỗi parse/rỗng) -> giữ nguyên kết quả local, không tính lại tag
+  if (typeof data.investment_score !== "number" && !data.deal_type) {
+    return local;
+  }
   const score = typeof data.investment_score === "number" ? data.investment_score : local.overall;
   const deal = data.deal_type || "binh_thuong";
 

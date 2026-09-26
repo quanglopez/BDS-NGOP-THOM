@@ -200,14 +200,24 @@ const ALIASES: { key: string; label: string }[] = [
   { key: "mien nam", label: "Miền Nam" },
 ];
 
+// Bỏ dấu tiếng Việt để so khớp: khách gõ "Cầu Giấy" hay "Cau Giay" đều nhận ra
+function norm(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d");
+}
+
 // Nhận diện tỉnh/thành từ nội dung tin. Trả về null nếu không khớp.
 export function detectProvince(text: string): string | null {
-  const lower = text.toLowerCase();
+  const lower = norm(text);
   let best: { label: string; len: number } | null = null;
 
   for (const { key, label } of ALIASES) {
-    if (lower.includes(key) && (!best || key.length > best.len)) {
-      best = { label, len: key.length };
+    const k = norm(key);
+    if (lower.includes(k) && (!best || k.length > best.len)) {
+      best = { label, len: k.length };
     }
   }
 
