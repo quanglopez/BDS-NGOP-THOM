@@ -26,6 +26,8 @@ console.log("ssrf loop ", await post("/api/extract", { url: "http://127.0.0.1:22
 console.log("ssrf meta ", await post("/api/extract", { url: "http://169.254.169.254/latest/meta-data/" }));
 console.log("ssrf file ", await post("/api/extract", { url: "file:///etc/passwd" }));
 console.log("no url    ", await post("/api/extract", {}));
+console.log("lead honey", await post("/api/leads", { email: "bot@spam.example", website: "http://spam" }));
+console.log("lead bad  ", await post("/api/leads", { email: "khong-phai-email" }));
 
 // CORS: origin la
 const r = await fetch(BASE + "/api/extract", {
