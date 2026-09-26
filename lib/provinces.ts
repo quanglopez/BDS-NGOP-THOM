@@ -201,7 +201,7 @@ const ALIASES: { key: string; label: string }[] = [
 ];
 
 // Bỏ dấu tiếng Việt để so khớp: khách gõ "Cầu Giấy" hay "Cau Giay" đều nhận ra
-function norm(s: string): string {
+export function norm(s: string): string {
   return s
     .toLowerCase()
     .normalize("NFD")

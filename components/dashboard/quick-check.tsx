@@ -10,6 +10,7 @@ import { ocrImageToText } from "@/lib/ocr";
 import type { AnalysisResult } from "@/lib/types";
 import { ResultCard } from "@/components/site/result-card";
 import OcrButton from "@/components/site/ocr-button";
+import { CategoryScan } from "@/components/dashboard/category-scan";
 
 function safeDomain(url: string): string {
   try {
@@ -39,6 +40,7 @@ export function QuickCheck() {
     progress: 0,
     text: "",
   });
+  const [tab, setTab] = useState<"single" | "category">("single");
   const resultRef = useRef<HTMLDivElement>(null);
 
   const handleCheck = async () => {
@@ -121,17 +123,41 @@ export function QuickCheck() {
   return (
     <section className="mt-6 rounded-[20px] border border-slate-200 bg-white shadow-[0_16px_50px_-24px_rgba(11,29,58,0.3)] overflow-hidden">
       <div className="p-5 md:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-[18px] font-black tracking-tight text-navy">Check 1 tin bằng AI</h2>
+            <h2 className="text-[18px] font-black tracking-tight text-navy">Check tin bằng AI</h2>
             <p className="mt-1 text-[12px] text-slate-500">
-              Dán mô tả tin, link Chợ Tốt/Nhà Tốt, hoặc tải ảnh chụp màn hình — kết quả tự lưu vào lịch sử.
+              Check lẻ 1 tin, hoặc dán link cả trang danh mục để quét nhiều tin rồi chọn.
             </p>
           </div>
-          <span className="text-[11px] tabular-nums text-slate-400">{text.length}/1000</span>
+          <div className="flex rounded-[10px] bg-cream border border-slate-200 p-1 text-[12px] font-bold">
+            <button
+              type="button"
+              onClick={() => setTab("single")}
+              className={`px-4 h-8 rounded-[8px] transition ${tab === "single" ? "bg-navy text-white" : "text-slate-500 hover:text-navy"}`}
+            >
+              1 tin
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("category")}
+              className={`px-4 h-8 rounded-[8px] transition ${tab === "category" ? "bg-navy text-white" : "text-slate-500 hover:text-navy"}`}
+            >
+              🗂 Danh mục
+            </button>
+          </div>
         </div>
 
-        <Textarea
+        {tab === "category" ? (
+          <div className="mt-4">
+            <CategoryScan />
+          </div>
+        ) : (
+          <>
+            <div className="flex items-center justify-end">
+              <span className="text-[11px] tabular-nums text-slate-400">{text.length}/1000</span>
+            </div>
+            <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           maxLength={1000}
@@ -226,18 +252,20 @@ export function QuickCheck() {
             )}
           </div>
         )}
-      </div>
 
-      {result && (
-        <div ref={resultRef} className="px-5 md:px-6 pb-5 md:pb-6 scroll-mt-24">
-          <ResultCard
-            result={result}
-            source={source}
-            analyzedAt={analyzedAt}
-            onCheckAnother={() => setText("")}
-          />
-        </div>
-      )}
+        {result && tab === "single" && (
+          <div ref={resultRef} className="px-5 md:px-6 pb-5 md:pb-6 scroll-mt-24">
+            <ResultCard
+              result={result}
+              source={source}
+              analyzedAt={analyzedAt}
+              onCheckAnother={() => setText("")}
+            />
+          </div>
+        )}
+          </>
+        )}
+      </div>
     </section>
   );
 }
