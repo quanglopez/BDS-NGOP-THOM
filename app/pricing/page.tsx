@@ -6,7 +6,7 @@ import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { PaymentBox } from "@/components/pricing/payment-box";
 import { PricingTracker } from "@/components/pricing/pricing-tracker";
-import { DURATIONS, quotePrice } from "@/lib/payments";
+import { quotePrice } from "@/lib/payments";
 import { trackEvent } from "@/lib/analytics";
 
 export default function PricingPage() {
@@ -138,51 +138,6 @@ export default function PricingPage() {
               <div>✓ Hoàn tiền 100% trong 3 ngày nếu không phù hợp</div>
               <div>✓ Có thể hủy bất kỳ lúc nào</div>
             </div>
-          </div>
-        </div>
-
-        {/* Thời hạn */}
-        <div className="mt-8 rounded-[18px] border border-slate-200 bg-white p-5 md:p-6">
-          <h2 className="text-[15px] font-black text-navy">Mua dài hạn, giá tốt hơn</h2>
-          <div className="mt-4 grid grid-cols-2 sm:grid-cols-5 gap-3">
-            {DURATIONS.map((d) => {
-              const qq = quotePrice(d.months);
-              return (
-                <button
-                  key={d.months}
-                  type="button"
-                  onClick={() => setMonths(d.months)}
-                  className={`relative rounded-[12px] border px-3 py-3 text-center transition ${
-                    months === d.months ? "border-navy bg-navy text-white" : "border-slate-200 bg-white text-slate-700 hover:border-navy/40"
-                  }`}
-                >
-                  {d.badge && (
-                    <span className="absolute -top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-gold text-navy text-[9px] font-black whitespace-nowrap">
-                      {d.badge}
-                    </span>
-                  )}
-                  <div className="text-[13px] font-black">{d.label}</div>
-                  {qq.saved > 0 ? (
-                    <>
-                      <div className={`mt-1 text-[11px] line-through ${months === d.months ? "text-slate-300" : "text-slate-400"}`}>
-                        {qq.fullPrice.toLocaleString("vi-VN")}đ
-                      </div>
-                      <div className="text-[14px] font-black text-navy">{qq.total.toLocaleString("vi-VN")}đ</div>
-                      <div className="mt-0.5 text-[10px] text-emerald-600 font-bold">
-                        Tiết kiệm {qq.saved.toLocaleString("vi-VN")}đ
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="mt-1 text-[14px] font-black text-navy">{qq.total.toLocaleString("vi-VN")}đ</div>
-                      <div className={`mt-0.5 text-[10px] ${months === d.months ? "text-slate-300" : "text-slate-400"}`}>
-                        Không giảm giá
-                      </div>
-                    </>
-                  )}
-                </button>
-              );
-            })}
           </div>
         </div>
 
