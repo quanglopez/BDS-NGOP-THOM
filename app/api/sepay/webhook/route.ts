@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import {
   parseMonthsFromContent,
@@ -8,47 +9,91 @@ import {
 } from "@/lib/payments";
 import { nextExpiry } from "@/lib/quota";
 
-// Webhook SePay: ngân hàng báo có tiền -> tự nâng plan
-// Doc: https://docs.sepay.vn
-// Nguyên tắc: mọi khoản tiền vào đều phải có dấu vết trong bảng payments
-// (status=unmatched nếu không khớp), để admin đối chiếu và xử lý tay — không để mất dấu.
+// Webhook SePay — https://developer.sepay.vn/vi/sepay-webhooks
+//
+// SePay CHỈ coi là thành công khi: HTTP 200/201 + body `{"success": true}` + trong 30s.
+// Sai một trong ba -> SePay retry tối đa 7 lần theo dãy Fibonacci trong 5 giờ.
+// Vì vậy mọi nhánh trả về đều phải kèm `success`.
+//
+// Xác thực (chọn 1 trong 4 cách SePay hỗ trợ, cấu hình ở Bước 3 lúc tạo webhook):
+//   1. SEPAY_WEBHOOK_SECRET  -> HMAC-SHA256 qua X-SePay-Signature (khuyến nghị)
+//   2. SEPAY_API_KEY         -> header Authorization: Apikey {key}
+//   3. Cả hai đều rỗng      -> không xác thực (chỉ để test, KHÔNG dùng production)
+// Key/secret của SePay chỉ hiện đầy đủ đúng một lần, mở lại chỉ thấy 4 ký tự cuối.
 
-// Chuẩn hoá token xác thực SePay gửi lên: chấp nhận "Apikey X", "Bearer X" hoặc X
-function readAuth(req: NextRequest): string {
-  const raw =
+function ok(body: Record<string, unknown> = {}) {
+  return NextResponse.json({ success: true, ...body }, { status: 200 });
+}
+
+function fail(message: string, status: number) {
+  return NextResponse.json({ success: false, message }, { status });
+}
+
+// So sánh thời gian cố định để tránh rò rỉ qua thời gian phản hồi
+function safeEqual(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length) return false;
+  return timingSafeEqual(ba, bb);
+}
+
+// Xác thực HMAC-SHA256: chữ ký = HMAC(secret, "{timestamp}.{rawBody}")
+function verifyHmac(rawBody: string, req: NextRequest, secret: string): boolean {
+  const signature = req.headers.get("x-sepay-signature") ?? "";
+  const timestamp = Number(req.headers.get("x-sepay-timestamp") ?? 0);
+  // Chống replay: timestamp lệch quá 5 phút là 401
+  if (!timestamp || Math.abs(Date.now() / 1000 - timestamp) > 300) return false;
+  const expected = `sha256=${createHmac("sha256", secret).update(`${timestamp}.${rawBody}`).digest("hex")}`;
+  return safeEqual(signature, expected);
+}
+
+function verifyApiKey(req: NextRequest, apiKey: string): boolean {
+  const raw = (
     req.headers.get("authorization") ??
     req.headers.get("x-api-key") ??
     req.headers.get("x-sepay-api-key") ??
-    "";
-  return raw.replace(/^(apikey|bearer)\s+/i, "").trim();
-}
-
-// Chỉ log vài ký tự đầu để đối chiếu, không để lộ key
-function mask(token: string): string {
-  return token ? `${token.slice(0, 4)}…(${token.length} ký tự)` : "(rỗng)";
+    ""
+  )
+    .replace(/^(apikey|bearer)\s+/i, "")
+    .trim();
+  return safeEqual(raw, apiKey);
 }
 
 export async function POST(req: NextRequest) {
-  const apiKey = process.env.SEPAY_API_KEY;
-  if (!apiKey) {
-    console.error("[sepay] MISSING_SEPAY_API_KEY");
-    return NextResponse.json({ error: "Chưa cấu hình SEPAY_API_KEY" }, { status: 500 });
+  const secret = process.env.SEPAY_WEBHOOK_SECRET ?? "";
+  const apiKey = process.env.SEPAY_API_KEY ?? "";
+
+  if (!secret && !apiKey) {
+    console.warn(
+      "[sepay] WARNING: chua dat SEPAY_WEBHOOK_SECRET hoac SEPAY_API_KEY — dang mo webhook khong xac thuc. KHONG dung o production.",
+    );
   }
 
-  const token = readAuth(req);
-  if (token !== apiKey) {
-    console.warn(`[sepay] AUTH_FAIL got=${mask(token)} expect=${mask(apiKey)}`);
-    return NextResponse.json({ error: "Sai API key" }, { status: 401 });
+  // Đọc raw body TRƯỚC khi parse: HMAC ký trên bytes gốc, re-serialize sẽ lệch chữ ký
+  const rawBody = await req.text();
+
+  if (secret) {
+    if (!verifyHmac(rawBody, req, secret)) {
+      console.warn(`[sepay] HMAC_FAIL ts=${req.headers.get("x-sepay-timestamp") ?? "-"}`);
+      return fail("Chữ ký không hợp lệ", 401);
+    }
+  } else if (apiKey && !verifyApiKey(req, apiKey)) {
+    // Chỉ log 4 ký tự đầu + độ dài, không lộ key
+    const got = (req.headers.get("authorization") ?? "").replace(/^(apikey|bearer)\s+/i, "").trim();
+    console.warn(`[sepay] AUTH_FAIL got=${got.slice(0, 4)}…(${got.length} ký tự) expect=${apiKey.slice(0, 4)}…(${apiKey.length} ký tự)`);
+    return fail("Sai API key", 401);
   }
 
-  const payload = await req.json().catch(() => null);
-  if (!payload) {
-    return NextResponse.json({ error: "Payload không hợp lệ" }, { status: 400 });
-  }
+  const payload = (() => {
+    try {
+      return JSON.parse(rawBody) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  })();
 
-  const content: string = payload.content ?? payload.description ?? "";
-  const amount: number = Number(payload.transferAmount ?? payload.amount ?? 0);
-  const ref: string | null = payload.referenceCode ?? payload.code ?? null;
+  if (!payload) return fail("Payload không hợp lệ", 400);
 
   // Service role: webhook không có session user, cần quyền ghi vượt RLS
   const admin = createSupabaseAdmin(
@@ -57,7 +102,14 @@ export async function POST(req: NextRequest) {
     { auth: { persistSession: false } },
   );
 
-  // Ghi nhận một khoản tiền vào chưa nâng được gói (admin đối chiếu sau)
+  const content: string = String(payload.content ?? payload.description ?? "");
+  const amount: number = Number(payload.transferAmount ?? payload.amount ?? 0);
+  // SePay khuyến nghị chống trùng theo trường `id` của payload (retry + gửi tay)
+  const txnId = payload.id != null ? String(payload.id) : null;
+  const reference = (payload.referenceCode ?? payload.code ?? null) as string | null;
+  const ref = txnId ?? reference;
+
+  // Ghi nhận khoản tiền vào chưa nâng được gói — admin đối chiếu và xử lý tay
   const recordUnmatched = async (userId: string | null, reason: string) => {
     await admin.from("payments").insert({
       user_id: userId,
@@ -68,31 +120,30 @@ export async function POST(req: NextRequest) {
       sepay_ref: ref,
     });
     console.log(`[sepay] UNMATCHED reason=${reason} amount=${amount} ref=${ref ?? "-"}`);
-    return NextResponse.json({ ok: true, unmatched: reason });
+    // vẫn trả success để SePay không retry vô ích — admin sẽ xử lý tay
+    return ok({ unmatched: reason });
   };
 
   // Chỉ xử lý tiền vào
   if (payload.transferType && payload.transferType !== "in") {
-    return NextResponse.json({ ok: true, skipped: "not-inbound" });
+    return ok({ skipped: "not-inbound" });
   }
 
-  // Nhận diện user từ nội dung CK: NANGCAP {uuid} (ngân hàng có thể bỏ dấu gạch)
   const userId = parseUserIdFromContent(content);
   if (!userId) {
     console.warn(`[sepay] NO_MATCH content=${content.slice(0, 120)}`);
     return recordUnmatched(null, "khong-nhan-dien-duoc-nguoi-chuyen");
   }
 
-  // Gói mua nhiều tháng ghi trong nội dung CK (NANGCAP {uuid} T12):
-  // cứ có số tháng là gói Pro — tránh suy theo tiền bị nhầm sang gói Team.
+  // Gói mua nhiều tháng ghi trong nội dung CK (NANGCAP {uuid} T12).
+  // Có số tháng thì gói Pro — tránh suy theo tiền bị nhầm sang gói Team.
   const months = parseMonthsFromContent(content);
   const plan = months > 1 ? "pro" : planFromAmount(amount);
   if (!plan || plan === "free") {
-    // Có người chuyển nhưng số tiền chưa đủ gói -> vẫn ghi lại để admin biết
     return recordUnmatched(userId, "so-tien-chua-du-goi");
   }
 
-  // Idempotent: đã ghi nhận giao dịch này thì bỏ qua
+  // Idempotent: cùng một giao dịch có thể được gửi lại nhiều lần
   if (ref) {
     const { data: dup } = await admin
       .from("payments")
@@ -100,7 +151,7 @@ export async function POST(req: NextRequest) {
       .eq("sepay_ref", ref)
       .eq("status", "paid")
       .maybeSingle();
-    if (dup) return NextResponse.json({ ok: true, skipped: "duplicate" });
+    if (dup) return ok({ skipped: "duplicate" });
   }
 
   // Ưu tiên cập nhật bản ghi pending của user (khớp đúng nội dung CK)
@@ -144,5 +195,5 @@ export async function POST(req: NextRequest) {
     `[sepay] plan=${plan} months=${months} user=${userId} amount=${amount} expires=${expiresAt} ref=${ref ?? "-"}`,
   );
 
-  return NextResponse.json({ ok: true, plan, months, plan_expires_at: expiresAt });
+  return ok({ plan, months, plan_expires_at: expiresAt });
 }
