@@ -4,7 +4,7 @@ import { adminClient } from "@/lib/admin";
 import { effectivePlan, planAllowsProAnalysis } from "@/lib/quota";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { ChototGatewayAdapter } from "@/lib/price/gateway";
-import { generatePriceIntelligence, REASON_NO_CATEGORY, REASON_NO_SAMPLE } from "@/lib/price/pipeline";
+import { generatePriceIntelligence } from "@/lib/price/pipeline";
 import { refreshAreaIndex, knownAreas, supabaseMarketListings, supabasePriceStats } from "@/lib/price/repos";
 import { PRICE_INTELLIGENCE_VERSION, type PriceIntelligence } from "@/lib/price/types";
 import { safeErrorCode } from "@/lib/price/errors";
@@ -171,10 +171,10 @@ async function handle(req: NextRequest, method: "GET" | "POST") {
       },
     );
   } catch (e) {
-    // Log CHỈ 4 trường: check_id, step, error_code, duration.
+    // Log CHỈ 5 trường: req, check_id, step, error_code, duration.
     // Không log message thô, không log title/url/phone/user data.
     console.error(
-      `[price-intelligence-error] check_id=${checkId} step=crawl ` +
+      `[price-intelligence-error] req=${requestId} check_id=${checkId} step=crawl ` +
         `error_code=${safeErrorCode(e)} duration_ms=${Date.now() - startedAt}`,
     );
     return NextResponse.json(
@@ -187,11 +187,12 @@ async function handle(req: NextRequest, method: "GET" | "POST") {
     );
   }
 
+  // outcome.reason đã là câu tiếng Việt dùng được (REASON_* trong pipeline),
+  // không phải mã kỹ thuật -> trả thẳng cho UI.
   if (!outcome.ok) {
-    const status = outcome.reason === REASON_NO_CATEGORY ? 200 : 200;
     return NextResponse.json(
       { ok: false, reason: "not_enough_data", message: outcome.reason },
-      { status, headers: CORS },
+      { status: 200, headers: CORS },
     );
   }
 
@@ -212,7 +213,7 @@ async function handle(req: NextRequest, method: "GET" | "POST") {
     if (saveError) {
       // CHỈ error code, không message thô
       console.error(
-        `[price-intelligence-error] check_id=${checkId} step=save ` +
+        `[price-intelligence-error] req=${requestId} check_id=${checkId} step=save ` +
           `error_code=${safeErrorCode(saveError)} duration_ms=${Date.now() - startedAt}`,
       );
     } else {
@@ -220,14 +221,14 @@ async function handle(req: NextRequest, method: "GET" | "POST") {
     }
   } catch (e) {
     console.error(
-      `[price-intelligence-error] check_id=${checkId} step=save ` +
+      `[price-intelligence-error] req=${requestId} check_id=${checkId} step=save ` +
         `error_code=${safeErrorCode(e)} duration_ms=${Date.now() - startedAt}`,
     );
   }
 
   // Log KHÔNG PII: không title, không URL, không phone, không contact
   console.log(
-    `[price-intelligence] check=${checkId} scope=${snapshot.scope_level} ` +
+    `[price-intelligence] req=${requestId} check=${checkId} scope=${snapshot.scope_level} ` +
       `sample=${snapshot.sample_size} trimmed=${snapshot.trimmed_size} ` +
       `conf=${snapshot.confidence} calls=- ms=${Date.now() - startedAt} saved=${saved}`,
   );

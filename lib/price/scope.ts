@@ -4,7 +4,6 @@
 import {
   SIZE_BAND_RATIO_MAX,
   SIZE_BAND_RATIO_MIN,
-  type PriceScope,
   type ScopeLevel,
   type ScopeResolution,
 } from "./types";

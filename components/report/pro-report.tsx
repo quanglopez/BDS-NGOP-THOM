@@ -276,10 +276,14 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
         </section>
       )}
 
-      {/* 7. Phân tích giá */}
+      {/* 7. Phân tích giá — chỉ phần AI thật sự biết.
+          KHÔNG hiện "giá thị trường / chênh lệch / chưa đủ dữ liệu tham chiếu":
+          Evidence Pack của pro-v1 chưa nối price intelligence, nên các ô đó luôn
+          rỗng và câu "chưa đủ dữ liệu" sẽ mâu thuẫn với section
+          "Phân tích giá tham chiếu" bên dưới (nơi mới là nơi có số thật). */}
       <section className="rounded-[18px] border border-slate-200 bg-white p-5 md:p-6">
         <SectionTitle>Phân tích giá</SectionTitle>
-        <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+        <div className="mt-3 grid grid-cols-2 gap-3 text-center">
           <div className="rounded-[12px] bg-cream border border-slate-200 p-3">
             <div className="text-[11px] text-slate-500">Giá chào bán</div>
             <div className="mt-1 text-[15px] font-black text-navy">{fmtVnd(seed.price)}</div>
@@ -288,27 +292,8 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
             <div className="text-[11px] text-slate-500">Giá/m²</div>
             <div className="mt-1 text-[15px] font-black text-navy">{fmtM2(seed.pricePerM2)}</div>
           </div>
-          <div className="rounded-[12px] bg-cream border border-slate-200 p-3">
-            <div className="text-[11px] text-slate-500">Giá tham chiếu</div>
-            <div className="mt-1 text-[15px] font-black text-slate-400">
-              {a.price_analysis.reference_available && a.price_analysis.reference_median !== null
-                ? fmtM2(a.price_analysis.reference_median)
-                : "—"}
-            </div>
-          </div>
-          <div className="rounded-[12px] bg-cream border border-slate-200 p-3">
-            <div className="text-[11px] text-slate-500">Chênh lệch</div>
-            <div className="mt-1 text-[15px] font-black text-navy">
-              {a.price_analysis.difference_percent !== null ? `${a.price_analysis.difference_percent > 0 ? "+" : ""}${a.price_analysis.difference_percent}%` : "—"}
-            </div>
-          </div>
         </div>
         <p className="mt-3 text-[13px] text-slate-600 leading-relaxed">{a.price_analysis.explanation}</p>
-        {!a.price_analysis.reference_available && (
-          <p className="mt-2 text-[12px] text-amber-700 bg-amber-50 border border-amber-200 rounded-[10px] px-3 py-2">
-            Chưa đủ dữ liệu tham chiếu để so sánh giá khu vực.
-          </p>
-        )}
       </section>
 
       {/* 8. Red flags */}

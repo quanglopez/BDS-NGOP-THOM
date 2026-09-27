@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { effectivePlan } from "@/lib/quota";
 import { dealLabel } from "@/lib/format";
 import { ProReport, type ReportSeed } from "@/components/report/pro-report";
+import { PriceIntelligenceSection } from "@/components/report/price-intelligence-section";
 
 export const metadata: Metadata = {
   title: "Báo cáo phân tích - CheckBDS.online",
@@ -124,6 +125,11 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         {/* 3-10. AI sections (Pro) hoặc locked list (Free) — client */}
         <div className="mt-4">
           <ProReport checkId={row.id} isPro={isPro} seed={seed} />
+        </div>
+
+        {/* Phân tích giá tham chiếu — lazy, độc lập với AI, tự gọi API khi mở */}
+        <div className="mt-4">
+          <PriceIntelligenceSection checkId={row.id} isPro={isPro} />
         </div>
       </div>
     </main>
