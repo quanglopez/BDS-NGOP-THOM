@@ -60,6 +60,21 @@ function verifyApiKey(req: NextRequest, apiKey: string): boolean {
   return safeEqual(raw, apiKey);
 }
 
+// Chẩn đoán cấu hình (GET, không lộ giá trị key — chỉ cho biết có/không và độ dài).
+// Mở trực tiếp trong trình duyệt để đối chiếu với cấu hình Bước 3 trên SePay.
+export async function GET() {
+  const secret = process.env.SEPAY_WEBHOOK_SECRET ?? "";
+  const apiKey = process.env.SEPAY_API_KEY ?? "";
+  return ok({
+    mode: secret ? "hmac" : apiKey ? "apikey" : "khong-xac-thuc",
+    secret: secret ? "da-dat" : "chua-dat",
+    apiKey: apiKey ? "da-dat" : "chua-dat",
+    apiKeyLength: apiKey.length,
+    // Gợi ý kiểm tra khi khác nhau:
+    hint: "Đối chiếu giá trị này với Bước 3 'Bảo mật' trên my.sepay.vn/webhooks. SePay chỉ hiện key đầy đủ 1 lần duy nhất.",
+  });
+}
+
 export async function POST(req: NextRequest) {
   const secret = process.env.SEPAY_WEBHOOK_SECRET ?? "";
   const apiKey = process.env.SEPAY_API_KEY ?? "";
