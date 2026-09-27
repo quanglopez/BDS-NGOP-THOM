@@ -1,5 +1,5 @@
 import { analyzeListing, fromApiResponse } from "@/lib/scoring";
-import type { AnalysisResult, CheckApiResponse } from "@/lib/types";
+import type { AnalysisResult, CheckApiResponse, QuotaInfo } from "@/lib/types";
 import { trackEvent } from "@/lib/analytics";
 
 export type CheckSource = "ai" | "local";
@@ -12,6 +12,11 @@ export interface CheckOutcome {
   // true khi khách CHƯA đăng nhập (server từ chối) -> UI nói "bản xem trước"
   // khác với "đăng nhập rồi nhưng AI lỗi" (không được nói là xem trước)
   authRequired?: boolean;
+  // true khi đã dùng hết lượt trong ngày (HTTP 429) -> UI phải nói rõ thay vì
+  // im lặng trả kết quả dự phòng, khiến khách tưởng còn lượt
+  quotaExhausted?: boolean;
+  // Thông báo lỗi nguyên bản từ server (vd "Hết 20 lượt check/ngày của gói free")
+  serverError?: string;
 }
 
 // Thông tin người đăng kèm theo khi check (có từ quét danh mục / link tin)
@@ -37,6 +42,15 @@ export async function runCheck(text: string, contact?: ContactInfo): Promise<Che
       trackEvent("property_checked", { source: "preview" });
       return { result: local, source: "local", authRequired: true };
     }
+
+    if (res.status === 429) {
+      // Hết lượt hôm nay: đây đúng là thời điểm khách sẵn sàng nâng cấp.
+      // Phải nói rõ, không được trả kết quả dự phòng như thể vẫn còn lượt.
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      trackEvent("free_limit_reached", { source: "check_429" });
+      return { result: local, source: "local", quotaExhausted: true, serverError: body.error };
+    }
+
     if (!res.ok) {
       trackEvent("property_checked", { source: "local" });
       return { result: local, source: "local" };
@@ -53,5 +67,17 @@ export async function runCheck(text: string, contact?: ContactInfo): Promise<Che
   } catch {
     trackEvent("property_checked", { source: "local" });
     return { result: local, source: "local" };
+  }
+}
+
+// Lấy quota thật của user từ server (chỉ gọi được khi đã đăng nhập).
+// Dùng khi cần hiển thị/kiểm tra hạn mức mà không hardcode trong UI.
+export async function fetchQuota(): Promise<QuotaInfo | null> {
+  try {
+    const res = await fetch("/api/check", { cache: "no-store" });
+    if (!res.ok) return null;
+    return (await res.json()) as QuotaInfo;
+  } catch {
+    return null;
   }
 }

@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { exampleListings } from "@/lib/market-data";
@@ -9,10 +10,15 @@ import { runCheck, type CheckSource } from "@/lib/client-check";
 import { extractFromUrl, firstUrl, isBareUrl } from "@/lib/client-extract";
 import { parseCategoryUrl } from "@/lib/category-slug";
 import type { AnalysisResult } from "@/lib/types";
+import { trackEvent } from "@/lib/analytics";
 import { ResultCard } from "@/components/site/result-card";
 import { CategoryScan } from "@/components/dashboard/category-scan";
 
-type Status = { kind: "idle" | "loading" | "ok" | "error"; text: string; reason?: string };
+type Status = {
+  kind: "idle" | "loading" | "ok" | "error" | "limit";
+  text: string;
+  reason?: string;
+};
 
 // Ô check duy nhất: dán link tin / link danh mục / mô tả tin -> Check bằng AI
 export function Checker() {
@@ -25,6 +31,7 @@ export function Checker() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
   const [categoryUrl, setCategoryUrl] = useState<string | null>(null);
+  const [typed, setTyped] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
 
   const doCheck = async (payload: string, listingUrl?: string | null) => {
@@ -32,6 +39,14 @@ export function Checker() {
     setStatus({ kind: "loading", text: "AI đang phân tích tin của bạn..." });
     try {
       const outcome = await runCheck(payload, { listingUrl: listingUrl ?? null });
+
+      // Hết lượt: nói rõ, không trả kết quả dự phòng như thể vẫn còn lượt
+      if (outcome.quotaExhausted) {
+        setResult(null);
+        setStatus({ kind: "limit", text: outcome.serverError ?? "Bạn đã hết lượt check hôm nay." });
+        return;
+      }
+
       setResult(outcome.result);
       setSource(outcome.source);
       setAnalyzedAt(outcome.analyzedAt);
@@ -47,9 +62,10 @@ export function Checker() {
     }
   };
 
-  const handleCheck = async () => {
-    const raw = text.trim();
+  const handleCheck = async (rawInput?: string) => {
+    const raw = (rawInput ?? text).trim();
     if (!raw || loading) return;
+    setText(raw);
 
     // 1) Link danh mục Chợ Tốt/Nhà Tốt -> quét danh sách nhiều tin
     const url = isBareUrl(raw) ? raw : firstUrl(raw);
@@ -57,6 +73,7 @@ export function Checker() {
       setCategoryUrl(url);
       setResult(null);
       setStatus({ kind: "idle", text: "" });
+      trackEvent("cta_clicked", { cta: "check_category_link" });
       return;
     }
 
@@ -64,6 +81,7 @@ export function Checker() {
     if (url) {
       setCategoryUrl(null);
       setStatus({ kind: "loading", text: "Đang lấy nội dung tin từ link..." });
+      trackEvent("cta_clicked", { cta: "check_listing_link" });
       const r = await extractFromUrl(url);
       if (!r.ok) {
         setStatus({ kind: "error", text: r.message, reason: r.reason });
@@ -76,6 +94,7 @@ export function Checker() {
 
     // 3) Văn bản thuần -> chấm thẳng
     setCategoryUrl(null);
+    trackEvent("cta_clicked", { cta: "check_text" });
     await doCheck(raw);
   };
 
@@ -86,6 +105,13 @@ export function Checker() {
     setAuthRequired(false);
     setStatus({ kind: "idle", text: "" });
     document.getElementById("kiem-tra")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  // Nút ví dụ: điền VÀ chạy phân tích luôn, để người mới xem được
+  // giá trị thật sau 1 chạm, không phải 2.
+  const runExample = (i: number) => {
+    trackEvent("demo_started", { from: "example", index: i + 1 });
+    void handleCheck(exampleListings[i]);
   };
 
   return (
@@ -106,29 +132,43 @@ export function Checker() {
             <Textarea
               id="listing"
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                // Chỉ ghi nhận lần gõ đầu tiên để đo mức rớt ở bước 1
+                if (!typed && e.target.value.trim()) {
+                  setTyped(true);
+                  trackEvent("input_started", { from: "listing_textarea" });
+                }
+              }}
               maxLength={1000}
-              placeholder="Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng, hẻm xe hơi... hoặc dán link tin / link danh mục"
+              placeholder="Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng, hẻm xe hơi... (hoặc dán link tin / link danh mục)"
               className="w-full min-h-[132px] md:min-h-[148px] resize-none rounded-[14px] bg-cream border-slate-200 px-4 py-3.5 text-[15px] leading-[1.6] placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy/15 focus-visible:border-navy/30"
             />
 
-            <div className="mt-3 flex flex-wrap gap-2">
-              {exampleListings.map((ex, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => setText(ex)}
-                  className="text-[11px] px-3 py-1.5 rounded-full bg-slate-100 hover:bg-navy hover:text-white text-slate-600 border border-slate-200 transition"
-                >
-                  Thử ví dụ {i + 1}
-                </button>
-              ))}
+            {/* Ví dụ: nút thật, bấm là ra kết quả luôn */}
+            <div className="mt-3.5">
+              <div className="text-[11px] font-semibold text-slate-500">
+                Chưa có tin? Thử một mẫu:
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {exampleListings.map((ex, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => runExample(i)}
+                    disabled={loading}
+                    className="h-9 px-3.5 rounded-[10px] bg-white border border-slate-300 text-[12px] font-bold text-navy hover:border-navy hover:bg-navy hover:text-white transition disabled:opacity-50"
+                  >
+                    Thử mẫu {i + 1}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="mt-5">
+            <div className="mt-4">
               <Button
                 type="button"
-                onClick={handleCheck}
+                onClick={() => void handleCheck()}
                 disabled={!text.trim() || loading}
                 className="h-[52px] w-full rounded-[12px] bg-gradient-to-r from-navy to-[#16305f] hover:from-[#0e2547] hover:to-[#1a3868] disabled:opacity-50 text-white text-[15px] font-bold shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)]"
               >
@@ -148,16 +188,30 @@ export function Checker() {
             {status.text && (
               <div
                 className={`mt-3 text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
-                  status.kind === "error"
-                    ? "bg-amber-50 text-amber-800 border border-amber-200"
-                    : "bg-slate-100 text-slate-600"
+                  status.kind === "limit"
+                    ? "bg-amber-50 text-amber-900 border border-amber-200"
+                    : status.kind === "error"
+                      ? "bg-amber-50 text-amber-800 border border-amber-200"
+                      : "bg-slate-100 text-slate-600"
                 }`}
               >
                 {status.text}
-                {status.kind === "error" && (
-                  <div className="mt-1 text-slate-500">
-                    Cách thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô trên.
+                {status.kind === "limit" ? (
+                  <div className="mt-2">
+                    <Link
+                      href="/pricing#thanh-toan"
+                      onClick={() => trackEvent("upgrade_clicked", { from: "limit_banner" })}
+                      className="inline-flex h-9 px-4 rounded-[10px] bg-navy text-white text-[12px] font-bold items-center"
+                    >
+                      Nâng cấp PRO →
+                    </Link>
                   </div>
+                ) : (
+                  status.kind === "error" && (
+                    <div className="mt-1 text-slate-500">
+                      Cách thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô trên.
+                    </div>
+                  )
                 )}
               </div>
             )}

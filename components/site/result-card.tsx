@@ -228,7 +228,7 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
                   t.breakdown.phapLy.score > 80 ? "bg-emerald-600 text-white" : "bg-amber-400 text-amber-950"
                 }
               >
-                {t.breakdown.phapLy.score}% an toàn
+                {t.breakdown.phapLy.score}/100 pháp lý
               </span>
             }
             label={t.breakdown.phapLy.label}

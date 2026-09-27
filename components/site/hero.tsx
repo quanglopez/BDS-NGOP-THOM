@@ -46,13 +46,14 @@ export function Hero() {
           <div className="mt-7 flex flex-col sm:flex-row sm:items-center gap-3">
             <a
               href="#kiem-tra"
-              onClick={() => trackEvent("demo_started", { from: "hero" })}
+              onClick={() => trackEvent("cta_clicked", { cta: "hero_primary" })}
               className="h-[52px] px-8 rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[15px] font-black flex items-center justify-center hover:from-[#d8ba7f] hover:to-[#e3ca92] transition shadow-[0_10px_30px_-8px_rgba(201,168,106,0.7)]"
             >
               Dùng miễn phí – 20 tin/ngày
             </a>
             <a
               href="#demo"
+              onClick={() => trackEvent("demo_started", { from: "hero_cta" })}
               className="h-[52px] px-7 rounded-[12px] border border-white/25 text-white text-[15px] font-semibold flex items-center justify-center hover:bg-white/10 transition"
             >
               Xem demo

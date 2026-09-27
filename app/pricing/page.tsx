@@ -65,7 +65,7 @@ export default function PricingPage() {
             BẢNG GIÁ
           </div>
           <h1 className="mt-4 text-[28px] md:text-[40px] font-black leading-[1.05] tracking-tight text-navy">
-            1 kèo ngộp ngon = vài trăm triệu biên lợi nhuận
+            Chấm 500 tin/ngày, chỉ còn vài tin đáng gọi
           </h1>
           <p className="mt-3 text-[14px] text-slate-500">
             Bắt đầu miễn phí. Nâng cấp PRO khi bạn cần lọc hàng trăm tin mỗi ngày.

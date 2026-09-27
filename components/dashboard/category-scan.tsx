@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PROVINCES } from "@/lib/provinces";
+import { SCAN_LIMITS } from "@/lib/quota";
+import { trackEvent } from "@/lib/analytics";
 import {
   scanCategory,
   type CategoryScanItem,
@@ -323,10 +325,25 @@ export function CategoryScan({ url }: { url: string }) {
                 <b className="text-navy">{scan.items.length} tin</b> mới nhất
               </>
             )}
-            {!scan.scope.filtered && scan.truncated && <> (hiện {scan.items.length} tin mới nhất theo gói của bạn)</>}
             {!scan.scope.exact && (
               <div className="mt-1 text-amber-700">
                 Chưa lọc được đúng quận từ link này — danh sách đang ở cấp tỉnh, hãy tick kỹ trước khi check.
+              </div>
+            )}
+            {scan.truncated && (
+              <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[10px] bg-white border border-slate-200 px-3 py-2">
+                <span className="text-[12px] text-slate-600">
+                  Lần quét này chỉ lấy <b className="text-navy">{scan.limit}</b> tin mới nhất theo gói của bạn.
+                </span>
+                {scan.limit < SCAN_LIMITS.pro && (
+                  <button
+                    type="button"
+                    onClick={() => trackEvent("upgrade_clicked", { from: "scan_cap" })}
+                    className="h-8 px-3 rounded-[8px] bg-navy text-white text-[11px] font-bold"
+                  >
+                    Nâng cấp PRO — quét {SCAN_LIMITS.pro} tin/lần
+                  </button>
+                )}
               </div>
             )}
           </div>

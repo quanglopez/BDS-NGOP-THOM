@@ -196,7 +196,7 @@ export function analyzeListing(input: string): AnalysisResult {
   // 7) Lý luận
   let reasoning = "";
   if (overall >= 80) {
-    reasoning = `Giá ${price} cho ${area} tại ${street} rẻ hơn trung bình khu vực (${breakdown.giaThiTruong.diffAmount}). Từ khóa "${hitList}" cho thấy chủ đang kẹt thật, không phải chiêu marketing. Vị trí ${breakdown.viTri.detail.toLowerCase()} với tiềm năng tăng giá ${tangGia}/100 nhờ nhu cầu thị trường phục hồi. Pháp lý ${phapLy}% an toàn. Đây là kèo ngộp thơm đúng nghĩa - biên lợi nhuận 15-20% nếu bán lại sau 6-12 tháng.`;
+    reasoning = `Giá ${price} cho ${area} tại ${street} ${breakdown.giaThiTruong.diffPercent > 0 ? "thấp hơn mặt bằng khu vực" : "gần mặt bằng khu vực"} (${breakdown.giaThiTruong.diffAmount}). Từ khóa "${hitList}" gợi ý chủ có thể cần tiền — cần gọi hỏi để xác nhận. Vị trí ${breakdown.viTri.detail.toLowerCase()}, tiềm năng tăng giá ${tangGia}/100. Điểm pháp lý ${phapLy}/100 theo thông tin trong tin rao. Đây là tin đáng ưu tiên hỏi thăm trước; pháp lý thực tế vẫn phải tự kiểm chứng sổ và quy hoạch.`;
   } else if (overall >= 50) {
     reasoning = `Tin này ở mức trung bình khá. Giá ${price} tương đối hợp lý so với ${street}, nhưng chưa đủ độ ngộp để gọi là kèo thơm. ${
       ngop > 60 ? "Có dấu hiệu cần tiền nhưng chưa rõ ràng, cần gọi kiểm chứng." : "Không có tín hiệu bán gấp rõ rệt."

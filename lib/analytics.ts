@@ -5,6 +5,8 @@
 
 export type FunnelEvent =
   | "homepage_view"
+  | "input_started"
+  | "cta_clicked"
   | "demo_started"
   | "property_checked"
   | "login_clicked"

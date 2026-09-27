@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { runCheck, type CheckSource } from "@/lib/client-check";
+import { runCheck, fetchQuota, type CheckSource } from "@/lib/client-check";
 import { extractFromUrl, firstUrl, isBareUrl } from "@/lib/client-extract";
 import { parseCategoryUrl } from "@/lib/category-slug";
 import type { AnalysisResult } from "@/lib/types";
@@ -14,7 +14,7 @@ import { ResultCard } from "@/components/site/result-card";
 import { CategoryScan } from "@/components/dashboard/category-scan";
 import { UpgradeModal } from "@/components/site/upgrade-modal";
 
-type Status = { kind: "idle" | "loading" | "ok" | "error"; text: string; reason?: string };
+type Status = { kind: "idle" | "loading" | "ok" | "error" | "limit"; text: string; reason?: string };
 
 // Ô check duy nhất trong dashboard: dán link tin / link danh mục / mô tả tin -> Check bằng AI
 export function QuickCheck() {
@@ -28,20 +28,18 @@ export function QuickCheck() {
   // Link danh mục -> chuyển sang luồng quét danh mục
   const [categoryUrl, setCategoryUrl] = useState<string | null>(null);
   const [upgradeOpen, setUpgradeOpen] = useState(false);
+  // Quota lấy từ server, không hardcode trong UI
+  const [quota, setQuota] = useState<QuotaInfo | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
-  // Sau mỗi lần check: nếu hết lượt thì mời nâng cấp (chỉ khi đã thật sự hết)
-  const maybeShowUpgrade = async () => {
-    try {
-      const res = await fetch("/api/check");
-      if (!res.ok) return;
-      const q = (await res.json()) as QuotaInfo;
-      if (typeof q.remaining === "number" && q.remaining <= 0) {
-        trackEvent("free_limit_reached", { plan: q.plan });
-        setUpgradeOpen(true);
-      }
-    } catch {
-      // bỏ qua — không được làm hỏng luồng chính
+  // Sau mỗi lần check: đồng bộ quota, chỉ mời nâng cấp khi thật sự hết lượt
+  const syncQuota = async () => {
+    const q = await fetchQuota();
+    if (!q) return;
+    setQuota(q);
+    if (typeof q.remaining === "number" && q.remaining <= 0) {
+      trackEvent("free_limit_reached", { plan: q.plan, limit: q.limit });
+      setUpgradeOpen(true);
     }
   };
 
@@ -50,6 +48,15 @@ export function QuickCheck() {
     setStatus({ kind: "loading", text: "AI đang phân tích tin của bạn..." });
     try {
       const outcome = await runCheck(payload, { listingUrl: listingUrl ?? null });
+
+      // Hết lượt: nói rõ + mời nâng cấp, KHÔNG hiện kết quả dự phòng như thể thành công
+      if (outcome.quotaExhausted) {
+        setResult(null);
+        setStatus({ kind: "limit", text: outcome.serverError ?? "Bạn đã hết lượt check hôm nay." });
+        await syncQuota();
+        return;
+      }
+
       setResult(outcome.result);
       setSource(outcome.source);
       setAnalyzedAt(outcome.analyzedAt);
@@ -61,7 +68,7 @@ export function QuickCheck() {
       );
     } finally {
       setLoading(false);
-      void maybeShowUpgrade();
+      void syncQuota();
     }
   };
 
@@ -164,18 +171,47 @@ export function QuickCheck() {
           {status.text && (
             <div
               className={`mt-3 text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
-                status.kind === "error"
-                  ? "bg-amber-50 text-amber-800 border border-amber-200"
-                  : "bg-slate-100 text-slate-600"
+                status.kind === "limit"
+                  ? "bg-amber-50 text-amber-900 border border-amber-200"
+                  : status.kind === "error"
+                    ? "bg-amber-50 text-amber-800 border border-amber-200"
+                    : "bg-slate-100 text-slate-600"
               }`}
             >
               {status.text}
-              {status.kind === "error" && (
-                <div className="mt-1 text-slate-500">
-                  Cách thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô trên.
+              {status.kind === "limit" ? (
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setUpgradeOpen(true)}
+                    className="h-9 px-4 rounded-[10px] bg-navy text-white text-[12px] font-bold"
+                  >
+                    Nâng cấp PRO
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUpgradeOpen(false)}
+                    className="text-[12px] text-slate-500 hover:text-slate-700"
+                  >
+                    Để sau
+                  </button>
                 </div>
+              ) : (
+                status.kind === "error" && (
+                  <div className="mt-1 text-slate-500">
+                    Cách thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô trên.
+                  </div>
+                )
               )}
             </div>
+          )}
+
+          {/* Còn bao nhiêu lượt hôm nay — giúp khách tự quyết định có cần nâng cấp không */}
+          {quota && !result && (
+            <p className="mt-2 text-[11px] text-slate-400">
+              Hôm nay còn <b className="text-slate-600">{quota.remaining}</b>/{quota.limit} lượt
+              {quota.credits > 0 ? ` (+${quota.credits} credits)` : ""}
+            </p>
           )}
 
           {categoryUrl && <CategoryScan url={categoryUrl} />}
@@ -190,8 +226,8 @@ export function QuickCheck() {
 
       <UpgradeModal
         open={upgradeOpen}
-        dailyLimit={20}
-        plan="free"
+        dailyLimit={quota?.limit ?? 0}
+        plan={quota?.plan ?? "free"}
         onClose={() => setUpgradeOpen(false)}
       />
     </>

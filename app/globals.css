@@ -34,10 +34,14 @@
 
   html {
     -webkit-text-size-adjust: 100%;
+    /* Tránh trượt ngang ngoài ý muốn trên mobile (URL/diện thoại dài trong nội dung tin) */
+    overflow-x: hidden;
   }
 
   body {
     @apply bg-background text-foreground;
     font-family: Inter, system-ui, -apple-system, sans-serif;
+    /* Chuỗi dài không cắt (link, số điện thoại) vẫn phải xuống dòng được */
+    overflow-wrap: break-word;
   }
 }

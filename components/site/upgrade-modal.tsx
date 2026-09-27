@@ -37,10 +37,12 @@ export function UpgradeModal({
             ×
           </button>
           <div className="relative text-[18px] font-black text-white leading-tight">
-            Bạn đã dùng hết {dailyLimit} lượt miễn phí hôm nay
+            {dailyLimit > 0
+              ? `Bạn đã dùng hết ${dailyLimit} lượt hôm nay`
+              : "Bạn đã dùng hết lượt hôm nay"}
           </div>
           <p className="relative mt-2 text-[13px] text-slate-300">
-            Nâng cấp PRO để tiếp tục check tới 500 tin/ngày.
+            Nâng cấp PRO để tiếp tục check nhiều hơn mỗi ngày.
           </p>
         </div>
 
