@@ -60,7 +60,9 @@ export function Hero() {
             </a>
           </div>
 
-          <p className="mt-3 text-[13px] text-slate-400">Không cần thẻ • Đăng nhập Google trong 10 giây</p>
+          <p className="mt-3 text-[13px] text-slate-400">
+            Không cần thẻ • Đăng nhập Google trong 10 giây • Quét 100 tin/lần là tính năng PRO
+          </p>
         </div>
       </div>
     </section>

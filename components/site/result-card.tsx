@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import type { AnalysisResult } from "@/lib/types";
 import type { CheckSource } from "@/lib/client-check";
+import { savePendingReport } from "@/lib/pending-report";
 import { scoreContributions } from "@/lib/score-explain";
 import { trackEvent } from "@/lib/analytics";
 import { ShareImage } from "@/components/site/share-image";
@@ -13,6 +14,9 @@ interface Props {
   source: CheckSource;
   analyzedAt?: string;
   authRequired?: boolean;
+  // Dữ liệu gốc để lưu pending-report trước khi đá sang login
+  pendingText?: string;
+  pendingListingUrl?: string | null;
   onCheckAnother: () => void;
 }
 
@@ -42,8 +46,17 @@ function ScoreCard({
   );
 }
 
-// Thẻ kết quả: vòng điểm, giải thích tại sao được điểm đó, 6 chỉ số, hành động
-export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAnother }: Props) {
+// Thẻ kết quả: vòng điểm luôn hiện. Khách chưa login thấy 2 dòng lý do đầu,
+// 4 panel chi tiết bị blur + lock + CTA mở khóa (không chặn trước khi check).
+export function ResultCard({
+  result,
+  source,
+  analyzedAt,
+  authRequired,
+  pendingText,
+  pendingListingUrl,
+  onCheckAnother,
+}: Props) {
   const t = result;
   const isAi = source === "ai";
   const ringClass =
@@ -62,9 +75,27 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
     t.tagColor === "green" ? "bg-emerald-500" : t.tagColor === "yellow" ? "bg-amber-400" : "bg-red-500";
 
   const contributions = scoreContributions(t);
+  // Khách chưa login: cho thấy vòng điểm + 2 lý do đầu, khóa 4 panel chi tiết
+  const visibleContribs = authRequired ? contributions.slice(0, 2) : contributions;
 
   const copyAnalysis = () => {
     navigator.clipboard.writeText(`${t.reasoning}\n\n${t.action}`);
+  };
+
+  // Bấm mở khóa: lưu report đang xem để sau login quay lại đúng chỗ, không nhập lại
+  const unlockHref = (() => {
+    if (typeof window === "undefined") return "/login";
+    const next = `${window.location.pathname}${window.location.search}#kiem-tra`;
+    return `/login?next=${encodeURIComponent(next)}`;
+  })();
+
+  const handleUnlock = () => {
+    trackEvent("login_clicked", { from: "report_lock" });
+    savePendingReport({
+      text: pendingText ?? "",
+      listingUrl: pendingListingUrl ?? null,
+      returnTo: typeof window !== "undefined" ? `${window.location.pathname}#kiem-tra` : "/#kiem-tra",
+    });
   };
 
   return (
@@ -138,24 +169,24 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
         </div>
       </div>
 
-      {/* Chưa đăng nhập: kết quả là bản xem trước -> CTA đăng nhập ngay sau aha moment */}
+      {/* Chưa đăng nhập: kết quả là bản xem trước -> CTA mở khóa ngay sau aha moment */}
       {authRequired && (
         <div className="px-6 md:px-8 py-5 bg-gradient-to-r from-[#FFFBF0] to-white border-b border-slate-100">
           <div className="flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="flex-1">
               <div className="text-[14px] font-black text-navy">
-                Bạn đang xem bản xem trước. Đăng nhập để nhận phân tích AI đầy đủ.
+                Bạn đang xem bản xem trước. Đăng nhập miễn phí để xem đầy đủ.
               </div>
               <div className="mt-1 text-[12px] text-slate-500">
-                Miễn phí 20 tin/ngày • Không cần thẻ • Đăng nhập Google trong 10 giây
+                Mở khóa 4 panel chi tiết + 20 tin/ngày • Không cần thẻ • Google trong 10 giây
               </div>
             </div>
             <Link
-              href="/login"
-              onClick={() => trackEvent("login_clicked", { from: "result_card" })}
+              href={unlockHref}
+              onClick={handleUnlock}
               className="h-[46px] px-6 rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[13px] font-black flex items-center justify-center whitespace-nowrap hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
             >
-              Đăng nhập Google →
+              Mở khóa báo cáo →
             </Link>
           </div>
         </div>
@@ -163,11 +194,11 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
 
       {/* Thân thẻ: giải thích điểm + 6 chỉ số + 2 panel */}
       <div className="p-6 md:p-8">
-        {/* Tại sao được điểm đó */}
-        <div className="rounded-[16px] border border-slate-200 bg-[#FFFEFB] p-4 md:p-5">
+        {/* Tại sao được điểm đó — khách chưa login chỉ thấy 2 lý do đầu */}
+        <div className="relative rounded-[16px] border border-slate-200 bg-[#FFFEFB] p-4 md:p-5 overflow-hidden">
           <div className="text-[13px] font-black text-navy">Tại sao tin này được {t.overall} điểm?</div>
           <div className="mt-3 space-y-2">
-            {contributions.map((c) => (
+            {visibleContribs.map((c) => (
               <div key={c.label} className="flex items-start gap-3">
                 <span
                   className={`mt-0.5 w-[52px] shrink-0 text-right text-[13px] font-black tabular-nums ${
@@ -186,6 +217,19 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
           <div className="mt-3 pt-3 border-t border-slate-200 text-[11px] text-slate-400">
             Điểm khởi đầu 50 • Cộng/trừ theo trọng số của mô hình chấm điểm CheckBDS
           </div>
+
+          {/* 4 panel bị khóa: blur + overlay CTA */}
+          {authRequired && (
+            <div className="absolute inset-0 flex items-end justify-center bg-gradient-to-t from-white via-white/85 to-transparent pt-24 pb-5 px-4">
+              <Link
+                href={unlockHref}
+                onClick={handleUnlock}
+                className="h-[46px] px-6 rounded-[12px] bg-navy text-white text-[13px] font-black flex items-center shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)] hover:bg-[#112a5a] transition"
+              >
+                Đăng nhập miễn phí để xem đầy đủ
+              </Link>
+            </div>
+          )}
         </div>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -194,76 +238,112 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
             badge={
               <span
                 className={
-                  t.breakdown.ngop.score > 70
-                    ? "bg-emerald-600 text-white"
-                    : t.breakdown.ngop.score > 40
-                      ? "bg-amber-400 text-amber-950"
-                      : "bg-slate-200 text-slate-600"
+                  authRequired
+                    ? "bg-slate-200 text-slate-500"
+                    : t.breakdown.ngop.score > 70
+                      ? "bg-emerald-600 text-white"
+                      : t.breakdown.ngop.score > 40
+                        ? "bg-amber-400 text-amber-950"
+                        : "bg-slate-200 text-slate-600"
                 }
               >
-                {t.breakdown.ngop.score}%
+                {authRequired ? "🔒" : `${t.breakdown.ngop.score}%`}
               </span>
             }
-            label={t.breakdown.ngop.label}
-            detail={t.breakdown.ngop.detail}
+            label={authRequired ? "Đăng nhập để xem" : t.breakdown.ngop.label}
+            detail={authRequired ? "Mở khóa để xem chi tiết dấu hiệu bán gấp." : t.breakdown.ngop.detail}
             cardClass="rounded-[16px] border border-slate-200 p-4 bg-[#FFFEFB]"
           />
           <ScoreCard
             title="📈 TIỀM NĂNG TĂNG GIÁ"
-            badge={<span className="bg-navy text-white">{t.breakdown.tangGia.score}/100</span>}
-            label={t.breakdown.tangGia.label}
-            detail={t.breakdown.tangGia.detail}
+            badge={
+              <span className={authRequired ? "bg-slate-200 text-slate-500" : "bg-navy text-white"}>
+                {authRequired ? "🔒" : `${t.breakdown.tangGia.score}/100`}
+              </span>
+            }
+            label={authRequired ? "Đăng nhập để xem" : t.breakdown.tangGia.label}
+            detail={authRequired ? "Mở khóa để xem phân tích khu vực." : t.breakdown.tangGia.detail}
           />
           <ScoreCard
             title="💧 THANH KHOẢN"
-            badge={<span className="bg-slate-800 text-white">{t.breakdown.thanhKhoan.score}/100</span>}
-            label={t.breakdown.thanhKhoan.label}
-            detail={t.breakdown.thanhKhoan.detail}
+            badge={
+              <span className={authRequired ? "bg-slate-200 text-slate-500" : "bg-slate-800 text-white"}>
+                {authRequired ? "🔒" : `${t.breakdown.thanhKhoan.score}/100`}
+              </span>
+            }
+            label={authRequired ? "Đăng nhập để xem" : t.breakdown.thanhKhoan.label}
+            detail={authRequired ? "Mở khóa để xem đánh giá thanh khoản." : t.breakdown.thanhKhoan.detail}
           />
           <ScoreCard
             title="📄 PHÁP LÝ"
             badge={
               <span
                 className={
-                  t.breakdown.phapLy.score > 80 ? "bg-emerald-600 text-white" : "bg-amber-400 text-amber-950"
+                  authRequired
+                    ? "bg-slate-200 text-slate-500"
+                    : t.breakdown.phapLy.score > 80
+                      ? "bg-emerald-600 text-white"
+                      : "bg-amber-400 text-amber-950"
                 }
               >
-                {t.breakdown.phapLy.score}/100 pháp lý
+                {authRequired ? "🔒" : `${t.breakdown.phapLy.score}/100 pháp lý`}
               </span>
             }
-            label={t.breakdown.phapLy.label}
-            detail={t.breakdown.phapLy.detail}
+            label={authRequired ? "Đăng nhập để xem" : t.breakdown.phapLy.label}
+            detail={authRequired ? "Mở khóa để xem phân tích pháp lý." : t.breakdown.phapLy.detail}
           />
           <ScoreCard
             title="💵 SO VỚI THỊ TRƯỜNG"
             badge={
               <span
                 className={
-                  t.breakdown.giaThiTruong.diffPercent > 0 ? "bg-emerald-600 text-white" : "bg-red-600 text-white"
+                  authRequired
+                    ? "bg-slate-200 text-slate-500"
+                    : t.breakdown.giaThiTruong.diffPercent > 0
+                      ? "bg-emerald-600 text-white"
+                      : "bg-red-600 text-white"
                 }
               >
-                {t.breakdown.giaThiTruong.label}
+                {authRequired ? "🔒" : t.breakdown.giaThiTruong.label}
               </span>
             }
-            label={`${t.breakdown.giaThiTruong.diffAmount}`}
-            detail={t.breakdown.giaThiTruong.detail}
+            label={authRequired ? "Đăng nhập để xem" : `${t.breakdown.giaThiTruong.diffAmount}`}
+            detail={authRequired ? "Mở khóa để xem so sánh giá." : t.breakdown.giaThiTruong.detail}
             cardClass={`rounded-[16px] border p-4 ${
-              t.breakdown.giaThiTruong.diffPercent > 0
-                ? "border-emerald-200 bg-emerald-50/60"
-                : "border-red-200 bg-red-50/60"
+              authRequired
+                ? "border-slate-200 bg-slate-50"
+                : t.breakdown.giaThiTruong.diffPercent > 0
+                  ? "border-emerald-200 bg-emerald-50/60"
+                  : "border-red-200 bg-red-50/60"
             }`}
           />
           <ScoreCard
             title="📍 VỊ TRÍ"
-            badge={<span className="bg-gold text-navy">{t.breakdown.viTri.score}/100</span>}
-            label={t.breakdown.viTri.label}
-            detail={t.breakdown.viTri.detail}
+            badge={
+              <span className={authRequired ? "bg-slate-200 text-slate-500" : "bg-gold text-navy"}>
+                {authRequired ? "🔒" : `${t.breakdown.viTri.score}/100`}
+              </span>
+            }
+            label={authRequired ? "Đăng nhập để xem" : t.breakdown.viTri.label}
+            detail={authRequired ? "Mở khóa để xem đánh giá vị trí." : t.breakdown.viTri.detail}
             cardClass="rounded-[16px] border border-slate-200 p-4 bg-cream"
           />
         </div>
 
-        <div className="mt-6 grid md:grid-cols-[1.2fr_0.8fr] gap-6">
-          <div className="rounded-[16px] bg-navy text-slate-200 p-5 md:p-6">
+        <div className="relative mt-6 grid md:grid-cols-[1.2fr_0.8fr] gap-6">
+          {authRequired && (
+            <Link
+              href={unlockHref}
+              onClick={handleUnlock}
+              aria-label="Đăng nhập miễn phí để xem đầy đủ"
+              className="absolute inset-0 z-10 rounded-[16px] bg-white/60 backdrop-blur-[2px] flex items-center justify-center"
+            >
+              <span className="h-[46px] px-6 rounded-[12px] bg-navy text-white text-[13px] font-black flex items-center shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)]">
+                Mở khóa báo cáo
+              </span>
+            </Link>
+          )}
+          <div className="rounded-[16px] bg-navy text-slate-200 p-5 md:p-6" aria-hidden={authRequired}>
             <div className="text-[11px] font-bold tracking-[0.14em] text-gold">NHẬN XÉT</div>
             <p className="mt-3 text-[14px] leading-[1.7] text-slate-100">{t.reasoning}</p>
           </div>
@@ -276,6 +356,7 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
                   ? "bg-amber-50 border-amber-200"
                   : "bg-red-50 border-red-200"
             }`}
+            aria-hidden={authRequired}
           >
             <div
               className={`text-[11px] font-bold tracking-[0.14em] ${
@@ -293,6 +374,7 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
               <button
                 type="button"
                 onClick={onCheckAnother}
+                tabIndex={authRequired ? -1 : 0}
                 className="h-9 px-4 rounded-full bg-navy text-white text-[12px] font-bold"
               >
                 Check tin khác
@@ -300,6 +382,7 @@ export function ResultCard({ result, source, analyzedAt, authRequired, onCheckAn
               <button
                 type="button"
                 onClick={copyAnalysis}
+                tabIndex={authRequired ? -1 : 0}
                 className="h-9 px-4 rounded-full bg-white border border-slate-200 text-[12px] font-bold text-slate-700"
               >
                 Copy phân tích

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { dealBadgeClass, dealLabel, scoreBadgeClass } from "@/lib/format";
 import { extractFromUrl, isBareUrl } from "@/lib/client-extract";
+import { trackEvent } from "@/lib/analytics";
+import { UpgradeModal } from "@/components/site/upgrade-modal";
 import type { QuotaInfo } from "@/lib/types";
 
 interface BulkRow {
@@ -25,6 +27,7 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
   const [onlyGood, setOnlyGood] = useState(false);
   const [quota, setQuota] = useState<QuotaInfo | null>(null);
   const [notice, setNotice] = useState("");
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   // Lấy quota hôm nay để chặn trước khi gọi hết file
   const loadQuota = useCallback(async () => {
@@ -102,6 +105,9 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
           if (res.status === 429) {
             stopped = true;
             setNotice(data.error || "Đã hết lượt check hôm nay.");
+            // Hết lượt giữa chừng: mời nâng cấp với hạn mức thật (không hardcode)
+            trackEvent("free_limit_reached", { plan: quota?.plan ?? "unknown", from: "bulk_check" });
+            setUpgradeOpen(true);
           } else if (!res.ok || data.error) {
             results[i] = { ...results[i], error: data.error || `Lỗi ${res.status}` };
           } else {
@@ -152,7 +158,8 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
   const goodCount = rows.filter((r) => (r.score ?? 0) >= 80).length;
 
   return (
-    <div className="mt-8 rounded-[18px] border border-slate-200 bg-white p-5 md:p-6 shadow-sm">
+    <>
+      <div className="mt-8 rounded-[18px] border border-slate-200 bg-white p-5 md:p-6 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-[18px] font-black tracking-tight text-navy">Bulk Check</h2>
@@ -279,6 +286,14 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
           </div>
         </>
       )}
-    </div>
+      </div>
+
+      <UpgradeModal
+        open={upgradeOpen}
+        dailyLimit={quota?.limit ?? 0}
+        plan={quota?.plan ?? "free"}
+        onClose={() => setUpgradeOpen(false)}
+      />
+    </>
   );
 }

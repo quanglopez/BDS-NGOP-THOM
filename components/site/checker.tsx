@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
@@ -9,6 +9,7 @@ import { exampleListings } from "@/lib/market-data";
 import { runCheck, type CheckSource } from "@/lib/client-check";
 import { extractFromUrl, firstUrl, isBareUrl } from "@/lib/client-extract";
 import { parseCategoryUrl } from "@/lib/category-slug";
+import { takePendingReport } from "@/lib/pending-report";
 import type { AnalysisResult } from "@/lib/types";
 import { trackEvent } from "@/lib/analytics";
 import { ResultCard } from "@/components/site/result-card";
@@ -33,6 +34,35 @@ export function Checker() {
   const [categoryUrl, setCategoryUrl] = useState<string | null>(null);
   const [typed, setTyped] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
+
+  // Sau login quay lại: nếu có report đang dở (đã lưu trước khi đá sang login)
+  // thì tự chạy lại với session thật, khách không phải nhập lại
+  useEffect(() => {
+    const pending = takePendingReport();
+    if (!pending) return;
+    const url = isBareUrl(pending.text.trim()) ? pending.text.trim() : firstUrl(pending.text);
+    setText(pending.text);
+    if (url) void checkUrl(url);
+    else void checkText(pending.text);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const checkUrl = async (url: string) => {
+    setCategoryUrl(null);
+    setStatus({ kind: "loading", text: "Đang lấy nội dung tin từ link..." });
+    const r = await extractFromUrl(url);
+    if (!r.ok) {
+      setStatus({ kind: "error", text: r.message, reason: r.reason });
+      return;
+    }
+    setText(r.text);
+    await doCheck(r.text, url);
+  };
+
+  const checkText = async (raw: string) => {
+    setCategoryUrl(null);
+    await doCheck(raw.trim());
+  };
 
   const doCheck = async (payload: string, listingUrl?: string | null) => {
     setLoading(true);
@@ -79,23 +109,15 @@ export function Checker() {
 
     // 2) Link 1 tin -> lấy nội dung trang rồi chấm
     if (url) {
-      setCategoryUrl(null);
-      setStatus({ kind: "loading", text: "Đang lấy nội dung tin từ link..." });
       trackEvent("cta_clicked", { cta: "check_listing_link" });
-      const r = await extractFromUrl(url);
-      if (!r.ok) {
-        setStatus({ kind: "error", text: r.message, reason: r.reason });
-        return;
-      }
-      setText(r.text);
-      await doCheck(r.text, url);
+      await checkUrl(url);
       return;
     }
 
     // 3) Văn bản thuần -> chấm thẳng
     setCategoryUrl(null);
     trackEvent("cta_clicked", { cta: "check_text" });
-    await doCheck(raw);
+    await checkText(raw);
   };
 
   const resetToInput = () => {
@@ -148,7 +170,7 @@ export function Checker() {
             {/* Ví dụ: nút thật, bấm là ra kết quả luôn */}
             <div className="mt-3.5">
               <div className="text-[11px] font-semibold text-slate-500">
-                Chưa có tin? Thử một mẫu:
+                Chưa có tin? Thử miễn phí với tin mẫu — bấm là có kết quả ngay:
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {exampleListings.map((ex, i) => (
@@ -157,9 +179,9 @@ export function Checker() {
                     type="button"
                     onClick={() => runExample(i)}
                     disabled={loading}
-                    className="h-9 px-3.5 rounded-[10px] bg-white border border-slate-300 text-[12px] font-bold text-navy hover:border-navy hover:bg-navy hover:text-white transition disabled:opacity-50"
+                    className="h-11 px-4 rounded-[10px] bg-white border-2 border-navy/20 text-[12px] font-black text-navy hover:border-navy hover:bg-navy hover:text-white transition disabled:opacity-50"
                   >
-                    Thử mẫu {i + 1}
+                    ⚡ Thử mẫu {i + 1}
                   </button>
                 ))}
               </div>
@@ -256,6 +278,12 @@ export function Checker() {
             source={source}
             analyzedAt={analyzedAt}
             authRequired={authRequired}
+            pendingText={text}
+            pendingListingUrl={(() => {
+              const raw = text.trim();
+              const u = isBareUrl(raw) ? raw : firstUrl(raw);
+              return u ?? null;
+            })()}
             onCheckAnother={resetToInput}
           />
         </section>

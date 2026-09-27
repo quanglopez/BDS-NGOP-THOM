@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { PROVINCES } from "@/lib/provinces";
 import { SCAN_LIMITS } from "@/lib/quota";
 import { trackEvent } from "@/lib/analytics";
+import { fetchQuota } from "@/lib/client-check";
+import { UpgradeModal } from "@/components/site/upgrade-modal";
 import {
   scanCategory,
   type CategoryScanItem,
@@ -36,6 +38,9 @@ export function CategoryScan({ url }: { url: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [rows, setRows] = useState<CheckedRow[]>([]);
   const [doneCount, setDoneCount] = useState(0);
+  // Quota thật + modal nâng cấp (chỉ mở khi hết lượt giữa chừng)
+  const [quotaState, setQuotaState] = useState<{ limit: number; plan: string } | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   // Bộ lọc quét: giá (tỷ), diện tích (m²), số phòng (tối thiểu), khu vực (ghi đè link)
   const [showFilters, setShowFilters] = useState(false);
@@ -150,6 +155,15 @@ export function CategoryScan({ url }: { url: string }) {
           } else if (res.status === 429) {
             stopped = true;
             setNotice(data.error || "Đã hết lượt check hôm nay.");
+            // Hết lượt giữa chừng: đồng bộ quota thật rồi mời nâng cấp
+            void (async () => {
+              const q = await fetchQuota();
+              if (q) {
+                setQuotaState({ limit: q.limit, plan: q.plan });
+                trackEvent("free_limit_reached", { plan: q.plan, from: "category_scan" });
+                setUpgradeOpen(true);
+              }
+            })();
           } else if (!res.ok || data.error) {
             targets[i] = { ...targets[i], error: data.error || `Lỗi ${res.status}` };
           } else {
@@ -445,6 +459,13 @@ export function CategoryScan({ url }: { url: string }) {
           </div>
         </div>
       )}
+
+      <UpgradeModal
+        open={upgradeOpen}
+        dailyLimit={quotaState?.limit ?? 0}
+        plan={quotaState?.plan ?? "free"}
+        onClose={() => setUpgradeOpen(false)}
+      />
     </div>
   );
 }
