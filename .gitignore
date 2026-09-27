@@ -23,3 +23,4 @@ tests/.sample-listing.png
 # ban HTML download khi verify live (khong phai source)
 /pricing.html
 /homepage*.html
+
