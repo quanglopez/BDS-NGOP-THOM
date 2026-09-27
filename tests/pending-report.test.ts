@@ -76,7 +76,9 @@ async function main() {
   });
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
-  process.exit(fail > 0 ? 1 : 0);
+  // process.exit() huy async handle -> libuv assertion tren Windows.
+  // process.exitCode de tien trinh tu thoat, chay lai 100%
+  process.exitCode = fail > 0 ? 1 : 0;
 }
 
 main();

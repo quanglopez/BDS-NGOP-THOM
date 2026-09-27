@@ -8,6 +8,10 @@ import { extractPhone } from "@/lib/phone";
 import { extractBedrooms } from "@/lib/bedrooms";
 import { analyzeListing, fromApiResponse, SCORING_CODE_VERSION } from "@/lib/scoring";
 import { buildScoringSnapshot } from "@/lib/score-snapshot";
+import { resolveListingGeo } from "@/lib/geo/url-parser";
+import { persistCheckGeo } from "@/lib/check-geo";
+import { adminClient } from "@/lib/admin";
+import { safeErrorCode } from "@/lib/price/errors";
 
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
 // Cần đăng nhập (session Supabase) + có quota trong ngày.
@@ -196,6 +200,17 @@ export async function POST(req: NextRequest) {
       ? String(body.phone).replace(/\D/g, "").slice(0, 11) || null
       : extractPhone(text);
 
+    // Địa lý cho nhóm tham chiệu giá.
+    // CHỈ lấy từ category scan scope (ward + region). KHÔNG parse URL ở đây:
+    // tên phường trong slug URL chỉ tách được khi đã có bảng tra từ market_listings,
+    // mà bảng đó chỉ có dữ liệu sau lần crawl giá đầu tiên. Việc parse URL do
+    // /api/price-intelligence lo lúc generate snapshot.
+    // Không xác định được -> null, KHÔNG suy đoán.
+    const geo = resolveListingGeo({
+      scanWard: body?.ward ?? null,
+      scanRegion: body?.region ?? null,
+    });
+
     if (!text || text.length < 20) {
       return NextResponse.json({ error: "Tin BĐS quá ngắn" }, { status: 400, headers: CORS });
     }
@@ -348,6 +363,21 @@ export async function POST(req: NextRequest) {
       .select("id")
       .single();
     const checkId: string | null = inserted?.id ?? null;
+
+    // Ghi địa lý RIÊNG, sau khi đã có checkId. Tách khỏi insert chính để thiếu
+    // cột (chưa chạy migration 0014) chỉ mất dữ liệu địa lý, không làm hỏng check.
+    // Cần service role vì bảng checks không có update policy cho user.
+    if (checkId) {
+      try {
+        const geoResult = await persistCheckGeo(adminClient(), checkId, geo);
+        if (!geoResult.ok) {
+          // Log chỉ check id + mã lỗi. KHÔNG log tên/giá/URL/SĐT.
+          console.warn(`[check-geo-warning] check=${checkId} error_code=${geoResult.errorCode}`);
+        }
+      } catch (e) {
+        console.warn(`[check-geo-warning] check=${checkId} error_code=${safeErrorCode(e)}`);
+      }
+    }
 
     // Nếu check bằng credits thưởng thì trừ 1
     if (usingCredit) {
