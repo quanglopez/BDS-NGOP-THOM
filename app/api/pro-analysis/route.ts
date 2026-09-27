@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { adminClient } from "@/lib/admin";
-import { effectivePlan } from "@/lib/quota";
+import { effectivePlan, planAllowsProAnalysis } from "@/lib/quota";
 import { analyzeListing } from "@/lib/scoring";
 import { buildEvidencePack } from "@/lib/ai/evidence";
 import {
+  formatProAnalysisMetrics,
   generateProAnalysis,
   PRO_ANALYSIS_VERSION_FALLBACK,
   SCORING_VERSION_FALLBACK,
 } from "@/lib/ai/pro-analysis";
+import { buildSnapshotUpdate, isFreshSnapshot } from "@/lib/ai/report-cache";
 
 export const runtime = "nodejs";
 // Tách budget riêng khỏi /api/check: OpenRouter timeout 25s, còn dư cho DB + validate
@@ -80,7 +82,7 @@ export async function POST(req: NextRequest) {
     .eq("id", user.id)
     .single();
   const plan = effectivePlan(profile?.plan, profile?.plan_expires_at);
-  if (plan === "free") {
+  if (!planAllowsProAnalysis(plan)) {
     return NextResponse.json(
       { error: "locked", message: "Mở khóa phân tích Pro", requiredPlan: "pro" },
       { status: 403, headers: CORS },
@@ -90,12 +92,9 @@ export async function POST(req: NextRequest) {
   const currentVersion = process.env.PRO_ANALYSIS_VERSION || PRO_ANALYSIS_VERSION_FALLBACK;
   const scoringVersion = process.env.SCORING_VERSION || SCORING_VERSION_FALLBACK;
 
-  // Cache: đã có snapshot đúng version -> trả luôn, không gọi AI lại
-  if (
-    row.analysis_json &&
-    typeof row.analysis_json === "object" &&
-    row.analysis_version === currentVersion
-  ) {
+  // Cache: đã có snapshot đúng version -> trả luôn, KHÔNG gọi model nào nữa.
+  // Không so sánh ai_model: report là snapshot, không "nâng cấp" lại bằng model primary.
+  if (isFreshSnapshot(row, currentVersion)) {
     return NextResponse.json(
       {
         ok: true,
@@ -137,30 +136,34 @@ export async function POST(req: NextRequest) {
   // Overall lấy đúng điểm đã lưu (Jev), không tính lại
   evidence.scoring.overall_score = typeof row.score === "number" ? row.score : local.overall;
 
+  // Model chain bên trong luôn trả về (kể cả khi cả chain fail) -> không bao giờ 500
+  // vì lý do AI. 429/rate-limit là trạng thái bình thường của model :free.
   const outcome = await generateProAnalysis(evidence);
 
   // Chỉ save khi là kết quả AI thật. Fallback deterministic tính lại miễn phí
   // nên không persist — lần mở sau (khi đã có key) sẽ tự thử generate lại.
   // Report lịch sử không bao giờ bị ghi đè âm thầm: chỉ snapshot AI thật.
   // Dùng service role vì bảng checks không có update policy cho user.
-  let savedModel: string | null = null;
-  if (!outcome.fromFallback) {
-    savedModel = outcome.model;
+  // ai_model = model THỰC TẾ đã sinh ra report (có thể là model fallback),
+  // không phải model yêu cầu ban đầu.
+  if (!outcome.fromFallback && outcome.model) {
     const admin = adminClient();
     await admin
       .from("checks")
-      .update({
-        analysis_json: outcome.analysis,
-        analysis_version: currentVersion,
-        scoring_version: scoringVersion,
-        ai_model: outcome.model,
-        ai_generated_at: new Date().toISOString(),
-      })
+      .update(
+        buildSnapshotUpdate({
+          analysis: outcome.analysis,
+          actualModel: outcome.model,
+          analysisVersion: currentVersion,
+          scoringVersion,
+        }),
+      )
       .eq("id", checkId);
   }
 
   console.log(
-    `[pro-analysis:${requestId}] check=${checkId} plan=${plan} cached=false fallback=${outcome.fromFallback} reason=${outcome.fallbackReason ?? "-"}`,
+    `[pro-analysis:${requestId}] check=${checkId} plan=${plan} cached=false ` +
+      `reason=${outcome.fallbackReason ?? "-"} ${formatProAnalysisMetrics(outcome.metrics)}`,
   );
 
   return NextResponse.json(
@@ -170,7 +173,8 @@ export async function POST(req: NextRequest) {
       fromFallback: outcome.fromFallback,
       analysis: outcome.analysis,
       analysis_version: currentVersion,
-      ai_model: savedModel,
+      // Frontend không cần biết model nào đã trả lời; vẫn trả về để admin/đo lường.
+      ai_model: outcome.model,
     },
     { headers: CORS },
   );

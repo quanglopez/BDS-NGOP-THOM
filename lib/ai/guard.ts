@@ -16,7 +16,18 @@ const BANNED_VERIFIED_CLAIMS = [
   "khoản đầu tư tốt",
 ];
 
-const BANNED_ADVICE = ["bạn nên mua", "chắc chắn sinh lời", "đây là khoản đầu tư tốt"];
+// Lời khuyên đầu tư / hành động chắc nịch — kể cả model fallback tài chính.
+// Giữ ở dạng khẳng định chủ quan, KHÔNG bắt các cụm phủ định như "không nên mua".
+const BANNED_ADVICE = [
+  "bạn nên mua",
+  "chắc chắn sinh lời",
+  "chắc chắn tăng giá",
+  "đầu tư tốt",
+  "nên mua ngay",
+  "roi cao",
+  "lợi nhuận cao",
+  "hứa sinh lời",
+];
 
 export interface GuardResult {
   ok: boolean;

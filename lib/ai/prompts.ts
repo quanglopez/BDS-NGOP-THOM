@@ -56,8 +56,11 @@ Avoid definitive investment advice.
 
 Do not say:
 "Bạn nên mua."
+"Nên mua."
 "Chắc chắn sinh lời."
+"Chắc chắn tăng giá."
 "Đây là khoản đầu tư tốt."
+"ROI cao."
 
 Instead use wording such as:
 "Đây là yếu tố đáng chú ý."
@@ -73,3 +76,37 @@ Return ONLY valid JSON matching the requested schema.`;
 
 // Instruction kèm khi retry vì JSON hỏng — chỉ yêu cầu sửa định dạng
 export const PRO_ANALYSIS_RETRY_INSTRUCTION = `Your previous response was not valid JSON. Return ONLY the corrected valid JSON object matching the requested schema, with no explanation, no markdown, and no code fences.`;
+
+// Dùng cho model KHÔNG hỗ trợ response_format (Ling, Nemotron):
+// ép strict JSON bằng prompt, sau đó parse -> validate -> guard như mọi model.
+export const PRO_ANALYSIS_STRICT_JSON_INSTRUCTION = `Return your answer as a single raw JSON object and nothing else.
+
+Rules:
+- Output MUST be parseable JSON. No markdown, no code fences, no commentary before or after.
+- Output MUST match this exact shape:
+{
+  "summary": { "headline": string, "text": string, "confidence": "low" | "medium" | "high" },
+  "highlights": [ { "type": "positive" | "neutral" | "warning", "title": string, "explanation": string, "evidence_source": string } ],
+  "score_explanation": {
+    "summary": string,
+    "strengths": [ { "title": string, "explanation": string, "evidence_source": string } ],
+    "weaknesses": [ { "title": string, "explanation": string, "evidence_source": string } ]
+  },
+  "factor_analysis": [ { "factor": string, "score": number 0-100, "label": string, "explanation": string, "evidence_source": string } ],
+  "price_analysis": {
+    "available": boolean,
+    "asking_price": number | null,
+    "price_per_m2": number | null,
+    "reference_available": boolean,
+    "reference_median": number | null,
+    "difference_percent": number | null,
+    "explanation": string
+  },
+  "warnings": [ { "severity": "high" | "medium" | "low", "title": string, "explanation": string, "requires_verification": boolean, "evidence_source": string } ],
+  "next_steps": [ { "priority": "high" | "medium" | "low", "title": string, "reason": string } ],
+  "limitations": [ string ]
+}
+- Copy asking_price and price_per_m2 EXACTLY from the input evidence. If they are null, keep null.
+- Set reference_available to false, reference_median to null, difference_percent to null when the input has no reference data.
+- Never output any field that is not listed above.
+`;

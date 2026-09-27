@@ -24,6 +24,12 @@ export function planLimit(plan: string | null | undefined): number {
   return PLAN_LIMITS[plan ?? "free"] ?? PLAN_LIMITS.free;
 }
 
+// Pro Analysis (gọi OpenRouter) chỉ mở cho gói trả phí còn hiệu lực.
+// Free bị chặn ở đây TRƯỚC khi chạm bất kỳ request OpenRouter nào.
+export function planAllowsProAnalysis(plan: string | null | undefined): boolean {
+  return plan === "pro" || plan === "team";
+}
+
 // Gói còn hiệu lực hay đã hết hạn: hết hạn thì coi như Free
 export function effectivePlan(
   plan: string | null | undefined,

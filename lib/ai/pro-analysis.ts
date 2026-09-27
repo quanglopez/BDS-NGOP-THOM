@@ -1,24 +1,54 @@
 // generateProAnalysis(evidencePack): reusable entry duy nhất gọi OpenRouter.
-// 1. validate evidence -> 2. build prompt -> 3. call -> 4. parse+validate ->
-// 5. retry tối đa 1 lần nếu JSON hỏng -> 6. guard -> 7. fallback an toàn.
+// Chain model có kiểm soát (mỗi model tối đa 2 attempt, chain tối đa 3 model):
+//   Evidence -> model[0] -> parse -> validate -> guard
+//   -> fail thì model[1] -> ... -> deterministic fallback.
 // AI fail KHÔNG bao giờ làm crash caller: luôn trả fallback deterministic.
 
-import { callOpenRouter } from "./openrouter";
-import { PRO_ANALYSIS_RETRY_INSTRUCTION, PRO_ANALYSIS_SYSTEM_PROMPT } from "./prompts";
+import { callOpenRouter, type StructuredMode } from "./openrouter";
+import {
+  PRO_ANALYSIS_RETRY_INSTRUCTION,
+  PRO_ANALYSIS_STRICT_JSON_INSTRUCTION,
+  PRO_ANALYSIS_SYSTEM_PROMPT,
+} from "./prompts";
 import { parseProAnalysis, type ProAnalysis, type ProNextStep, type ProWarning } from "./schema";
+import { PRO_ANALYSIS_JSON_SCHEMA, PRO_ANALYSIS_JSON_SCHEMA_NAME } from "./json-schema";
 import { guardProAnalysis } from "./guard";
+import { resolveModelChain, structuredModeFor } from "./model-chain";
 import type { EvidencePack } from "./evidence";
 
 export const PRO_ANALYSIS_VERSION_FALLBACK = "pro-v1";
 export const SCORING_VERSION_FALLBACK = "jev-v1";
 
+// Mỗi model tối đa 2 request: attempt 1 theo capability, attempt 2 là recovery
+// (hạ structured output xuống prompt-only, hoặc ép sửa JSON). Không loop vô hạn.
+const MAX_ATTEMPTS_PER_MODEL = 2;
+
+export interface ProAnalysisMetrics {
+  requested_model: string;
+  actual_model: string | null;
+  fallback_used: boolean;
+  attempts: number;
+  latency_ms: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  provider_errors: string[];
+  rate_limited: boolean;
+  validation_failed: boolean;
+  guard_failed: boolean;
+}
+
 export interface ProAnalysisOutcome {
   analysis: ProAnalysis;
   // true khi AI fail và đã dùng fallback deterministic (UI hiện banner tương ứng)
   fromFallback: boolean;
-  model: string;
+  // Model THỰC TẾ đã sinh ra analysis (từ response.model của provider).
+  // null khi rơi về deterministic fallback.
+  model: string | null;
+  // Model đầu tiên được yêu cầu — chỉ để trace/log, KHÔNG lưu vào ai_model.
+  requestedModel: string;
   // Lý do fallback để log/debug (không chứa key)
   fallbackReason?: string;
+  metrics: ProAnalysisMetrics;
 }
 
 // Fallback deterministic từ evidence thật — không gọi AI, không bịa thêm
@@ -83,57 +113,134 @@ export function buildFallbackAnalysis(evidence: EvidencePack): ProAnalysis {
   };
 }
 
-function resolveModel(): string {
-  const fromEnv = (process.env.PRO_ANALYSIS_MODEL || "").trim();
-  // Default đã xác minh tồn tại trên OpenRouter (bản stable, không preview).
-  // Đổi model chỉ cần đổi env, không sửa business logic.
-  return fromEnv || "google/gemini-2.5-flash";
+// Log metric server-side: KHÔNG prompt, KHÔNG API key, KHÔNG PII.
+export function formatProAnalysisMetrics(m: ProAnalysisMetrics): string {
+  return [
+    `requested_model=${m.requested_model}`,
+    `actual_model=${m.actual_model ?? "-"}`,
+    `fallback_used=${m.fallback_used}`,
+    `attempts=${m.attempts}`,
+    `latency_ms=${m.latency_ms}`,
+    `success=${!m.fallback_used}`,
+    `validation_failed=${m.validation_failed}`,
+    `guard_failed=${m.guard_failed}`,
+    `rate_limited=${m.rate_limited}`,
+    `provider_error=${m.provider_errors.length > 0 ? m.provider_errors.join("|") : "-"}`,
+    `input_tokens=${m.input_tokens ?? "-"}`,
+    `output_tokens=${m.output_tokens ?? "-"}`,
+  ].join(" ");
+}
+
+function baseSystemPrompt(mode: StructuredMode, retry: boolean): string {
+  // Model không hỗ trợ response_format -> ép strict JSON bằng prompt.
+  const base =
+    mode === "none" ? `${PRO_ANALYSIS_SYSTEM_PROMPT}\n\n${PRO_ANALYSIS_STRICT_JSON_INSTRUCTION}` : PRO_ANALYSIS_SYSTEM_PROMPT;
+  return retry ? `${base}\n\n${PRO_ANALYSIS_RETRY_INSTRUCTION}` : base;
 }
 
 export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAnalysisOutcome> {
-  const apiKey = process.env.OPENROUTER_API_KEY || "";
-  const model = resolveModel();
+  const chain = resolveModelChain();
+  const metrics: ProAnalysisMetrics = {
+    requested_model: chain[0] ?? "none",
+    actual_model: null,
+    fallback_used: true,
+    attempts: 0,
+    latency_ms: 0,
+    input_tokens: null,
+    output_tokens: null,
+    provider_errors: [],
+    rate_limited: false,
+    validation_failed: false,
+    guard_failed: false,
+  };
 
+  const finishFallback = (reason: string): ProAnalysisOutcome => {
+    metrics.fallback_used = true;
+    return {
+      analysis: buildFallbackAnalysis(evidence),
+      fromFallback: true,
+      model: null,
+      requestedModel: metrics.requested_model,
+      fallbackReason: reason,
+      metrics,
+    };
+  };
+
+  const apiKey = process.env.OPENROUTER_API_KEY || "";
   // Chưa cấu hình key -> fallback ngay, không gọi mạng
-  if (!apiKey) {
-    return { analysis: buildFallbackAnalysis(evidence), fromFallback: true, model, fallbackReason: "no_api_key" };
-  }
+  if (!apiKey) return finishFallback("no_api_key");
 
   const userPayload = JSON.stringify(evidence);
+  const startedAt = Date.now();
 
-  const attempt = async (retryInstruction: string | null): Promise<ProAnalysis | null> => {
-    const systemPrompt = retryInstruction
-      ? `${PRO_ANALYSIS_SYSTEM_PROMPT}\n\n${retryInstruction}`
-      : PRO_ANALYSIS_SYSTEM_PROMPT;
-    const res = await callOpenRouter({
-      apiKey,
-      model,
-      systemPrompt,
-      userPayload,
-      maxTokens: 1500,
-      temperature: 0.2,
-      siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
-      siteName: "CheckBDS",
-    });
-    if (!res.ok || !res.text) return null;
-    const parsed = parseProAnalysis(res.text);
-    if (!parsed) return null;
-    const guard = guardProAnalysis(evidence, parsed);
-    return guard.ok ? parsed : null;
-  };
+  for (const model of chain) {
+    let mode = structuredModeFor(model);
 
-  // Lần 1
-  const first = await attempt(null);
-  if (first) return { analysis: first, fromFallback: false, model };
+    for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_MODEL; attempt++) {
+      const isRetry = attempt > 0;
+      const res = await callOpenRouter({
+        apiKey,
+        model,
+        systemPrompt: baseSystemPrompt(mode, isRetry),
+        userPayload,
+        maxTokens: 1500,
+        temperature: 0.2,
+        siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
+        siteName: "CheckBDS",
+        structuredMode: mode,
+        jsonSchema:
+          mode === "json_schema"
+            ? { name: PRO_ANALYSIS_JSON_SCHEMA_NAME, strict: false, schema: PRO_ANALYSIS_JSON_SCHEMA }
+            : undefined,
+      });
 
-  // Retry tối đa 1 lần với instruction sửa JSON
-  const second = await attempt(PRO_ANALYSIS_RETRY_INSTRUCTION);
-  if (second) return { analysis: second, fromFallback: false, model };
+      metrics.attempts += 1;
+      metrics.latency_ms += res.latencyMs;
+      if (res.usage.promptTokens !== null) metrics.input_tokens = (metrics.input_tokens ?? 0) + res.usage.promptTokens;
+      if (res.usage.completionTokens !== null) {
+        metrics.output_tokens = (metrics.output_tokens ?? 0) + res.usage.completionTokens;
+      }
 
-  return {
-    analysis: buildFallbackAnalysis(evidence),
-    fromFallback: true,
-    model,
-    fallbackReason: "ai_invalid_or_failed",
-  };
+      if (res.error === "provider_429") metrics.rate_limited = true;
+      if (res.error) metrics.provider_errors.push(res.error);
+
+      // Provider từ chối param structured output -> hạ xuống prompt-only
+      // rồi thử lại model này (thay vì làm hỏng cả fallback chain).
+      if (res.error === "provider_unsupported_param" && mode !== "none") {
+        mode = "none";
+        continue;
+      }
+
+      if (!res.ok || !res.text) continue;
+
+      const parsed = parseProAnalysis(res.text);
+      if (!parsed) {
+        metrics.validation_failed = true;
+        continue;
+      }
+
+      const guard = guardProAnalysis(evidence, parsed);
+      if (!guard.ok) {
+        metrics.guard_failed = true;
+        continue;
+      }
+
+      // Model thực tế đã trả lời (response.model), ưu tiên hơn model yêu cầu.
+      const actualModel = res.actualModel ?? model;
+      metrics.actual_model = actualModel;
+      metrics.fallback_used = false;
+      metrics.latency_ms = Date.now() - startedAt;
+      return {
+        analysis: parsed,
+        fromFallback: false,
+        model: actualModel,
+        requestedModel: metrics.requested_model,
+        metrics,
+      };
+    }
+  }
+
+  // Cả chain fail -> deterministic fallback. Lý do phân loại để đo tỉ lệ lỗi.
+  const allRateLimited = metrics.rate_limited && metrics.provider_errors.every((e) => e === "provider_429");
+  return finishFallback(allRateLimited ? "all_models_rate_limited" : "all_models_failed");
 }
