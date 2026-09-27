@@ -15,15 +15,22 @@
 import type { StructuredMode } from "./openrouter";
 
 export const PRO_ANALYSIS_DEFAULT_MODEL = "qwen/qwen3.8-27b:free";
+// Chain v1 (production): Qwen -> Ling -> deterministic fallback.
+// Nemotron 3.5 Lightning bị loại khỏi v1: timeout 15s làm hỏng UX, Evidence Pack
+// chỉ vài KB nên không cần model 1M context. Xem V1_EXCLUDED_MODELS bên dưới.
 export const PRO_ANALYSIS_DEFAULT_FALLBACK_MODELS: readonly string[] = [
   "inclusionai/ling-3.0-flash-fin:free",
-  "nvidia/nemotron-3.5-lightning:free",
+];
+
+// Loại khỏi chain production v1, kể cả khi env có khai báo.
+// Mở lại sau: xoá model khỏi set này (không cần đổi env, không cần đổi code khác).
+const V1_EXCLUDED_MODELS: RegExp[] = [
+  /^nvidia\/nemotron-3\.5-lightning/, // latency cao, timeout ảnh hưởng UX
 ];
 
 // Chain tối đa: primary + 2 fallback. Không vượt quá để giữ latency có kiểm soát.
 export const MAX_CHAIN = 3;
 
-// Loại khỏi chain production: coding/agent, y tế, stealth, multimodal.
 const DENIED_PATTERNS: RegExp[] = [
   /^poolside\//,                      // model chuyên coding
   /^cohere\/north-mini-code/,          // model chuyên coding
@@ -40,6 +47,10 @@ export function isDeniedModel(model: string): boolean {
   return DENIED_PATTERNS.some((re) => re.test(model));
 }
 
+export function isV1ExcludedModel(model: string): boolean {
+  return V1_EXCLUDED_MODELS.some((re) => re.test(model));
+}
+
 // Chế độ structured output theo model (đã audit ở trên).
 // Model lạ chưa biết -> json_object (mode rộng); nếu provider từ chối, pro-analysis
 // hạ xuống "none" (prompt strict JSON) thay vì sập cả chain.
@@ -51,8 +62,9 @@ export function structuredModeFor(model: string): StructuredMode {
   return "json_object";
 }
 
-// Đọc chain từ env, lọc denied + trùng, cắt MAX_CHAIN.
+// Đọc chain từ env, lọc denied + v1-excluded + trùng, cắt MAX_CHAIN.
 // PRO_ANALYSIS_MODEL / PRO_ANALYSIS_FALLBACK_MODELS (phân tách bằng dấu phẩy).
+// Model bị loại VẪN được log để không bị loại im lặng.
 export function resolveModelChain(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
@@ -66,6 +78,10 @@ export function resolveModelChain(
   const chain: string[] = [];
   for (const m of [primary, ...fallbacks]) {
     if (!m || isDeniedModel(m)) continue;
+    if (isV1ExcludedModel(m)) {
+      console.warn(`[pro-analysis-model] skipped model=${m} reason=excluded_in_v1`);
+      continue;
+    }
     if (!chain.includes(m)) chain.push(m);
     if (chain.length >= MAX_CHAIN) break;
   }

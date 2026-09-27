@@ -8,7 +8,7 @@ import {
   generateProAnalysis,
   PRO_ANALYSIS_VERSION_FALLBACK,
 } from "@/lib/ai/pro-analysis";
-import { buildSnapshotUpdate, isFreshSnapshot } from "@/lib/ai/report-cache";
+import { buildSnapshotUpdate, isFreshSnapshot, shouldPersistSnapshot } from "@/lib/ai/report-cache";
 import { analyzeListing, SCORING_CODE_VERSION } from "@/lib/scoring";
 import { parseScoringSnapshot, resultFromSnapshot } from "@/lib/score-snapshot";
 
@@ -199,14 +199,15 @@ export async function POST(req: NextRequest) {
   // report — chỉ mất cache. Trước đây throw ở đây làm 500 và khiến F5 regenerate
   // mỗi lần.
   let savedAnalysis = false;
-  if (!outcome.fromFallback && outcome.model) {
+  const persistModel = outcome.model;
+  if (shouldPersistSnapshot(outcome) && persistModel) {
     try {
       const { error: saveError } = await adminClient()
         .from("checks")
         .update(
           buildSnapshotUpdate({
             analysis: outcome.analysis,
-            actualModel: outcome.model,
+            actualModel: persistModel,
             analysisVersion: currentVersion,
             scoringVersion,
           }),

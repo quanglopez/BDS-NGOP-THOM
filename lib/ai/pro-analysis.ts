@@ -25,6 +25,10 @@ export const PRO_ANALYSIS_VERSION_FALLBACK = "pro-v1";
 // (hạ structured output xuống prompt-only, hoặc ép sửa JSON). Không loop vô hạn.
 const MAX_ATTEMPTS_PER_MODEL = 2;
 
+// Ngân sách output cho 1 lần gọi. 1500 làm Ling bị cắt giữa chừng
+// (finish_reason=length) -> JSON dở -> không validate được.
+const MAX_OUTPUT_TOKENS = 3000;
+
 export interface ProAnalysisMetrics {
   requested_model: string;
   actual_model: string | null;
@@ -234,7 +238,7 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
         model,
         systemPrompt: baseSystemPrompt(mode, isRetry),
         userPayload,
-        maxTokens: 1500,
+        maxTokens: MAX_OUTPUT_TOKENS,
         temperature: 0.2,
         siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
         siteName: "CheckBDS",

@@ -27,6 +27,15 @@ export function isFreshSnapshot(row: SnapshotRow, currentVersion: string): boole
   );
 }
 
+// Chỉ persist khi AI thật đã trả về hợp lệ (có model thực tế).
+// Deterministic fallback thì KHÔNG ghi — lần mở sau sẽ tự thử generate lại.
+export function shouldPersistSnapshot(outcome: {
+  fromFallback: boolean;
+  model: string | null;
+}): boolean {
+  return !outcome.fromFallback && typeof outcome.model === "string" && outcome.model.length > 0;
+}
+
 export function buildSnapshotUpdate(args: {
   analysis: unknown;
   actualModel: string;

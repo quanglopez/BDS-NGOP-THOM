@@ -4,6 +4,7 @@
 import { strict as assert } from "node:assert";
 import {
   isDeniedModel,
+  isV1ExcludedModel,
   resolveModelChain,
   structuredModeFor,
   MAX_CHAIN,
@@ -11,7 +12,7 @@ import {
   PRO_ANALYSIS_BENCHMARK_CANDIDATES,
 } from "../lib/ai/model-chain.ts";
 import { generateProAnalysis, formatProAnalysisMetrics } from "../lib/ai/pro-analysis.ts";
-import { buildSnapshotUpdate, isFreshSnapshot } from "../lib/ai/report-cache.ts";
+import { buildSnapshotUpdate, isFreshSnapshot, shouldPersistSnapshot } from "../lib/ai/report-cache.ts";
 import { planAllowsProAnalysis } from "../lib/quota.ts";
 import { buildEvidencePack } from "../lib/ai/evidence.ts";
 import { analyzeListing } from "../lib/scoring.ts";
@@ -163,20 +164,51 @@ const CHAIN_ENV = {
 async function main() {
   console.log("\n== Chain & capability (env-driven) ==");
 
-  await check("default model là Qwen free, chain đúng thứ tự", () => {
+  await check("default model là Qwen free, chain v1 = Qwen -> Ling", () => {
     const chain = resolveModelChain({});
     assert.equal(chain[0], PRO_ANALYSIS_DEFAULT_MODEL);
     assert.equal(chain[0], QWEN);
-    assert.deepEqual(chain, [QWEN, LING, NEMO]);
+    assert.deepEqual(chain, [QWEN, LING]);
+  });
+
+  await check("chain v1 KHÔNG có Nemotron dù env có khai (regression)", () => {
+    const chain = resolveModelChain({
+      PRO_ANALYSIS_MODEL: QWEN,
+      PRO_ANALYSIS_FALLBACK_MODELS: `${LING},${NEMO}`,
+    });
+    assert.ok(!chain.includes(NEMO), "Nemotron phải bị loại khỏi chain v1");
+    assert.deepEqual(chain, [QWEN, LING]);
+    assert.equal(isV1ExcludedModel(NEMO), true);
+    assert.equal(isV1ExcludedModel(LING), false, "Ling vẫn phải được giữ");
+  });
+
+  await check("model bị loại v1 được log, không im lặng", () => {
+    const logged: string[] = [];
+    const realWarn = console.warn;
+    console.warn = (msg?: unknown) => {
+      logged.push(String(msg));
+    };
+    try {
+      resolveModelChain({ PRO_ANALYSIS_MODEL: QWEN, PRO_ANALYSIS_FALLBACK_MODELS: NEMO });
+    } finally {
+      console.warn = realWarn;
+    }
+    const line = logged.find((l) => l.includes("[pro-analysis-model]"));
+    assert.ok(line, "phải log skip");
+    assert.ok(line!.includes("excluded_in_v1"));
+    assert.ok(line!.includes(NEMO));
   });
 
   await check("env override được tôn trọng, không hardcode", () => {
     const chain = resolveModelChain({ PRO_ANALYSIS_MODEL: LING, PRO_ANALYSIS_FALLBACK_MODELS: NEMO });
-    assert.deepEqual(chain, [LING, NEMO]);
+    assert.deepEqual(chain, [LING], "fallback Nemotron bị loại, chain còn Ling làm primary");
   });
 
   await check("chain tối đa MAX_CHAIN model", () => {
-    const chain = resolveModelChain({ PRO_ANALYSIS_MODEL: QWEN, PRO_ANALYSIS_FALLBACK_MODELS: `${LING},${NEMO},a/b:free,c/d:free` });
+    const chain = resolveModelChain({
+      PRO_ANALYSIS_MODEL: QWEN,
+      PRO_ANALYSIS_FALLBACK_MODELS: "a/b:free,c/d:free,e/f:free,g/h:free",
+    });
     assert.equal(chain.length, MAX_CHAIN);
   });
 
@@ -245,31 +277,81 @@ async function main() {
     assert.equal(ling!.body.response_format, undefined);
   });
 
-  console.log("\n== 3. Qwen + Ling fail -> Nemotron success ==");
+  console.log("\n== 3. Qwen + Ling fail -> deterministic (không có model thứ 3) ==");
 
-  await check("Qwen 429, Ling timeout -> Nemotron trả lời", async () => {
+  await check("Qwen 429, Ling fail -> deterministic fallback", async () => {
     const captured = stubFetch((m) => {
       if (m === QWEN) return rateLimited();
       if (m === LING) return { status: 200, payload: { model: LING, choices: [{ message: { content: "" } }] } };
       return ok(m);
     });
     const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
-    assert.equal(out.fromFallback, false);
-    assert.equal(out.model, NEMO);
-    const models = captured().map((c) => c.model);
-    assert.deepEqual(models.filter((m) => m === NEMO).length, 1);
+    assert.equal(out.fromFallback, true);
+    assert.equal(out.model, null);
+    assert.ok(out.analysis.summary.headline.length > 0, "fallback vẫn có nội dung");
+    // Không có model nào ngoài chain v1 được gọi
+    const called = new Set(captured().map((c) => c.model));
+    assert.deepEqual([...called].sort(), [LING, QWEN].sort());
   });
 
-  await check("Nemotron KHÔNG nhận response_format", async () => {
-    const captured = stubFetch((m) => {
-      if (m === QWEN) return rateLimited();
-      if (m === LING) return { status: 200, payload: { model: LING, choices: [{ message: { content: "" } }] } };
-      return ok(m);
-    });
+  await check("Nemotron KHÔNG BAO GIỜ được gọi, kể cả khi env có khai", async () => {
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
+    await withEnv(
+      { ...CHAIN_ENV, PRO_ANALYSIS_FALLBACK_MODELS: `${LING},${NEMO}` },
+      () => generateProAnalysis(sampleEvidence()),
+    );
+    assert.ok(
+      !captured().some((c) => c.model === NEMO),
+      "Nemotron phải bị loại khỏi runtime chain",
+    );
+  });
+
+  await check("max_tokens=3000 để Ling không bị cắt JSON (fix provider_truncated)", async () => {
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
     await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
-    const nemo = captured().find((c) => c.model === NEMO);
-    assert.ok(nemo);
-    assert.equal(nemo!.body.response_format, undefined);
+    const ling = captured().find((c) => c.model === LING);
+    assert.ok(ling, "phải có request tới Ling");
+    assert.equal(ling!.body.max_tokens, 3000, "phải yêu cầu 3000 token");
+    const qwen = captured().find((c) => c.model === QWEN);
+    assert.equal(qwen!.body.max_tokens, 3000, "áp dụng chung cho mọi model");
+  });
+
+  await check("Ling success -> đủ điều kiện lưu analysis_json", async () => {
+    stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false);
+    assert.equal(out.model, LING, "model thực tế phải là Ling");
+    assert.equal(shouldPersistSnapshot(out), true, "route phải lưu analysis_json");
+    const upd = buildSnapshotUpdate({
+      analysis: out.analysis,
+      actualModel: out.model!,
+      analysisVersion: "pro-v1",
+      scoringVersion: "jev-v1",
+    });
+    assert.equal(upd.ai_model, LING);
+    assert.ok(upd.ai_generated_at);
+  });
+
+  await check("refresh sau khi Ling lưu -> cache_hit=true, không gọi model", async () => {
+    let calls = 0;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response("{}", { status: 200 });
+    }) as typeof fetch;
+    try {
+      const stored = buildSnapshotUpdate({
+        analysis: cleanAnalysis(),
+        actualModel: LING,
+        analysisVersion: "pro-v1",
+        scoringVersion: "jev-v1",
+      });
+      const row = { analysis_json: stored.analysis_json, analysis_version: stored.analysis_version };
+      assert.equal(isFreshSnapshot(row, "pro-v1"), true, "phải cache hit");
+      assert.equal(calls, 0, "zero OpenRouter request");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   console.log("\n== 4. Tất cả AI fail -> deterministic fallback ==");
@@ -282,8 +364,8 @@ async function main() {
     assert.equal(out.fallbackReason, "all_models_rate_limited");
     assert.equal(out.metrics.fallback_used, true);
     assert.ok(out.analysis.summary.headline.length > 0, "fallback vẫn có nội dung");
-    // Không loop vô hạn: mỗi model tối đa 2 attempt
-    assert.equal(captured().length, MAX_CHAIN * 2);
+    // Không loop vô hạn: chain v1 = 2 model, mỗi model tối đa 2 attempt
+    assert.equal(captured().length, 4);
   });
 
   await check("mọi model trả 500 -> fallback, provider_errors có ghi", async () => {
