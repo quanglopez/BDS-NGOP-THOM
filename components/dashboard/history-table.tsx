@@ -134,12 +134,13 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                 <th className="px-4 py-3">LOẠI KÈO</th>
                 <th className="px-4 py-3">NGỘP</th>
                 <th className="px-4 py-3">THỜI GIAN</th>
+                <th className="px-4 py-3">PHÂN TÍCH</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={10} className="px-4 py-8 text-center text-slate-400">
                     {rows.length === 0
                       ? "Chưa có tin nào. Dán tin vào ô trên để check."
                       : "Không có tin khớp bộ lọc hiện tại."}
@@ -194,6 +195,14 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                       <td className="px-4 py-3.5 font-mono">{r.is_ngop ?? 0}%</td>
                       <td className="px-4 py-3.5 text-slate-500 whitespace-nowrap">
                         {new Date(r.created_at).toLocaleString("vi-VN")}
+                      </td>
+                      <td className="px-4 py-3.5 whitespace-nowrap">
+                        <a
+                          href={`/bao-cao/${r.id}`}
+                          className="inline-flex h-8 px-3 rounded-[10px] bg-navy text-white text-[11px] font-bold items-center hover:bg-[#112a5a] transition"
+                        >
+                          Xem phân tích →
+                        </a>
                       </td>
                     </tr>
                   );

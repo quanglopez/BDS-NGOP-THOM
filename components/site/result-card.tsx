@@ -17,6 +17,9 @@ interface Props {
   // Dữ liệu gốc để lưu pending-report trước khi đá sang login
   pendingText?: string;
   pendingListingUrl?: string | null;
+  // Plan-aware: Pro thấy CTA mở report chuyên sâu; Free thấy CTA mở khóa
+  isPro?: boolean;
+  checkId?: string | null;
   onCheckAnother: () => void;
 }
 
@@ -55,6 +58,8 @@ export function ResultCard({
   authRequired,
   pendingText,
   pendingListingUrl,
+  isPro = false,
+  checkId = null,
   onCheckAnother,
 }: Props) {
   const t = result;
@@ -391,6 +396,33 @@ export function ResultCard({
             <div className="mt-3">
               <ShareImage result={t} />
             </div>
+            {/* Plan-aware: Pro mở report chuyên sâu; Free (đã login, có checkId) thấy CTA mở khóa */}
+            {checkId && !authRequired && (
+              <div className="mt-4">
+                {isPro ? (
+                  <Link
+                    href={`/bao-cao/${checkId}`}
+                    className="h-11 w-full rounded-[12px] bg-navy text-white text-[13px] font-black flex items-center justify-center hover:bg-[#112a5a] transition"
+                  >
+                    Xem phân tích chuyên sâu →
+                  </Link>
+                ) : (
+                  <Link
+                    href={`/bao-cao/${checkId}`}
+                    onClick={() => {
+                      trackEvent("pro_unlock_click", { checkId });
+                      trackEvent("upgrade_from_report_click", { checkId });
+                    }}
+                    className="block rounded-[12px] border-2 border-dashed border-gold/70 bg-[#FFFBF0] px-4 py-3 text-center hover:border-gold transition"
+                  >
+                    <span className="text-[13px] font-black text-navy">🔒 MỞ KHÓA PHÂN TÍCH PRO</span>
+                    <span className="mt-0.5 block text-[11px] text-slate-500">
+                      Không chỉ xem điểm số — hiểu vì sao bất động sản được chấm như vậy.
+                    </span>
+                  </Link>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>

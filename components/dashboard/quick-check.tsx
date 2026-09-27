@@ -30,6 +30,8 @@ export function QuickCheck() {
   const [upgradeOpen, setUpgradeOpen] = useState(false);
   // Quota lấy từ server, không hardcode trong UI
   const [quota, setQuota] = useState<QuotaInfo | null>(null);
+  // ID dòng checks vừa lưu (để mở /bao-cao/[id]); null khi preview local
+  const [checkId, setCheckId] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
   // Sau mỗi lần check: đồng bộ quota, chỉ mời nâng cấp khi thật sự hết lượt
@@ -60,6 +62,7 @@ export function QuickCheck() {
       setResult(outcome.result);
       setSource(outcome.source);
       setAnalyzedAt(outcome.analyzedAt);
+      setCheckId(outcome.checkId ?? null);
       setStatus({ kind: "idle", text: "" });
       router.refresh();
       setTimeout(
@@ -104,10 +107,11 @@ export function QuickCheck() {
     await doCheck(raw);
   };
 
-  const resetToInput = () => {
+  const   resetToInput = () => {
     setCategoryUrl(null);
     setResult(null);
     setText("");
+    setCheckId(null);
     setStatus({ kind: "idle", text: "" });
   };
 
@@ -219,7 +223,14 @@ export function QuickCheck() {
 
         {result && (
           <div ref={resultRef} className="px-5 md:px-6 pb-5 md:pb-6 scroll-mt-24">
-            <ResultCard result={result} source={source} analyzedAt={analyzedAt} onCheckAnother={resetToInput} />
+            <ResultCard
+              result={result}
+              source={source}
+              analyzedAt={analyzedAt}
+              isPro={quota?.plan != null && quota.plan !== "free"}
+              checkId={checkId}
+              onCheckAnother={resetToInput}
+            />
           </div>
         )}
       </section>

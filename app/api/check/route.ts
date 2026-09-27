@@ -294,21 +294,27 @@ export async function POST(req: NextRequest) {
     const dealType = ans.deal_type?.choice || "binh_thuong";
     const isNgop = Math.round((ans.is_ngop?.noul ?? 0) * 100);
 
-    // Lưu lịch sử (không chặn response nếu ghi DB lỗi)
-    await supabase.from("checks").insert({
-      user_id: user.id,
-      original_text: text.slice(0, 6000),
-      score: invest100,
-      deal_type: dealType,
-      is_ngop: isNgop,
-      province: detectedProvince,
-      price_billion: priceBillion,
-      area_m2: areaM2,
-      bedrooms,
-      phone: contactPhone,
-      contact_name: contactName,
-      listing_url: listingUrl,
-    });
+    // Lưu lịch sử (không chặn response nếu ghi DB lỗi).
+    // Lấy lại id để client mở được /bao-cao/[id] và Pro Analysis có cache key.
+    const { data: inserted } = await supabase
+      .from("checks")
+      .insert({
+        user_id: user.id,
+        original_text: text.slice(0, 6000),
+        score: invest100,
+        deal_type: dealType,
+        is_ngop: isNgop,
+        province: detectedProvince,
+        price_billion: priceBillion,
+        area_m2: areaM2,
+        bedrooms,
+        phone: contactPhone,
+        contact_name: contactName,
+        listing_url: listingUrl,
+      })
+      .select("id")
+      .single();
+    const checkId: string | null = inserted?.id ?? null;
 
     // Nếu check bằng credits thưởng thì trừ 1
     if (usingCredit) {
@@ -327,6 +333,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(
       {
+        check_id: checkId,
         investment_score: invest100,
         deal_type: dealType,
         confidence: ans.deal_type?.confidence || 0.7,

@@ -15,7 +15,14 @@ export type FunnelEvent =
   | "pricing_viewed"
   | "upgrade_clicked"
   | "checkout_started"
-  | "payment_completed";
+  | "payment_completed"
+  | "pro_analysis_view"
+  | "score_breakdown_view"
+  | "red_flag_view"
+  | "price_intelligence_view"
+  | "pro_locked_section_view"
+  | "pro_unlock_click"
+  | "upgrade_from_report_click";
 
 declare global {
   interface Window {

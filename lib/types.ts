@@ -46,6 +46,7 @@ export interface QuotaInfo {
 }
 
 export interface CheckApiResponse {
+  check_id?: string | null;
   investment_score: number;
   deal_type: string;
   confidence: number;

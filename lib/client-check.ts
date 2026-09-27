@@ -17,6 +17,8 @@ export interface CheckOutcome {
   quotaExhausted?: boolean;
   // Thông báo lỗi nguyên bản từ server (vd "Hết 20 lượt check/ngày của gói free")
   serverError?: string;
+  // ID dòng checks vừa lưu (để mở /bao-cao/[id]). Null khi preview local / lỗi.
+  checkId?: string | null;
 }
 
 // Thông tin người đăng kèm theo khi check (có từ quét danh mục / link tin)
@@ -63,7 +65,12 @@ export async function runCheck(text: string, contact?: ContactInfo): Promise<Che
     }
 
     trackEvent("property_checked", { source: "ai" });
-    return { result: fromApiResponse(data, local), source: "ai", analyzedAt: data.analyzed_at };
+    return {
+      result: fromApiResponse(data, local),
+      source: "ai",
+      analyzedAt: data.analyzed_at,
+      checkId: typeof data.check_id === "string" ? data.check_id : null,
+    };
   } catch {
     trackEvent("property_checked", { source: "local" });
     return { result: local, source: "local" };

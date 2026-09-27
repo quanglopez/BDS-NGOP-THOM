@@ -6,7 +6,7 @@ import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { exampleListings } from "@/lib/market-data";
-import { runCheck, type CheckSource } from "@/lib/client-check";
+import { runCheck, fetchQuota, type CheckSource } from "@/lib/client-check";
 import { extractFromUrl, firstUrl, isBareUrl } from "@/lib/client-extract";
 import { parseCategoryUrl } from "@/lib/category-slug";
 import { takePendingReport } from "@/lib/pending-report";
@@ -33,7 +33,21 @@ export function Checker() {
   const [status, setStatus] = useState<Status>({ kind: "idle", text: "" });
   const [categoryUrl, setCategoryUrl] = useState<string | null>(null);
   const [typed, setTyped] = useState(false);
+  // Plan + check id để ResultCard hiển thị đúng CTA (Pro: mở report sâu / Free: mở khóa)
+  const [isPro, setIsPro] = useState(false);
+  const [checkId, setCheckId] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+
+  // Biết plan 1 lần khi mount (null khi chưa login -> coi như Free, không gọi AI)
+  useEffect(() => {
+    let alive = true;
+    void fetchQuota().then((q) => {
+      if (alive && q) setIsPro(q.plan !== "free");
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Sau login quay lại: nếu có report đang dở (đã lưu trước khi đá sang login)
   // thì tự chạy lại với session thật, khách không phải nhập lại
@@ -81,6 +95,7 @@ export function Checker() {
       setSource(outcome.source);
       setAnalyzedAt(outcome.analyzedAt);
       setAuthRequired(Boolean(outcome.authRequired));
+      setCheckId(outcome.checkId ?? null);
       setStatus({ kind: "idle", text: "" });
       router.refresh();
       setTimeout(
@@ -125,6 +140,7 @@ export function Checker() {
     setResult(null);
     setText("");
     setAuthRequired(false);
+    setCheckId(null);
     setStatus({ kind: "idle", text: "" });
     document.getElementById("kiem-tra")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -278,6 +294,8 @@ export function Checker() {
             source={source}
             analyzedAt={analyzedAt}
             authRequired={authRequired}
+            isPro={isPro}
+            checkId={checkId}
             pendingText={text}
             pendingListingUrl={(() => {
               const raw = text.trim();
