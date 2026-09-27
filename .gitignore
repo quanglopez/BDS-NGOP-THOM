@@ -20,6 +20,6 @@ next-env.d.ts
 # test artifacts
 tests/.sample-listing.png
 
-# OCR models tesseract tai ve luc test (khong commit)
-eng.traineddata
-vie.traineddata
+# ban HTML download khi verify live (khong phai source)
+/pricing.html
+/homepage*.html
