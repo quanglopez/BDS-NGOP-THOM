@@ -2,15 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { adminClient } from "@/lib/admin";
 import { effectivePlan, planAllowsProAnalysis } from "@/lib/quota";
-import { analyzeListing } from "@/lib/scoring";
 import { buildEvidencePack } from "@/lib/ai/evidence";
 import {
   formatProAnalysisMetrics,
   generateProAnalysis,
   PRO_ANALYSIS_VERSION_FALLBACK,
-  SCORING_VERSION_FALLBACK,
 } from "@/lib/ai/pro-analysis";
 import { buildSnapshotUpdate, isFreshSnapshot } from "@/lib/ai/report-cache";
+import { analyzeListing, SCORING_CODE_VERSION } from "@/lib/scoring";
+import { parseScoringSnapshot, resultFromSnapshot } from "@/lib/score-snapshot";
 
 export const runtime = "nodejs";
 // Tách budget riêng khỏi /api/check: OpenRouter timeout 25s, còn dư cho DB + validate
@@ -24,8 +24,17 @@ const ALLOWED_ORIGINS = new Set([
   "http://localhost:3000",
 ]);
 
-function corsHeaders(req: Request): Record<string, string> {
-  const origin = req.headers.get("origin") ?? "";
+// Cột numeric của Supabase có thể trả về string — ép về number, thiếu thì null.
+function numOrNull(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function corsHeaders(req: Request): Record<string, string> {  const origin = req.headers.get("origin") ?? "";
   const allowed = ALLOWED_ORIGINS.has(origin) ? origin : "";
   return {
     ...(allowed ? { "Access-Control-Allow-Origin": allowed } : {}),
@@ -63,7 +72,7 @@ export async function POST(req: NextRequest) {
   const { data: row, error: rowError } = await supabase
     .from("checks")
     .select(
-      "id, user_id, original_text, score, deal_type, province, price_billion, area_m2, bedrooms, listing_url, analysis_json, analysis_version, scoring_version, ai_model, ai_generated_at",
+      "id, user_id, original_text, score, deal_type, province, price_billion, area_m2, bedrooms, listing_url, analysis_json, analysis_version, scoring_version, ai_model, ai_generated_at, scoring_snapshot, scoring_code_version, jev_is_ngop, jev_legal_safety, jev_location_growth, jev_liquidity",
     )
     .eq("id", checkId)
     .maybeSingle();
@@ -90,7 +99,8 @@ export async function POST(req: NextRequest) {
   }
 
   const currentVersion = process.env.PRO_ANALYSIS_VERSION || PRO_ANALYSIS_VERSION_FALLBACK;
-  const scoringVersion = process.env.SCORING_VERSION || SCORING_VERSION_FALLBACK;
+  // Version scoring đi cùng CODE chấm điểm (lib/scoring.ts), không đọc từ env.
+  const scoringVersion = SCORING_CODE_VERSION;
 
   // Cache: đã có snapshot đúng version -> trả luôn, KHÔNG gọi model nào nữa.
   // Không so sánh ai_model: report là snapshot, không "nâng cấp" lại bằng model primary.
@@ -108,8 +118,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Build evidence từ dữ liệu thật. Rebuild breakdown local từ text gốc
-  // (đúng cách UI vẫn làm qua fromApiResponse) — KHÔNG gọi Jev lại, KHÔNG tốn quota.
+  // Build evidence từ dữ liệu thật. Thứ tự nguồn scoring (KHÔNG reverse):
+  //   1. checks.scoring_snapshot — đúng số lúc user check (check mới)
+  //   2. checks.jev_*            — merge sub-score Jev vào kết quả local
+  //   3. analyzeListing(text)    — check cũ, tái dựng, đánh dấu legacy_generated
   // LƯU Ý riêng tư: không đưa phone/contact_name vào evidence gửi cho AI.
   const local = analyzeListing(row.original_text ?? "");
   const price =
@@ -118,6 +130,20 @@ export async function POST(req: NextRequest) {
   const bedrooms =
     typeof row.bedrooms === "number" && row.bedrooms > 0 ? Math.floor(row.bedrooms) : null;
   const title = (row.original_text ?? "").split("\n")[0]?.slice(0, 200) || null;
+
+  const snapshot = parseScoringSnapshot(row.scoring_snapshot);
+  const jev = {
+    is_ngop: numOrNull(row.jev_is_ngop),
+    legal_safety: numOrNull(row.jev_legal_safety),
+    location_growth: numOrNull(row.jev_location_growth),
+    liquidity: numOrNull(row.jev_liquidity),
+  };
+
+  // Nguồn scoring: snapshot > jev_* > local. dealType/overall/score_explanation
+  // đều lấy theo đúng nguồn đó để không lệch với breakdown đã hiển thị.
+  const scoringResult = snapshot ? resultFromSnapshot(snapshot) : local;
+  const dealType = snapshot ? snapshot.deal_type : (row.deal_type ?? "binh_thuong");
+  const localScore = typeof row.score === "number" ? row.score : scoringResult.overall;
 
   const evidence = buildEvidencePack({
     title,
@@ -128,13 +154,15 @@ export async function POST(req: NextRequest) {
     region: row.province,
     listingUrl: row.listing_url,
     listingText: row.original_text,
-    result: local,
-    dealType: row.deal_type ?? "binh_thuong",
+    result: scoringResult,
+    dealType,
     scoringVersion,
     analysisVersion: currentVersion,
+    snapshot,
+    jev: snapshot ? null : jev,
   });
   // Overall lấy đúng điểm đã lưu (Jev), không tính lại
-  evidence.scoring.overall_score = typeof row.score === "number" ? row.score : local.overall;
+  evidence.scoring.overall_score = localScore;
 
   // Model chain bên trong luôn trả về (kể cả khi cả chain fail) -> không bao giờ 500
   // vì lý do AI. 429/rate-limit là trạng thái bình thường của model :free.

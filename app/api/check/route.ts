@@ -6,6 +6,8 @@ import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { detectProvince, provinceLabel } from "@/lib/provinces";
 import { extractPhone } from "@/lib/phone";
 import { extractBedrooms } from "@/lib/bedrooms";
+import { analyzeListing, fromApiResponse, SCORING_CODE_VERSION } from "@/lib/scoring";
+import { buildScoringSnapshot } from "@/lib/score-snapshot";
 
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
 // Cần đăng nhập (session Supabase) + có quota trong ngày.
@@ -296,6 +298,27 @@ export async function POST(req: NextRequest) {
 
     // Lưu lịch sử (không chặn response nếu ghi DB lỗi).
     // Lấy lại id để client mở được /bao-cao/[id] và Pro Analysis có cache key.
+    //
+    // Snapshot: dựng ĐÚNG AnalysisResult mà client sẽ nhận (fromApiResponse merge
+    // sub-score Jev vào local) rồi chụp lại. Nhờ vậy Evidence Pack server-side
+    // dùng cùng một bộ số với breakdown người dùng vừa xem — không phải hai
+    // bộ khác nhau. Sub-score Jev persist riêng làm tầng 2 khi thiếu snapshot.
+    const localResult = analyzeListing(text);
+    const mergedResult = fromApiResponse(
+      {
+        investment_score: invest100,
+        deal_type: dealType,
+        confidence: ans.deal_type?.confidence || 0.7,
+        is_ngop: isNgop,
+        legal_safety: Math.round((ans.legal_safety?.noul ?? 0) * 100),
+        location_growth: ans.location_growth?.score ?? 0,
+        liquidity: ans.liquidity?.score ?? 0,
+        province: detectedProvince,
+      },
+      localResult,
+    );
+    const scoringSnapshot = buildScoringSnapshot({ result: mergedResult, dealType });
+
     const { data: inserted } = await supabase
       .from("checks")
       .insert({
@@ -311,6 +334,16 @@ export async function POST(req: NextRequest) {
         phone: contactPhone,
         contact_name: contactName,
         listing_url: listingUrl,
+        // Tầng 1: snapshot đầy đủ tại thời điểm check
+        scoring_snapshot: scoringSnapshot,
+        // Version đi kèm công thức chấm điểm, không lấy từ env
+        scoring_code_version: SCORING_CODE_VERSION,
+        // Tầng 2: sub-score Jev thô (noul 0..1, score 0..4) để dựng lại khi thiếu snapshot
+        jev_is_ngop: ans.is_ngop?.noul ?? null,
+        jev_legal_safety: ans.legal_safety?.noul ?? null,
+        jev_location_growth: ans.location_growth?.score ?? null,
+        jev_liquidity: ans.liquidity?.score ?? null,
+        jev_deal_confidence: ans.deal_type?.confidence ?? null,
       })
       .select("id")
       .single();

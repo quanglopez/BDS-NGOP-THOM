@@ -21,6 +21,11 @@ const NGOP_KEYWORDS = [
   "siết nợ",
 ];
 
+// Version của CODE chấm điểm. Phải nằm cạnh công thức, KHÔNG lấy từ env:
+// đổi công thức ở file này thì phải bump số này để snapshot cũ không bị
+// hiểu nhầm là do logic hiện tại sinh ra.
+export const SCORING_CODE_VERSION = "jev-v1";
+
 // Nhóm khu vực có tiềm năng tăng giá cao (dùng cho scoring local)
 const HOT_MARKETS = [
   "thủ đức",
@@ -238,6 +243,44 @@ export function analyzeListing(input: string): AnalysisResult {
   };
 }
 
+// 4 sub-score Jev, giữ NGUYÊN giá trị thô provider trả về:
+// is_ngop / legal_safety là noul 0..1, location_growth / liquidity là score 0..4.
+export interface JevSubScores {
+  is_ngop?: number | null;
+  legal_safety?: number | null;
+  location_growth?: number | null;
+  liquidity?: number | null;
+}
+
+// AI trả điểm 0-4 cho 2 chỉ số nên quy về thang 100 cho khớp UI
+function jevToHundred(v: number): number {
+  return v <= 4 ? Math.round((v / 4) * 100) : Math.round(v);
+}
+
+// Ghi đè sub-score local bằng sub-score Jev.
+// Hàm này là nguồn DUY NHẤT cho việc merge: cả client (fromApiResponse) và
+// server (dựng Evidence Pack / snapshot) đều gọi, nên bộ số hiển thị và bộ số
+// dùng cho phân tích luôn giống nhau.
+export function applyJevSubScores(result: AnalysisResult, jev: JevSubScores): AnalysisResult {
+  const { ngop, tangGia, thanhKhoan, phapLy } = result.breakdown;
+  return {
+    ...result,
+    breakdown: {
+      ...result.breakdown,
+      ngop: { ...ngop, score: typeof jev.is_ngop === "number" ? jev.is_ngop : ngop.score },
+      phapLy: { ...phapLy, score: typeof jev.legal_safety === "number" ? jev.legal_safety : phapLy.score },
+      tangGia: {
+        ...tangGia,
+        score: typeof jev.location_growth === "number" ? jevToHundred(jev.location_growth) : tangGia.score,
+      },
+      thanhKhoan: {
+        ...thanhKhoan,
+        score: typeof jev.liquidity === "number" ? jevToHundred(jev.liquidity) : thanhKhoan.score,
+      },
+    },
+  };
+}
+
 // Đánh giá từ phản hồi AI: nhận điểm tổng hợp + 5 chỉ số phụ rồi ánh xạ về cùng model UI
 export function fromApiResponse(data: CheckApiResponse, local: AnalysisResult): AnalysisResult {
   // AI không trả tín hiệu gì (lỗi parse/rỗng) -> giữ nguyên kết quả local, không tính lại tag
@@ -268,34 +311,23 @@ export function fromApiResponse(data: CheckApiResponse, local: AnalysisResult): 
     actionType = "skip";
   }
 
-  // AI trả điểm 0-4 cho 2 chỉ số nên quy về thang 100 cho khớp UI
-  const toHundred = (v: number) => (v <= 4 ? Math.round((v / 4) * 100) : Math.round(v));
-
-  return {
-    ...local,
-    overall: score,
-    tag,
-    tagColor,
-    actionType,
-    extracted: {
-      ...local.extracted,
-      street: data.province ?? local.extracted.street,
-    },
-    breakdown: {
-      ...local.breakdown,
-      ngop: { ...local.breakdown.ngop, score: typeof data.is_ngop === "number" ? data.is_ngop : local.breakdown.ngop.score },
-      phapLy: {
-        ...local.breakdown.phapLy,
-        score: typeof data.legal_safety === "number" ? data.legal_safety : local.breakdown.phapLy.score,
-      },
-      tangGia: {
-        ...local.breakdown.tangGia,
-        score: typeof data.location_growth === "number" ? toHundred(data.location_growth) : local.breakdown.tangGia.score,
-      },
-      thanhKhoan: {
-        ...local.breakdown.thanhKhoan,
-        score: typeof data.liquidity === "number" ? toHundred(data.liquidity) : local.breakdown.thanhKhoan.score,
+  return applyJevSubScores(
+    {
+      ...local,
+      overall: score,
+      tag,
+      tagColor,
+      actionType,
+      extracted: {
+        ...local.extracted,
+        street: data.province ?? local.extracted.street,
       },
     },
-  };
+    {
+      is_ngop: data.is_ngop,
+      legal_safety: data.legal_safety,
+      location_growth: data.location_growth,
+      liquidity: data.liquidity,
+    },
+  );
 }

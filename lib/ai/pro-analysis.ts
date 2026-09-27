@@ -17,7 +17,8 @@ import { resolveModelChain, structuredModeFor } from "./model-chain";
 import type { EvidencePack } from "./evidence";
 
 export const PRO_ANALYSIS_VERSION_FALLBACK = "pro-v1";
-export const SCORING_VERSION_FALLBACK = "jev-v1";
+// KHÔNG có SCORING_VERSION fallback ở đây: version scoring đến từ constant
+// SCORING_CODE_VERSION trong lib/scoring.ts, đi cùng công thức chấm điểm.
 
 // Mỗi model tối đa 2 request: attempt 1 theo capability, attempt 2 là recovery
 // (hạ structured output xuống prompt-only, hoặc ép sửa JSON). Không loop vô hạn.

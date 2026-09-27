@@ -1,7 +1,9 @@
 // Evidence Pack: object chuẩn duy nhất được phép gửi cho AI.
 // CHỈ chứa field thực sự có dữ liệu. Không tạo fake values để fill JSON.
 
-import { scoreContributions } from "../score-explain";
+import { scoreContributions, type ScoreContribution } from "../score-explain";
+import { applyJevSubScores, type JevSubScores } from "../scoring";
+import type { ScoringSnapshot } from "../score-snapshot";
 import type { AnalysisResult } from "../types";
 
 export interface EvidenceProperty {
@@ -20,6 +22,10 @@ export interface EvidenceSignal {
   detail: string;
   source: "listing_text" | "calculated" | "missing";
 }
+
+// Nguồn của phần scoring trong Evidence Pack. Đưa vào pack để AI không
+// tưởng mọi thứ đều là snapshot chính xác.
+export type EvidenceScoringSource = "snapshot" | "jev_fields" | "legacy_text";
 
 export interface EvidencePack {
   property: EvidenceProperty;
@@ -44,6 +50,10 @@ export interface EvidencePack {
   metadata: {
     scoring_version: string;
     analysis_version: string;
+    // "snapshot" = đúng số lúc check; "jev_fields"/"legacy_text" = dữ liệu cũ,
+    // tái dựng lại nên có thể lệch với thời điểm check.
+    scoring_source: EvidenceScoringSource;
+    legacy_generated: boolean;
   };
 }
 
@@ -57,11 +67,15 @@ export interface EvidenceInput {
   region?: string | null;
   listingUrl?: string | null;
   listingText?: string | null;
-  // Kết quả scoring hiện tại (không tính lại)
+  // Kết quả scoring tại thời điểm check (đã merge Jev)
   result: AnalysisResult;
   dealType: string;
   scoringVersion: string;
   analysisVersion: string;
+  // Tầng ưu tiên cao nhất: snapshot đầy đủ lúc check (check mới)
+  snapshot?: ScoringSnapshot | null;
+  // Tầng 2: sub-score Jev đã persist riêng (check có jev_* nhưng chưa có snapshot)
+  jev?: JevSubScores | null;
 }
 
 // Backend tự tính price/m² — không để AI tính. Thiếu price/area -> null.
@@ -83,10 +97,44 @@ const RISK_KEYWORDS: { key: string; signal: string }[] = [
 ];
 
 export function buildEvidencePack(input: EvidenceInput): EvidencePack {
-  const { result } = input;
   const text = (input.listingText ?? "").toLowerCase();
   const price = input.price ?? null;
   const area = input.area ?? null;
+
+  // Thứ tự ưu tiên (KHÔNG reverse):
+  //   1. scoring_snapshot  — đúng số lúc check
+  //   2. jev_* persisted   — merge sub-score Jev vào kết quả local
+  //   3. analyzeListing()  — check cũ không có gì, tái dựng từ original_text
+  let result: AnalysisResult = input.result;
+  let scoringSource: EvidenceScoringSource = "legacy_text";
+  let contributions: Pick<ScoreContribution, "label" | "delta" | "note">[];
+
+  const snap = input.snapshot ?? null;
+  if (snap) {
+    result = {
+      overall: snap.overall_score,
+      tag: snap.tag,
+      tagColor: snap.tag_color,
+      breakdown: snap.breakdown,
+      reasoning: snap.reasoning,
+      action: snap.action,
+      actionType: snap.action_type,
+      extracted: input.result.extracted,
+    };
+    scoringSource = "snapshot";
+    contributions = snap.score_contributions.map((c) => ({ label: c.label, delta: c.delta, note: c.note }));
+  } else {
+    const hasJev =
+      !!input.jev &&
+      [input.jev.is_ngop, input.jev.legal_safety, input.jev.location_growth, input.jev.liquidity].some(
+        (v) => typeof v === "number",
+      );
+    if (hasJev) {
+      result = applyJevSubScores(result, input.jev!);
+      scoringSource = "jev_fields";
+    }
+    contributions = scoreContributions(result).map((c) => ({ label: c.label, delta: c.delta, note: c.note }));
+  }
 
   const redFlags: EvidenceSignal[] = [];
   for (const { key, signal } of RISK_KEYWORDS) {
@@ -99,8 +147,8 @@ export function buildEvidencePack(input: EvidenceInput): EvidencePack {
     }
   }
   // Tín hiệu rủi ro từ scoring (điểm thành phần thấp) — ghi rõ là tính toán
-  for (const c of scoreContributions(result)) {
-    if (c.kind === "minus" && c.delta <= -5 && redFlags.length < 10) {
+  for (const c of contributions) {
+    if (c.delta <= -5 && redFlags.length < 10) {
       redFlags.push({ signal: c.label, detail: c.note, source: "calculated" });
     }
   }
@@ -133,11 +181,7 @@ export function buildEvidencePack(input: EvidenceInput): EvidencePack {
     scoring: {
       overall_score: result.overall,
       deal_type: input.dealType,
-      contributions: scoreContributions(result).map((c) => ({
-        label: c.label,
-        delta: c.delta,
-        note: c.note,
-      })),
+      contributions,
       reasoning: result.reasoning,
       action: result.action,
     },
@@ -153,6 +197,8 @@ export function buildEvidencePack(input: EvidenceInput): EvidencePack {
     metadata: {
       scoring_version: input.scoringVersion,
       analysis_version: input.analysisVersion,
+      scoring_source: scoringSource,
+      legacy_generated: scoringSource !== "snapshot",
     },
   };
 }
