@@ -13,6 +13,7 @@ import {
 import { parseProAnalysis, type ProAnalysis, type ProNextStep, type ProWarning } from "./schema";
 import { PRO_ANALYSIS_JSON_SCHEMA, PRO_ANALYSIS_JSON_SCHEMA_NAME } from "./json-schema";
 import { guardProAnalysis } from "./guard";
+import { calcPricePerM2 } from "./evidence";
 import { resolveModelChain, structuredModeFor } from "./model-chain";
 import type { EvidencePack } from "./evidence";
 
@@ -84,13 +85,60 @@ export function buildFallbackAnalysis(evidence: EvidencePack): ProAnalysis {
     reason: "Mọi đánh giá trên đều suy từ nội dung tin đăng, cần xác minh trực tiếp.",
   });
 
+  // 3 điểm đáng chú ý DETERMINISTIC — để Pro user ở chế độ fallback vẫn thấy
+  // giá trị, không cảm thấy "Pro y như Free".
+  // Chỉ lấy từ evidence đã chấm, KHÔNG suy diễn thêm.
+  const candidates: ProAnalysis["highlights"] = [];
+  for (const c of positives) {
+    candidates.push({ type: "positive", title: c.title, explanation: c.explanation, evidence_source: "scoring" });
+  }
+  for (const c of negatives) {
+    candidates.push({ type: "warning", title: c.title, explanation: c.explanation, evidence_source: "scoring" });
+  }
+  for (const r of evidence.detected_signals.red_flags) {
+    candidates.push({
+      type: "warning",
+      title: `Cần kiểm tra: ${r.signal}`,
+      explanation: r.detail,
+      evidence_source: r.source,
+    });
+  }
+  if (p.price !== null && p.area !== null) {
+    candidates.push({
+      type: "neutral",
+      title: `Giá/m² tính từ tin: ${calcPricePerM2(p.price, p.area)?.toLocaleString("vi-VN")} đ/m²`,
+      explanation:
+        "Đây là phép tính trên giá chào bán và diện tích trong tin, chưa so với mặt bằng khu vực.",
+      evidence_source: "calculated",
+    });
+  } else {
+    candidates.push({
+      type: "warning",
+      title: "Thiếu giá hoặc diện tích",
+      explanation: `Cần bổ sung ${evidence.detected_signals.missing_fields.map((m) => m.signal).join(", ")} để tính được giá/m².`,
+      evidence_source: "missing",
+    });
+  }
+
+  // Ưu tiên 1 tích cực + 1 cần lưu ý + 1 giá/m², phần dư lấp cho đủ 3.
+  // KHÔNG bịa điểm "cần lưu ý" khi evidence thật sự không có tín hiệu xấu.
+  const firstPositive = candidates.find((h) => h.type === "positive");
+  const firstWarning = candidates.find((h) => h.type === "warning");
+  const neutral = candidates.find((h) => h.type === "neutral");
+  const highlights = [
+    ...(firstPositive ? [firstPositive] : []),
+    ...(firstWarning && firstWarning !== firstPositive ? [firstWarning] : []),
+    ...(neutral ? [neutral] : []),
+    ...candidates.filter((h) => h !== firstPositive && h !== firstWarning && h !== neutral),
+  ].slice(0, 3);
+
   return {
     summary: {
       headline: `BĐS được ${evidence.scoring.overall_score}/100 điểm`,
       text: evidence.scoring.reasoning || "Chưa đủ dữ liệu để kết luận.",
       confidence: "low",
     },
-    highlights: [],
+    highlights,
     score_explanation: {
       summary: "Điểm các yếu tố dưới đây do mô hình CheckBDS chấm, không phải phép cộng trực tiếp tạo thành điểm tổng.",
       strengths: positives.slice(0, 5),
@@ -174,8 +222,10 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
   const userPayload = JSON.stringify(evidence);
   const startedAt = Date.now();
 
-  for (const model of chain) {
+  for (let mi = 0; mi < chain.length; mi++) {
+    const model = chain[mi];
     let mode = structuredModeFor(model);
+    const fallbackModel = chain[mi + 1] ?? "-";
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_MODEL; attempt++) {
       const isRetry = attempt > 0;
@@ -205,6 +255,18 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
       if (res.error === "provider_429") metrics.rate_limited = true;
       if (res.error) metrics.provider_errors.push(res.error);
 
+      // Log chi tiết MỖI lần lỗi để chẩn đoán Case A-F.
+      // KHÔNG log: API key, prompt, PII (đã sanitize trong openrouter.ts).
+      if (res.error) {
+        console.error(
+          `[pro-analysis-error] provider_error=${res.error} http_status=${res.status ?? "-"} ` +
+            `requested_model=${model} actual_model=${res.actualModel ?? "-"} ` +
+            `fallback_attempt=${attempt + 1} fallback_model=${fallbackModel} ` +
+            `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
+            `latency_ms=${res.latencyMs} response_body_safe=${res.errorMessage ?? "-"}`,
+        );
+      }
+
       // Provider từ chối param structured output -> hạ xuống prompt-only
       // rồi thử lại model này (thay vì làm hỏng cả fallback chain).
       if (res.error === "provider_unsupported_param" && mode !== "none") {
@@ -217,12 +279,26 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
       const parsed = parseProAnalysis(res.text);
       if (!parsed) {
         metrics.validation_failed = true;
+        console.error(
+          `[pro-analysis-error] provider_error=validation_failed http_status=${res.status ?? 200} ` +
+            `requested_model=${model} actual_model=${res.actualModel ?? "-"} ` +
+            `fallback_attempt=${attempt + 1} fallback_model=${fallbackModel} ` +
+            `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
+            `latency_ms=${res.latencyMs} response_body_safe=json_unparseable_or_missing_headline`,
+        );
         continue;
       }
 
       const guard = guardProAnalysis(evidence, parsed);
       if (!guard.ok) {
         metrics.guard_failed = true;
+        console.error(
+          `[pro-analysis-error] provider_error=guard_rejected http_status=${res.status ?? 200} ` +
+            `requested_model=${model} actual_model=${res.actualModel ?? "-"} ` +
+            `fallback_attempt=${attempt + 1} fallback_model=${fallbackModel} ` +
+            `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
+            `latency_ms=${res.latencyMs} response_body_safe=${guard.reasons.join(" | ").slice(0, 200)}`,
+        );
         continue;
       }
 

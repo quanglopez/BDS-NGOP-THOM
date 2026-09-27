@@ -22,6 +22,7 @@ export type ProviderErrorCode =
   | "provider_network"
   | "provider_bad_json"
   | "provider_empty_content"
+  | "provider_truncated"
   | "provider_unsupported_param"
   | "provider_error";
 
@@ -36,6 +37,9 @@ export interface OpenRouterResult {
   latencyMs: number;
   error?: ProviderErrorCode;
   status?: number;
+  // "stop" | "length" (bị cắt cụt) | "content_filter" | "error"...
+  // length = nguyên nhân rất hay gặp khiến JSON không parse được
+  finishReason: string | null;
   // Message rút gọn để chẩn đoán 4xx. Chỉ dùng server-side, KHÔNG trả về client.
   errorMessage?: string;
 }
@@ -51,9 +55,15 @@ function choiceErrorText(raw: unknown): string | null {
   return typeof msg === "string" && msg.trim() ? msg.trim() : null;
 }
 
-// Cắt bỏ rủi ro lộ key nếu provider vô tình echo lại trong message
+// Cắt bỏ rủi ro lộ secret/PII nếu provider vô tình echo lại trong message:
+// API key, email, và mọi cụm số 9-11 chữ số (SĐT Việt Nam).
 function sanitize(msg: string): string {
-  return msg.replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 200);
+  return msg
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted_key]")
+    .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "[redacted_email]")
+    .replace(/\b\d{9,11}\b/g, "[redacted_digits]")
+    .replace(/\s+/g, " ")
+    .slice(0, 200);
 }
 
 // Provider từ chối param structured output -> cần hạ xuống prompt-only
@@ -91,7 +101,7 @@ export async function callOpenRouter(opts: {
     timeoutMs = DEFAULT_TIMEOUT_MS,
   } = opts;
 
-  const base = { ok: false, text: null, requestedModel: model, actualModel: null, usage: EMPTY_USAGE, latencyMs: 0 };
+  const base = { ok: false, text: null, requestedModel: model, actualModel: null, usage: EMPTY_USAGE, latencyMs: 0, finishReason: null as string | null };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), Math.max(1000, timeoutMs));
   const startedAt = Date.now();
@@ -165,6 +175,8 @@ export async function callOpenRouter(opts: {
       typeof (data as { model?: unknown }).model === "string"
         ? ((data as { model: string }).model)
         : null;
+    const choiceFinish = (data as { choices?: { finish_reason?: unknown }[] }).choices?.[0]?.finish_reason;
+    const finishReason = typeof choiceFinish === "string" ? choiceFinish : null;
     const usageRaw = (data as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } }).usage;
     const usage: OpenRouterUsage = {
       promptTokens: typeof usageRaw?.prompt_tokens === "number" ? usageRaw.prompt_tokens : null,
@@ -174,7 +186,7 @@ export async function callOpenRouter(opts: {
     // HTTP 200 nhưng generation lỗi ở choice
     const choiceError = choiceErrorText(data);
     if (choiceError) {
-      return { ...base, latencyMs, actualModel: responseModel, usage, error: "provider_error", errorMessage: sanitize(choiceError) };
+      return { ...base, latencyMs, actualModel: responseModel, usage, finishReason, error: "provider_error", errorMessage: sanitize(choiceError) };
     }
 
     const text =
@@ -184,9 +196,13 @@ export async function callOpenRouter(opts: {
         : null;
 
     if (typeof text !== "string" || !text.trim()) {
-      return { ...base, latencyMs, actualModel: responseModel, usage, error: "provider_empty_content" };
+      return { ...base, latencyMs, actualModel: responseModel, usage, finishReason, error: "provider_empty_content", errorMessage: `finish_reason=${finishReason ?? "null"}` };
     }
-    return { ok: true, text: text.trim(), requestedModel: model, actualModel: responseModel, usage, latencyMs };
+    // Trả về nhưng bị cắt cụt -> JSON gần như chắc chắn hỏng, đánh dấu để log rõ
+    if (finishReason === "length") {
+      return { ...base, latencyMs, actualModel: responseModel, usage, finishReason, error: "provider_truncated", errorMessage: `finish_reason=length output_truncated=true` };
+    }
+    return { ok: true, text: text.trim(), requestedModel: model, actualModel: responseModel, usage, latencyMs, finishReason };
   } catch (e) {
     const latencyMs = Date.now() - startedAt;
     const aborted = e instanceof Error && e.name === "AbortError";

@@ -24,6 +24,16 @@ const ALLOWED_ORIGINS = new Set([
   "http://localhost:3000",
 ]);
 
+// Log phải an toàn: không API key, không email, không SĐT.
+function sanitizeForLog(msg: string): string {
+  return msg
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted_key]")
+    .replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "[redacted_email]")
+    .replace(/\b\d{9,11}\b/g, "[redacted_digits]")
+    .replace(/\s+/g, " ")
+    .slice(0, 200);
+}
+
 // Cột numeric của Supabase có thể trả về string — ép về number, thiếu thì null.
 function numOrNull(v: unknown): number | null {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
@@ -104,7 +114,18 @@ export async function POST(req: NextRequest) {
 
   // Cache: đã có snapshot đúng version -> trả luôn, KHÔNG gọi model nào nữa.
   // Không so sánh ai_model: report là snapshot, không "nâng cấp" lại bằng model primary.
-  if (isFreshSnapshot(row, currentVersion)) {
+  const cacheHit = isFreshSnapshot(row, currentVersion);
+
+  // DEBUG TẠM (xem sau khi xác nhận): soi đúng cache flow + kết quả lưu.
+  console.log(
+    `[pro-analysis-cache] check_id=${checkId} ` +
+      `has_analysis_json=${row.analysis_json ? "true" : "false"} ` +
+      `analysis_version=${row.analysis_version ?? "-"} current_version=${currentVersion} ` +
+      `cache_hit=${cacheHit} ai_generate=${cacheHit ? "false" : "true"} ` +
+      `stored_ai_model=${row.ai_model ?? "-"} scoring_source_pending=true`,
+  );
+
+  if (cacheHit) {
     return NextResponse.json(
       {
         ok: true,
@@ -169,29 +190,57 @@ export async function POST(req: NextRequest) {
   const outcome = await generateProAnalysis(evidence);
 
   // Chỉ save khi là kết quả AI thật. Fallback deterministic tính lại miễn phí
-  // nên không persist — lần mở sau (khi đã có key) sẽ tự thử generate lại.
-  // Report lịch sử không bao giờ bị ghi đè âm thầm: chỉ snapshot AI thật.
+  // nên không persist — lần mở sau sẽ tự thử generate lại.
   // Dùng service role vì bảng checks không có update policy cho user.
-  // ai_model = model THỰC TẾ đã sinh ra report (có thể là model fallback),
-  // không phải model yêu cầu ban đầu.
+  // ai_model = model THỰC TẾ đã sinh ra report (có thể là model fallback).
+  //
+  // QUAN TRỌNG: lỗi lưu KHÔNG được làm hỏng response. Nếu adminClient() throw
+  // (thiếu SUPABASE_SERVICE_ROLE_KEY) hoặc update fail, người dùng vẫn phải thấy
+  // report — chỉ mất cache. Trước đây throw ở đây làm 500 và khiến F5 regenerate
+  // mỗi lần.
+  let savedAnalysis = false;
   if (!outcome.fromFallback && outcome.model) {
-    const admin = adminClient();
-    await admin
-      .from("checks")
-      .update(
-        buildSnapshotUpdate({
-          analysis: outcome.analysis,
-          actualModel: outcome.model,
-          analysisVersion: currentVersion,
-          scoringVersion,
-        }),
-      )
-      .eq("id", checkId);
+    try {
+      const { error: saveError } = await adminClient()
+        .from("checks")
+        .update(
+          buildSnapshotUpdate({
+            analysis: outcome.analysis,
+            actualModel: outcome.model,
+            analysisVersion: currentVersion,
+            scoringVersion,
+          }),
+        )
+        .eq("id", checkId);
+      if (saveError) {
+        console.error(
+          `[pro-analysis-error] provider_error=save_failed check_id=${checkId} ` +
+            `requested_model=${outcome.requestedModel} actual_model=${outcome.model} ` +
+            `response_body_safe=${sanitizeForLog(saveError.message)}`,
+        );
+      } else {
+        savedAnalysis = true;
+      }
+    } catch (e) {
+      console.error(
+        `[pro-analysis-error] provider_error=save_threw check_id=${checkId} ` +
+          `requested_model=${outcome.requestedModel} actual_model=${outcome.model} ` +
+          `response_body_safe=${sanitizeForLog(e instanceof Error ? e.message : "unknown")}`,
+      );
+    }
   }
 
   console.log(
+    `[pro-analysis-cache] check_id=${checkId} has_analysis_json=true ` +
+      `analysis_version=${currentVersion} current_version=${currentVersion} ` +
+      `cache_hit=false ai_generate=true saved_analysis=${savedAnalysis} ` +
+      `ai_model=${outcome.model ?? "-"} from_fallback=${outcome.fromFallback}`,
+  );
+
+  console.log(
     `[pro-analysis:${requestId}] check=${checkId} plan=${plan} cached=false ` +
-      `reason=${outcome.fallbackReason ?? "-"} ${formatProAnalysisMetrics(outcome.metrics)}`,
+      `reason=${outcome.fallbackReason ?? "-"} saved_analysis=${savedAnalysis} ` +
+      `${formatProAnalysisMetrics(outcome.metrics)}`,
   );
 
   return NextResponse.json(

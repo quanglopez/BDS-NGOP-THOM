@@ -480,6 +480,102 @@ async function main() {
     }
   });
 
+  console.log("\n== 10b. Observability & provider diagnostics ==");
+
+  await check("finish_reason=length -> phân loại provider_truncated (JSON chắc chắn hỏng)", async () => {
+    const captured = stubFetch(() => ({
+      status: 200,
+      payload: {
+        model: QWEN,
+        choices: [{ finish_reason: "length", message: { content: '{"summary":{"headline":"cắt dở' } }],
+      },
+    }));
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.ok(captured().length > 0);
+    assert.equal(out.fromFallback, true);
+    assert.ok(out.metrics.provider_errors.includes("provider_truncated"));
+  });
+
+  await check("provider 400 nhắc response_format -> hạ xuống prompt-only rồi thử lại", async () => {
+    const captured = stubFetch((m, n) =>
+      n === 1
+        ? { status: 400, payload: { error: { message: "response_format json_schema is not supported" } } }
+        : ok(m),
+    );
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false);
+    const second = captured()[1];
+    assert.equal(second.model, QWEN, "phải thử lại CHÍNH model này, không nhảy sang Ling");
+    assert.equal(second.body.response_format, undefined, "attempt 2 không được gửi response_format");
+  });
+
+  await check("log không lộ key / email / SĐT trong response_body_safe", async () => {
+    const captured = stubFetch(() => ({
+      status: 400,
+      payload: {
+        error: { message: "invalid key sk-or-abcdef123456 for a@b.com phone 0909123456" },
+      },
+    }));
+    const logged: string[] = [];
+    const realLog = console.error;
+    console.error = (msg?: unknown) => {
+      logged.push(String(msg));
+    };
+    try {
+      await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    } finally {
+      console.error = realLog;
+    }
+    assert.ok(captured().length > 0);
+    const joined = logged.join("\n");
+    if (joined.length > 0) {
+      assert.ok(!joined.includes("sk-or-abcdef123456"), "rò API key");
+      assert.ok(!joined.includes("a@b.com"), "rò email");
+      assert.ok(!joined.includes("0909123456"), "rò SĐT");
+    }
+  });
+
+  await check("mọi lần lỗi đều log đủ trường chẩn đoán", async () => {
+    const captured = stubFetch((m, n) =>
+      n === 1 ? rateLimited() : { status: 200, payload: { model: m, choices: [{ finish_reason: "stop", message: { content: "{bad" } }] } },
+    );
+    const logged: string[] = [];
+    const realLog = console.error;
+    console.error = (msg?: unknown) => {
+      logged.push(String(msg));
+    };
+    try {
+      await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    } finally {
+      console.error = realLog;
+    }
+    assert.ok(captured().length > 0);
+    const errors = logged.filter((l) => l.includes("[pro-analysis-error]"));
+    assert.ok(errors.length >= 2, "phải log mỗi lần lỗi");
+    for (const line of errors) {
+      for (const k of [
+        "provider_error=",
+        "http_status=",
+        "requested_model=",
+        "actual_model=",
+        "fallback_attempt=",
+        "fallback_model=",
+        "response_body_safe=",
+      ]) {
+        assert.ok(line.includes(k), `thiếu trường ${k}`);
+      }
+    }
+    // Phân biệt được từng case: 429 (Case C) và JSON hỏng (Case E)
+    assert.ok(
+      errors.some((l) => l.includes("provider_error=provider_429")),
+      "phải nhận diện được 429",
+    );
+    assert.ok(
+      errors.some((l) => l.includes("provider_error=validation_failed")),
+      "phải phân biệt được Case E",
+    );
+  });
+
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
   process.exit(fail > 0 ? 1 : 0);
 }

@@ -213,6 +213,73 @@ async function main() {
     assert.ok(f.next_steps.some((n) => n.priority === "high"));
   });
 
+  await check("fallback vẫn có 3 điểm đáng chú ý DETERMINISTIC (Pro không bị rỗng)", () => {
+    const f = buildFallbackAnalysis(sampleEvidence());
+    assert.equal(f.highlights.length, 3);
+    assert.ok(f.highlights.some((h) => h.type === "positive"), "phải có điểm tích cực từ contributions");
+    assert.ok(f.highlights.some((h) => h.type === "neutral"), "phải có điểm giá/m² tính tay");
+    // KHÔNG bịa điểm "cần lưu ý" khi evidence không có tín hiệu xấu
+    const e = sampleEvidence();
+    const hasBadSignal =
+      e.scoring.contributions.some((c) => c.delta < 0) || e.detected_signals.red_flags.length > 0;
+    const hasWarning = f.highlights.some((h) => h.type === "warning");
+    if (!hasBadSignal) {
+      assert.equal(hasWarning, false, "không được bịa cảnh báo khi dữ liệu không có rủi ro");
+    }
+    // Mọi highlight phải có evidence_source hợp lệ
+    for (const h of f.highlights) {
+      assert.ok(["scoring", "calculated", "missing", "listing_text"].includes(h.evidence_source));
+      assert.ok(h.title.length > 0 && h.explanation.length > 0);
+    }
+  });
+
+  await check("listing có tín hiệu xấu -> fallback vẫn hiện điểm cần lưu ý", () => {
+    const riskyText = "Bán nhà hẻm nhỏ 40m2 giá 2 tỷ, quy hoạch treo, tranh chấp đất, giấy tay";
+    const e = buildEvidencePack({
+      price: 2000000000,
+      area: 40,
+      bedrooms: 2,
+      region: "Bình Dương",
+      listingText: riskyText,
+      result: analyzeListing(riskyText),
+      dealType: "rui_ro_phap_ly",
+      scoringVersion: "jev-v1",
+      analysisVersion: "pro-v1",
+    });
+    const f = buildFallbackAnalysis(e);
+    assert.equal(f.highlights.length, 3);
+    assert.ok(f.highlights.some((h) => h.type === "warning"), "phải có cảnh báo");
+  });
+
+  await check("điểm giá/m² của fallback đúng số backend, không phải AI tự tính", () => {
+    const f = buildFallbackAnalysis(sampleEvidence());
+    const ppm2 = f.highlights.find((h) => h.type === "neutral");
+    assert.ok(ppm2);
+    assert.ok(ppm2!.title.includes("68.750.000"), `title=${ppm2!.title}`);
+  });
+
+  await check("fallback thiếu giá/diện tích -> nói thẳng, không bịa số", () => {
+    const e = buildEvidencePack({
+      result: analyzeListing("Bán nhà đẹp giá tốt liên hệ xem"),
+      dealType: "binh_thuong",
+      scoringVersion: "jev-v1",
+      analysisVersion: "pro-v1",
+    });
+    const f = buildFallbackAnalysis(e);
+    assert.equal(f.price_analysis.available, false);
+    const ppm2 = f.highlights.find((h) => h.type === "warning");
+    assert.ok(ppm2, "phải cảnh báo thay vì hiện số bịa");
+    assert.equal(f.highlights.filter((h) => h.type === "neutral").length, 0);
+  });
+
+  await check("ngôn ngữ fallback không vô tình dính cụm cấm của guard", () => {
+    const f = buildFallbackAnalysis(sampleEvidence());
+    const all = JSON.stringify(f).toLowerCase();
+    for (const bad of ["bạn nên mua", "chắc chắn sinh lời", "roi cao", "pháp lý đã được xác minh"]) {
+      assert.ok(!all.includes(bad), `fallback chứa cụm cấm: ${bad}`);
+    }
+  });
+
   await check("chưa có OPENROUTER_API_KEY -> fallback ngay, không gọi mạng", async () => {
     const saved = process.env.OPENROUTER_API_KEY;
     delete process.env.OPENROUTER_API_KEY;

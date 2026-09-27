@@ -175,8 +175,17 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
       {/* 3. Nhận định nhanh */}
       <section className="rounded-[18px] bg-navy text-white p-5 md:p-6 relative overflow-hidden">
         <div className="absolute -top-16 right-0 w-[220px] h-[220px] bg-gold/15 rounded-full blur-[60px]" />
-        <div className="relative flex items-center gap-2">
+        <div className="relative flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-black tracking-[0.14em] text-gold">NHẬN ĐỊNH TỪ CHECKBDS</span>
+          {data.fromFallback ? (
+            <span className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[10px] font-bold text-slate-200">
+              Phân tích cơ bản từ dữ liệu
+            </span>
+          ) : (
+            <span className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[10px] font-bold text-slate-200">
+              AI Analysis
+            </span>
+          )}
           <span className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15 text-[10px] font-bold text-slate-200">
             AI hỗ trợ phân tích
           </span>
