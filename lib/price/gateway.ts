@@ -133,6 +133,31 @@ function stripAdminWords(s: string): string {
     .trim();
 }
 
+/**
+ * Tên địa danh đã chuẩn hoá: bỏ dấu, lowercase, bỏ prefix hành chính.
+ *
+ * Dùng làm khoá cache của geo_area_map V2. PHẢI là đúng hàm mà resolveAreaCode
+ * dùng để so khớp — nếu hai nơi chuẩn hoá lệch nhau thì cache sẽ vô hiệu hoặc,
+ * tệ hơn, trả mã của địa danh khác.
+ */
+export function normalizePlaceName(s: string): string {
+  return stripAdminWords(normName(s));
+}
+
+/**
+ * So khớp tên địa danh ĐÚNG KỸ sau khi chuẩn hoá.
+ *
+ * KHÔNG dùng includes: tên địa danh ở VN có số thứ tự (Phường 1..28, Xã 1..X).
+ * "Phường 11" -> "11", "Phường 1" -> "1", mà "11".includes("1") === true nên
+ * includes sẽ trả mã của Phường 1 cho Phường 11 — scope sai địa lý nhưng vẫn
+ * trông hợp lệ, nguy hiểm hơn hẳn rơi về tầng tỉnh.
+ *
+ * Trượt thì trả false để rơi về tầng tỉnh: an toàn hơn là đoán sai.
+ */
+export function placeNameMatches(name: string, want: string): boolean {
+  return name === want;
+}
+
 function str(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
@@ -162,13 +187,13 @@ export class ChototGatewayAdapter implements MarketGateway {
     // Nhãn rút gọn ("TP.HCM") không khớp tên đầy đủ ("Tp Hồ Chí Minh") khi so chuỗi
     const n = regionName.trim().toLowerCase();
     const query = n === "tp.hcm" || n === "tphcm" || n === "tp hcm" ? "ho chi minh" : regionName;
-    const want = stripAdminWords(normName(query));
+    const want = normalizePlaceName(query);
     for (const cg of [1020, 1010, 1000]) {
       const ads = await this.fetchListings({ categoryCode: cg, query, limit: 50 });
       for (const ad of ads) {
-        const name = stripAdminWords(normName(str(ad.region_name)));
+        const name = normalizePlaceName(str(ad.region_name));
         const code = num(ad.region_v2);
-        if (code !== null && (name === want || name.includes(want) || want.includes(name))) return code;
+        if (code !== null && placeNameMatches(name, want)) return code;
       }
     }
     return null;
@@ -177,13 +202,19 @@ export class ChototGatewayAdapter implements MarketGateway {
   async resolveAreaCode(regionName: string, areaName: string): Promise<number | null> {
     const regionV2 = await this.resolveRegionCode(regionName);
     if (regionV2 === null) return null;
-    const want = stripAdminWords(normName(areaName));
+    const want = normalizePlaceName(areaName);
     for (const cg of [1020, 1010, 1000]) {
       const ads = await this.fetchListings({ categoryCode: cg, regionV2, query: want, limit: 50 });
       for (const ad of ads) {
-        const name = stripAdminWords(normName(str(ad.area_name)));
+        // PHẢI đúng tỉnh đang hỏi. Tin cùng tên ở tỉnh khác ("Phường 1" có ở
+        // cả Hà Nội lẫn TP.HCM) sẽ ra mã sai, và mã sai đó được ghi VĨNH VIỄN
+        // vào geo_area_map — không có TTL, không tự sửa. Không được tin tuyệt
+        // đối rằng gateway đã lọc đúng.
+        const adRegion = num(ad.region_v2);
+        if (adRegion !== null && adRegion !== regionV2) continue;
+        const name = normalizePlaceName(str(ad.area_name));
         const code = num(ad.area_v2);
-        if (code !== null && (name === want || name.includes(want) || want.includes(name))) return code;
+        if (code !== null && placeNameMatches(name, want)) return code;
       }
     }
     return null;

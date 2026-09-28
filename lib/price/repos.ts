@@ -6,6 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PricePipelineError } from "./errors";
 import type { MarketListingRepo, PriceStatsRepo } from "./pipeline";
+import type { GeoAreaMapRepo } from "./geo-resolver";
 import type { KnownArea } from "@/lib/geo/url-parser";
 import type { NormalizedListing, PriceScope, PriceStatsRow } from "./types";
 
@@ -237,6 +238,46 @@ export function supabasePriceStats(admin: SupabaseClient): PriceStatsRepo {
           { onConflict: "scope_key,stat_date" },
         );
       if (error) throw new PricePipelineError("stats_upsert_failed");
+    },
+  };
+}
+
+// Gazetteer tên địa danh -> mã (V2). Bảng geo_area_map KHÔNG có policy nào nên
+// chỉ service role đọc/ghi được — đúng như 2 repo trên.
+export function supabaseGeoAreaMap(admin: SupabaseClient): GeoAreaMapRepo {
+  return {
+    async find(regionKey, areaKey) {
+      const { data, error } = await admin
+        .from("geo_area_map")
+        .select("region_name, area_name, region_v2, area_v2")
+        .eq("region_name", regionKey)
+        .eq("area_name", areaKey)
+        .maybeSingle();
+      if (error) throw new PricePipelineError("geo_map_read_failed");
+      const r = data as Record<string, unknown> | null;
+      const areaV2 = num(r?.area_v2);
+      if (!r || areaV2 === null) return null;
+      return {
+        regionKey: str(r.region_name) ?? regionKey,
+        areaKey: str(r.area_name) ?? areaKey,
+        region_v2: num(r.region_v2),
+        area_v2: areaV2,
+      };
+    },
+
+    async save(row) {
+      const { error } = await admin.from("geo_area_map").upsert(
+        {
+          region_name: row.regionKey,
+          area_name: row.areaKey,
+          region_v2: row.region_v2,
+          area_v2: row.area_v2,
+          resolved_at: new Date().toISOString(),
+        },
+        { onConflict: "region_name,area_name" },
+      );
+      // Ném lỗi để geo-resolver bắt và bỏ qua: cache hỏng không được chặn pipeline.
+      if (error) throw new PricePipelineError("geo_map_write_failed");
     },
   };
 }

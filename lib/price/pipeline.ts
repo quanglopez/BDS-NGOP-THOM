@@ -4,6 +4,7 @@
 import { haversineKm } from "@/lib/geo/distance";
 import { calcPpm2, computeStats, confidenceFrom, differencePercent, filterSample } from "./stats";
 import { detectCategoryCode, resolveScope, type WardIndex } from "./scope";
+import type { GeoResolver } from "./geo-resolver";
 import type { MarketGateway, RawMarketAd } from "./gateway";
 import {
   MARKET_SOURCE,
@@ -68,8 +69,21 @@ export interface PipelineDeps {
   gateway: MarketGateway;
   listings: MarketListingRepo;
   stats: PriceStatsRepo;
+  /**
+   * V2: tra mã địa danh. Tách khỏi listings vì gazetteer KHÔNG phải bảng giá.
+   * Không truyền vào -> pipeline chạy đúng như bản cũ (chỉ tra market_listings).
+   */
+  geo?: GeoResolver;
   now?: () => Date;
 }
+
+/**
+ * Ghi rõ khi đã BIẾT phường nhưng không đủ mẫu nên phải mở rộng phạm vi.
+ * Không dùng lại limitation của tầng tỉnh: "chưa xác định được khu vực chi tiết"
+ * sẽ thành lời nói dối — ta ĐÃ xác định được phường, chỉ là thiếu dữ liệu.
+ */
+export const LIMITATION_WIDENED_FROM_WARD =
+  "Không đủ dữ liệu tham chiếu ở phạm vi phường, đang mở rộng phạm vi so sánh.";
 
 export type PipelineResult =
   | { ok: true; snapshot: PriceIntelligence; fromCache: boolean }
@@ -203,6 +217,104 @@ function indexFrom(repo: MarketListingRepo): WardIndex {
 }
 
 /**
+ * Đảm bảo có hàng thống kê cho 1 scope: đường nhanh (đã có hôm nay) hoặc crawl.
+ * Tách riêng để PHASE 5 gọi lại cho tầng tỉnh mà không nhân bản logic claim.
+ */
+async function ensureStatsRow(args: {
+  deps: PipelineDeps;
+  scope: PriceScope;
+  regionV2: number | null;
+  areaV2: number | null;
+  statDate: string;
+  iso: string;
+}): Promise<{ ok: true; row: PriceStatsRow } | { ok: false }> {
+  const { deps, scope, regionV2, areaV2, statDate, iso } = args;
+
+  // Đường nhanh: scope này đã có thống kê hôm nay -> không crawl.
+  const existing = await deps.stats.get(scope.scope_key, statDate);
+  if (existing) return { ok: true, row: existing };
+
+  const claimed = await deps.stats.claim({
+    scopeKey: scope.scope_key,
+    statDate,
+    scope,
+    source: MARKET_SOURCE,
+  });
+  if (!claimed) {
+    // Người khác đang crawl cùng scope -> đọc lại, không tự crawl trùng
+    const row = await deps.stats.get(scope.scope_key, statDate);
+    return row ? { ok: true, row } : { ok: false };
+  }
+
+  const crawled = await crawlScope({ gateway: deps.gateway, scope, regionV2, areaV2 });
+  await deps.listings.upsertMany(crawled.listings);
+  const computed = computeStats({
+    filtered: filterSample(crawled.listings, scope),
+    scopeLevel: scope.scope_level,
+  });
+  const invalidCount =
+    computed.excluded.rent +
+    computed.excluded.invalid_price_flag +
+    computed.excluded.invalid_size +
+    computed.excluded.invalid_price +
+    computed.excluded.category_mismatch +
+    computed.excluded.ppm2_out_of_range +
+    computed.excluded.size_out_of_band +
+    computed.excluded.rooms_out_of_band +
+    computed.excluded.duplicate_external_id;
+
+  const row = statsRowFromArgs({
+    scope,
+    scopeKey: scope.scope_key,
+    statDate,
+    sampleSize: computed.sample_size,
+    trimmedSize: computed.trimmed_size,
+    excludedPromoted: computed.excluded.promoted,
+    excludedInvalid: invalidCount,
+    statistics: computed.statistics,
+    qualityScore: computed.quality_score,
+    source: MARKET_SOURCE,
+    computedAt: iso,
+  });
+  await deps.stats.upsert(row);
+  return { ok: true, row };
+}
+
+/**
+ * PHASE 5 — tầng phường không đủ mẫu thì thử tầng tỉnh.
+ * CHỈ trả về khi tầng tỉnh THẬT SỰ có số. Nếu tỉnh cũng thiếu thì trả null để
+ * giữ kết quả phường (statistics = null) — thà không có số còn hơn nói sai.
+ */
+async function widenToProvince(args: {
+  deps: PipelineDeps;
+  check: CheckInput;
+  index: WardIndex;
+  statDate: string;
+  iso: string;
+  /** Mã tỉnh đã resolve ở tầng trước — index có thể rỗng ở cold-start. */
+  regionV2Hint: number | null;
+}): Promise<{ scope: PriceScope; regionV2: number | null; row: PriceStatsRow } | null> {
+  const { deps, check, index, statDate, iso, regionV2Hint } = args;
+  const idx: WardIndex = { ...index };
+  if (regionV2Hint != null) idx.findRegionV2 = () => regionV2Hint;
+  const res = scopeForCheck({ ...check, wardName: null }, idx);
+  if (!res.ok || res.scope.scope_level !== "province") return null;
+
+  const regionV2 = regionV2Hint ?? index.findRegionV2(res.scope.region_name);
+  const got = await ensureStatsRow({
+    deps,
+    scope: res.scope,
+    regionV2,
+    areaV2: null,
+    statDate,
+    iso,
+  });
+  if (!got.ok || got.row.median_ppm2 == null) return null;
+
+  return { scope: res.scope, regionV2, row: got.row };
+}
+
+/**
  * Điểm vào duy nhất của Phase 1: check -> snapshot price-v1.
  * Không tự quyết "đã có rồi" (việc đó thuộc route) và không tự ghi vào checks.
  */
@@ -214,75 +326,94 @@ export async function generatePriceIntelligence(
   const iso = now.toISOString();
   const statDate = iso.slice(0, 10);
   const index = indexFrom(deps.listings);
+  // Mã phường đã tra V2. Giữ lại để crawl dùng đúng, vì tra lại index sẽ trượt.
+  let resolvedAreaV2: number | null = null;
+  // Mã tỉnh đã resolve. PHẢI nhớ lại: index rỗng ở cold-start, nên tra lại
+  // index sẽ ra null và crawl sẽ chạy KHÔNG có bộ lọc tỉnh — tức lấy dữ liệu
+  // cả nước rồi dán nhãn tỉnh/phường. Đây là lý do regionV2 phải đi theo scope.
+  let resolvedRegionV2: number | null = null;
 
   let resolution = scopeForCheck(check, index);
+
+  // Tầng tỉnh: thiếu mã tỉnh thì hỏi gateway (giữ nguyên hành vi cũ).
   if (!resolution.ok && check.regionName) {
     // Chỉ tốn 1 lần gọi khi thật sự thiếu mã tỉnh
-    const regionV2 = await deps.gateway.resolveRegionCode(check.regionName);
-    if (regionV2 != null) {
-      resolution = scopeForCheck(check, {
-        ...index,
-        findRegionV2: () => regionV2,
-      });
+    const r = await deps.gateway.resolveRegionCode(check.regionName);
+    if (r != null) {
+      resolvedRegionV2 = r;
+      resolution = scopeForCheck(check, { ...index, findRegionV2: () => r });
     }
   }
   if (!resolution.ok) return { ok: false, reason: resolution.reason };
 
-  const scope = resolution.scope;
-  const regionV2 = index.findRegionV2(scope.region_name);
-  const areaV2 = scope.scope_level === "ward" ? (index.findAreaV2(scope.area_name ?? "", scope.region_name)?.areaV2 ?? null) : null;
-
-  // Đường nhanh: scope này đã có thống kê hôm nay -> không crawl.
-  let row: PriceStatsRow | null = await deps.stats.get(scope.scope_key, statDate);
-
-  if (!row) {
-    const claimed = await deps.stats.claim({
-      scopeKey: scope.scope_key,
-      statDate,
-      scope,
-      source: MARKET_SOURCE,
+  // V2 — có TÊN phường nhưng chưa lên được tầng phường (cold-start, index rỗng)
+  // thì tra gazetteer, rồi mới hỏi gateway. Không có deps.geo -> bỏ qua, y hành vi cũ.
+  const wardName = (check.wardName ?? "").trim();
+  if (deps.geo && wardName && resolution.scope.scope_level !== "ward") {
+    const regionNameForGeo = resolution.scope.region_name;
+    const regionHint = resolvedRegionV2 ?? index.findRegionV2(regionNameForGeo);
+    const geo = await deps.geo.resolveAreaCode(regionNameForGeo, wardName, {
+      regionV2Hint: regionHint,
     });
-
-    if (claimed) {
-      const crawled = await crawlScope({ gateway: deps.gateway, scope, regionV2, areaV2 });
-      await deps.listings.upsertMany(crawled.listings);
-      const computed = computeStats({
-        filtered: filterSample(crawled.listings, scope),
-        scopeLevel: scope.scope_level,
-      });
-      const invalidCount =
-        computed.excluded.rent +
-        computed.excluded.invalid_price_flag +
-        computed.excluded.invalid_size +
-        computed.excluded.invalid_price +
-        computed.excluded.category_mismatch +
-        computed.excluded.ppm2_out_of_range +
-        computed.excluded.size_out_of_band +
-        computed.excluded.rooms_out_of_band +
-        computed.excluded.duplicate_external_id;
-
-      row = statsRowFromArgs({
-        scope,
-        scopeKey: scope.scope_key,
-        statDate,
-        sampleSize: computed.sample_size,
-        trimmedSize: computed.trimmed_size,
-        excludedPromoted: computed.excluded.promoted,
-        excludedInvalid: invalidCount,
-        statistics: computed.statistics,
-        qualityScore: computed.quality_score,
-        source: MARKET_SOURCE,
-        computedAt: iso,
-      });
-      await deps.stats.upsert(row);
-    } else {
-      // Người khác đang crawl cùng scope -> đọc lại, không tự crawl trùng
-      row = await deps.stats.get(scope.scope_key, statDate);
-      if (!row) return { ok: false, reason: REASON_NO_SAMPLE };
+    if (geo) {
+      const idx: WardIndex = { ...index, findAreaV2: () => ({ areaV2: geo.area_v2, areaName: wardName }) };
+      if (regionHint != null) idx.findRegionV2 = () => regionHint;
+      const retry = scopeForCheck(check, idx);
+      if (retry.ok && retry.scope.scope_level === "ward") {
+        resolution = retry;
+        // Nhớ mã để crawl dùng đúng — nếu crawl lại tra index sẽ ra null.
+        resolvedAreaV2 = geo.area_v2;
+        if (resolvedRegionV2 == null && geo.region_v2 != null) resolvedRegionV2 = geo.region_v2;
+      }
     }
   }
 
-  return buildSnapshot({ check, scope, statsRow: row, iso, deps, regionV2, areaV2 });
+  let scope = resolution.scope;
+  // Ưu tiên mã đã tra, sau đó mới tra index. KHÔNG để null: crawl thiếu
+  // area_v2 sẽ lấy dữ liệu cả nước rồi gắn nhãn phường.
+  let regionV2 = resolvedRegionV2 ?? index.findRegionV2(scope.region_name);
+  let areaV2 =
+    scope.scope_level === "ward"
+      ? (resolvedAreaV2 ?? index.findAreaV2(scope.area_name ?? "", scope.region_name)?.areaV2 ?? null)
+      : null;
+
+  let row: PriceStatsRow | null = null;
+  let widenedFromWard = false;
+
+  if (scope.scope_level === "ward") {
+    const got = await ensureStatsRow({ deps, scope, regionV2, areaV2, statDate, iso });
+    if (!got.ok) return { ok: false, reason: REASON_NO_SAMPLE };
+    row = got.row;
+
+    // PHẢI đủ mẫu mới được dựng số. Thiếu thì mở rộng sang tầng tỉnh —
+    // nhưng chỉ khi tầng tỉnh THẬT SỰ có số, nếu không thì giữ kết quả phường
+    // (statistics = null) để không nói dối rằng đã mở rộng.
+    if (row.median_ppm2 == null) {
+      const wider = await widenToProvince({ deps, check, index, statDate, iso, regionV2Hint: regionV2 });
+      if (wider) {
+        scope = wider.scope;
+        regionV2 = wider.regionV2;
+        areaV2 = null;
+        row = wider.row;
+        widenedFromWard = true;
+      }
+    }
+  } else {
+    const got = await ensureStatsRow({ deps, scope, regionV2, areaV2, statDate, iso });
+    if (!got.ok) return { ok: false, reason: REASON_NO_SAMPLE };
+    row = got.row;
+  }
+
+  return buildSnapshot({
+    check,
+    scope,
+    statsRow: row,
+    iso,
+    deps,
+    regionV2,
+    areaV2,
+    extraLimitations: widenedFromWard ? [LIMITATION_WIDENED_FROM_WARD] : [],
+  });
 }
 
 // Nhãn hiển thị khi KHÔNG có tọa độ.
@@ -304,6 +435,8 @@ export function buildSnapshotFromRow(args: {
   check: CheckInput;
   iso: string;
   comparables: PriceComparable[];
+  /** Limitation bổ sung, ví dụ khi đã mở rộng từ phường sang tỉnh. */
+  extraLimitations?: string[];
 }): PriceIntelligence {
   const { row, scope, check, iso, comparables } = args;
   const targetPpm2 = calcPpm2(check.priceVnd, check.areaM2);
@@ -313,6 +446,7 @@ export function buildSnapshotFromRow(args: {
     scope.scope_level === "ward"
       ? "Nhóm tham chiếu gồm tin cùng phường, cùng loại và diện tích tương đương."
       : "Nhóm tham chiếu đang ở phạm vi rộng hơn do chưa xác định được khu vực chi tiết.",
+    ...(args.extraLimitations ?? []),
   ];
 
   return {
@@ -355,8 +489,9 @@ async function buildSnapshot(args: {
   deps: PipelineDeps;
   regionV2: number | null;
   areaV2: number | null;
+  extraLimitations?: string[];
 }): Promise<PipelineResult> {
-  const { check, scope, statsRow, iso, deps, regionV2, areaV2 } = args;
+  const { check, scope, statsRow, iso, deps, regionV2, areaV2, extraLimitations } = args;
   const candidates = await deps.listings.listByGeo({
     regionV2,
     areaV2,
@@ -378,7 +513,14 @@ async function buildSnapshot(args: {
   return {
     ok: true,
     fromCache: true,
-    snapshot: buildSnapshotFromRow({ row: statsRow, scope, check, iso, comparables }),
+    snapshot: buildSnapshotFromRow({
+      row: statsRow,
+      scope,
+      check,
+      iso,
+      comparables,
+      extraLimitations,
+    }),
   };
 }
 
@@ -418,7 +560,16 @@ export async function crawlScope(args: {
       calls += 1;
       for (const ad of ads) {
         const n = normalizeAd(ad, gateway.source);
-        if (n) collected.push(n);
+        if (!n) continue;
+        // KHÔNG tin tuyệt đối việc gateway lọc đúng. Tin sai địa lý = sai giá
+        // tham chiếu, và đây là nơi duy nhất chặn được điều đó.
+        // Chỉ loại khi mã CÓ và MÂU THUẪN yêu cầu; tin không có mã thì không
+        // chứng minh được là sai nên vẫn giữ (nếu siết thành loại hết thì
+        // gateway không trả area_v2 sẽ khiến tầng phường luôn rỗng -> luôn rơi
+        // về tỉnh, tức V2 không bao giờ dùng được).
+        if (regionV2 != null && n.region_v2 != null && n.region_v2 !== regionV2) continue;
+        if (areaV2 != null && n.area_v2 != null && n.area_v2 !== areaV2) continue;
+        collected.push(n);
       }
     }
   }

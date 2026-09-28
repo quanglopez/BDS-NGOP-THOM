@@ -5,7 +5,8 @@ import { effectivePlan, planAllowsProAnalysis } from "@/lib/quota";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { ChototGatewayAdapter } from "@/lib/price/gateway";
 import { generatePriceIntelligence } from "@/lib/price/pipeline";
-import { refreshAreaIndex, knownAreas, supabaseMarketListings, supabasePriceStats } from "@/lib/price/repos";
+import { refreshAreaIndex, knownAreas, supabaseGeoAreaMap, supabaseMarketListings, supabasePriceStats } from "@/lib/price/repos";
+import { createGeoResolver } from "@/lib/price/geo-resolver";
 import { PRICE_INTELLIGENCE_VERSION, type PriceIntelligence } from "@/lib/price/types";
 import { safeErrorCode } from "@/lib/price/errors";
 import { parseListingLocation } from "@/lib/geo/url-parser";
@@ -168,6 +169,18 @@ async function handle(req: NextRequest, method: "GET" | "POST") {
         gateway: new ChototGatewayAdapter(),
         listings: supabaseMarketListings(admin),
         stats: supabasePriceStats(admin),
+        // V2: gazetteer tên -> mã. Lỗi cache/gateway ở đây KHÔNG được làm hỏng
+        // pipeline -> resolver tự nuốt, hỏng thì rơi tầng tỉnh như trước.
+        geo: createGeoResolver({
+          repo: supabaseGeoAreaMap(admin),
+          gateway: new ChototGatewayAdapter(),
+          onCacheError: (stage, e) => {
+            console.error(
+              `[geo-resolver-error] check_id=${checkId} step=${stage} ` +
+                `error_code=${safeErrorCode(e)}`,
+            );
+          },
+        }),
       },
     );
   } catch (e) {
