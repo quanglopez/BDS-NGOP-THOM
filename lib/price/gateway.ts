@@ -43,6 +43,12 @@ export interface RawMarketAd {
   region_name?: string;
   area_v2?: number;
   area_name?: string;
+  /**
+   * Mã PHƯỜNG/XÃ. Khác `area_v2` (mã quận/huyện) — ví dụ cùng một quận có
+   * nhiều phường, mỗi phường một `ward` riêng. Không phải số nào cũng có:
+   * tin cũ hoặc tin không gắn phường có thể thiếu field này.
+   */
+  ward?: unknown;
   subject?: string;
   price?: number;
   price_string?: string;
@@ -166,6 +172,15 @@ function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * Mã phường (`ward`). Bắt buộc > 0: 0 hợp lệ về toán học nhưng KHÔNG phải mã
+ * địa danh — trả 0 sẽ sinh scope_key rác rồi được ghi vĩnh viễn vào geo_area_map.
+ */
+function wardCode(v: unknown): number | null {
+  const n = num(v);
+  return n !== null && n > 0 ? n : null;
+}
+
 export class ChototGatewayAdapter implements MarketGateway {
   readonly source = "chotot_gateway";
   readonly supportsPagination = false;
@@ -212,9 +227,34 @@ export class ChototGatewayAdapter implements MarketGateway {
         // đối rằng gateway đã lọc đúng.
         const adRegion = num(ad.region_v2);
         if (adRegion !== null && adRegion !== regionV2) continue;
-        const name = normalizePlaceName(str(ad.area_name));
-        const code = num(ad.area_v2);
-        if (code !== null && placeNameMatches(name, want)) return code;
+        // Tên địa danh cần tra nằm ở field KHÁC NHAU tùy cấp hành chính:
+        //   - tên PHƯỜNG/XÃ   -> ad.ward_name  ("Phường An Hải Bắc")
+        //   - tên QUẬN/HUYỆN  -> ad.area_name  ("Quận Sơn Trà")
+        // Trước đây chỉ so với ad.area_name, nên mọi tên phường đều trượt vĩnh
+        // viễn (tên phường không bao giờ bằng tên quận) và mọi check có ward đều
+        // rơi về tầng tỉnh. Thử ward_name TRƯỚC, area_name SAU.
+        // Cả hai đều so KHỚP TUYỆT ĐỐI sau khi chuẩn hoá (xem placeNameMatches):
+        // KHÔNG dùng includes, vì "Phường 1" là chuỗi con của "Phường 11" và sẽ
+        // trả mã của phường khác — mã sai đó lại được ghi vĩnh viễn.
+        //
+        // Mã trả về PHẢI theo cấp đã khớp: khớp tên phường -> mã `ward`;
+        // khớp tên quận -> mã `area_v2`. Trả area_v2 cho một tên phường sẽ khớp
+        // đúng tên nhưng lưu MÃ QUẬN, rồi scope gắn nhãn "phường" lại lọc tin
+        // cả quận — sai địa lý mà nhìn rất thuyết phục.
+        const ward = normalizePlaceName(str(ad.ward_name));
+        if (ward && placeNameMatches(ward, want)) {
+          const byWard = wardCode(ad.ward);
+          if (byWard !== null) return byWard;
+          // Tin không gắn mã phường -> lùi về mã quận. Vẫn hơn trượt hẳn.
+          const areaOfWard = num(ad.area_v2);
+          if (areaOfWard !== null) return areaOfWard;
+          continue;
+        }
+        const area = normalizePlaceName(str(ad.area_name));
+        if (area && placeNameMatches(area, want)) {
+          const code = num(ad.area_v2);
+          if (code !== null) return code;
+        }
       }
     }
     return null;
