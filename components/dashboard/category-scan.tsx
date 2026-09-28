@@ -146,6 +146,12 @@ export function CategoryScan({ url }: { url: string }) {
               contactName: targets[i].item.contactName,
               phone: targets[i].item.phone,
               listingUrl: targets[i].item.url,
+              // Geo lấy thẳng từ scope của lần quét, đáng tin hơn nhiều so với
+              // tách tên phường từ slug URL. /api/check đọc đúng 2 key này
+              // (resolveListingGeo) rồi ghi vào checks. Không gửi -> cột geo
+              // luôn NULL -> Price Intelligence chỉ lên được tầng tỉnh.
+              ward: targets[i].item.ward,
+              region: targets[i].item.region,
             }),
           });
           const data = await res.json();
