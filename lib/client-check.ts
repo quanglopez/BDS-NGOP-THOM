@@ -21,11 +21,17 @@ export interface CheckOutcome {
   checkId?: string | null;
 }
 
-// Thông tin người đăng kèm theo khi check (có từ quét danh mục / link tin)
+// Thông tin kèm theo khi check (người đăng + địa lý có cấu trúc).
+// `ward`/`region` là 2 key /api/check đọc để dựng geo (resolveListingGeo).
+// Không gửi -> cột geo NULL -> Price Intelligence chỉ lên được tỉnh.
 export interface ContactInfo {
   contactName?: string | null;
   phone?: string | null;
   listingUrl?: string | null;
+  /** Tên phường lấy từ nguồn có cấu trúc, ví dụ "Phường Hoà Hải". */
+  ward?: string | null;
+  /** Tên tỉnh lấy từ nguồn có cấu trúc, ví dụ "Đà Nẵng". */
+  region?: string | null;
 }
 
 // Gọi /api/check; nếu server thiếu key hoặc AI lỗi thì fallback scoring local

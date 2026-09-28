@@ -99,6 +99,11 @@ export async function POST(req: NextRequest) {
         area_hint: listing.areaHint,
         method: listing.method,
         domain: listing.domain,
+        // Địa lý có cấu trúc để client gửi kèm sang /api/check. Chỉ gateway
+        // Chợ Tốt mới có; đường đọc HTML trả null.
+        ward_name: listing.wardName,
+        area_name: listing.areaName,
+        region_name: listing.regionName,
       },
       { headers: CORS },
     );

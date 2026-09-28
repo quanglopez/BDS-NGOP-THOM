@@ -8,6 +8,10 @@ export interface ExtractOk {
   area_hint: string | null;
   method: string;
   domain: string;
+  /** Địa lý có cấu trúc do gateway Chợ Tốt trả về; null với nguồn không có. */
+  ward_name: string | null;
+  area_name: string | null;
+  region_name: string | null;
 }
 
 export interface ExtractErr {

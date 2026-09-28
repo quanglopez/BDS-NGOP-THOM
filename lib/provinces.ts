@@ -209,9 +209,12 @@ export function norm(s: string): string {
     .replace(/đ/g, "d");
 }
 
-// Nhận diện tỉnh/thành từ nội dung tin. Trả về null nếu không khớp.
-export function detectProvince(text: string): string | null {
-  const lower = norm(text);
+// Dòng địa chỉ có cấu trúc do gateway ghép: "Địa chỉ: số nhà, đường, phường, quận, tỉnh".
+// Đã bỏ dấu qua norm() nên so khớp trên dạng "dia chi:".
+const ADDRESS_LINE = /^dia chi\s*:/;
+
+/** So khớp từ khóa trong một đoạn văn bản. Ưu tiên từ khóa dài nhất. */
+function matchAliases(lower: string): string | null {
   let best: { label: string; len: number } | null = null;
 
   for (const { key, label } of ALIASES) {
@@ -222,6 +225,35 @@ export function detectProvince(text: string): string | null {
   }
 
   return best?.label ?? null;
+}
+
+/**
+ * Lấy tỉnh từ dòng "Địa chỉ:" nếu có.
+ *
+ * Vì sao cần: phần mô tả tự do hay nhắc tỉnh lân cận để quảng bá ("bán tại
+ * Đà Nẵng - Quảng Nam"). Từ khóa đó dài hơn ("quang nam" 9 ký tự > "da nang" 7)
+ * nên khi so khớp cả bài sẽ đè lên địa chỉ thật. Địa chỉ là dữ liệu có cấu trúc
+ * nên phải được xét trước. Không có dòng này -> null, đúng như cũ.
+ */
+function matchAddressLine(text: string): string | null {
+  for (const raw of text.split(/\r?\n/)) {
+    const line = norm(raw.trim());
+    if (!ADDRESS_LINE.test(line)) continue;
+    // Chỉ phần sau nhãn "Địa chỉ:" mới là địa danh.
+    const segment = line.slice(line.indexOf(":") + 1);
+    const hit = matchAliases(segment);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/**
+ * Nhận diện tỉnh/thành từ nội dung tin. Trả về null nếu không khớp.
+ *
+ * Thứ tự: dòng "Địa chỉ:" trước, không có thì mới so cả bài.
+ */
+export function detectProvince(text: string): string | null {
+  return matchAddressLine(text) ?? matchAliases(norm(text));
 }
 
 // Tên hiển thị an toàn khi không xác định được tỉnh

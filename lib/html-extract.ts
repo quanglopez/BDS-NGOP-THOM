@@ -8,6 +8,13 @@ export interface ExtractedListing {
   areaHint: string | null;
   method: "jsonld" | "nextdata" | "gateway" | "meta" | "text";
   domain: string;
+  // Địa lý CÓ CẤU TRÚC. Chỉ nguồn có field riêng (gateway Chợ Tốt) mới điền được;
+  // đường đọc HTML thuần không có từ khoá địa lý riêng nên để null.
+  // Giữ nguyên giá trị gateway (kèm tiền tố "Phường "/"Quận ") để khớp gazetteer,
+  // đúng như category scan (lib/chotot-category.ts).
+  wardName: string | null;
+  areaName: string | null;
+  regionName: string | null;
 }
 
 const MAX_TEXT = 6000; // khớp giới hạn state của Jev
@@ -256,6 +263,9 @@ export function extractListing(html: string, url: string): ExtractedListing {
       areaHint: ld.area,
       method: "jsonld",
       domain,
+      wardName: null,
+      areaName: null,
+      regionName: null,
     };
   }
 
@@ -268,6 +278,9 @@ export function extractListing(html: string, url: string): ExtractedListing {
       areaHint: nd.area,
       method: "nextdata",
       domain,
+      wardName: null,
+      areaName: null,
+      regionName: null,
     };
   }
 
@@ -286,6 +299,9 @@ export function extractListing(html: string, url: string): ExtractedListing {
       areaHint: meta.match(/(\d+\s*m2)/i)?.[1] ?? null,
       method: meta ? "meta" : "text",
       domain,
+      wardName: null,
+      areaName: null,
+      regionName: null,
     };
   }
 
@@ -297,5 +313,8 @@ export function extractListing(html: string, url: string): ExtractedListing {
     areaHint: null,
     method: "text",
     domain,
+    wardName: null,
+    areaName: null,
+    regionName: null,
   };
 }

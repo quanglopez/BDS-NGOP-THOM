@@ -55,6 +55,15 @@ export function adToListing(ad: Record<string, unknown>, rawUrl: string): Extrac
   const rooms = num(ad.rooms);
   const floors = num(ad.floors);
 
+  // Gateway trả tên địa danh CÓ CẤU TRÚC. Trước đây chúng chỉ được nối vào
+  // `text` dưới dạng "Địa chỉ: ..." rồi bị bỏ mất khi trả về, khiến phía dưới
+  // (checks.ward_name/region_name, rồi tới Price Intelligence) không có gì để dùng.
+  // Giữ nguyên giá trị thô kèm tiền tố "Phường "/"Quận " để khớp gazetteer,
+  // giống hệt lib/chotot-category.ts.
+  const wardName = str(ad.ward_name);
+  const areaName = str(ad.area_name);
+  const regionName = str(ad.region_name);
+
   const parts = [subject, body];
   if (priceStr) parts.push(`Giá: ${priceStr}`);
   if (size !== null) parts.push(`Diện tích: ${size} m²`);
@@ -76,6 +85,9 @@ export function adToListing(ad: Record<string, unknown>, rawUrl: string): Extrac
     areaHint: size !== null ? `${size} m²` : null,
     method: "gateway",
     domain,
+    wardName: wardName || null,
+    areaName: areaName || null,
+    regionName: regionName || null,
   };
 }
 

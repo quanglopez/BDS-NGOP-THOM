@@ -190,6 +190,58 @@ async function main() {
     assert.equal(adToListing({ price: 1 }, "https://www.nhatot.com/x/1.htm"), null);
   });
 
+  console.log("\n== Giữ địa lý có cấu trúc từ gateway ==");
+
+  // Tin thật đã gặp ở production: gateway có ward/area/region riêng nhưng trước
+  // đây chỉ được nối vào `text` rồi bỏ mất -> checks.ward_name/region_name NULL
+  // -> Price Intelligence chỉ lên được tỉnh.
+  const adGeo = {
+    subject: "BÁN NHÀ 4 TẦNG TRƯƠNG QUANG ĐƯỢC – P. HÒA HẢI",
+    body: "DT đất 102,5m². QUÝ KHÁCH CẦN BÁN TẠI ĐÀ NẴNG - QUẢNG NAM THÌ LIÊN HỆ EM.",
+    price_string: "13,5 tỷ",
+    size: 102,
+    street_name: "Trương Quang Được",
+    ward_name: "Phường Hoà Hải",
+    area_name: "Quận Ngũ Hành Sơn",
+    region_name: "Đà Nẵng",
+    rooms: 6,
+  };
+
+  await check("adToListing trả về ward/area/region thô từ gateway", () => {
+    const r = adToListing(adGeo, "https://www.nhatot.com/mua-ban-nha-dat-quan-ngu-hanh-son-da-nang/134906743.htm");
+    assert.ok(r, "phải bóc được");
+    assert.equal(r!.wardName, "Phường Hoà Hải");
+    assert.equal(r!.areaName, "Quận Ngũ Hành Sơn");
+    assert.equal(r!.regionName, "Đà Nẵng");
+  });
+
+  await check("địa chỉ vẫn nằm trong text (không mất nội dung cũ)", () => {
+    const r = adToListing(adGeo, "https://www.nhatot.com/mua-ban-nha-dat-quan-ngu-hanh-son-da-nang/134906743.htm");
+    assert.ok(r);
+    assert.match(r!.text, /Địa chỉ:.*Hoà Hải/);
+  });
+
+  await check("gateway không trả địa danh -> geo null, không bịa", () => {
+    const r = adToListing(
+      { subject: "Bán nhà", body: "Nhà 2 tầng, sổ hồng riêng, giá 3 tỷ, liên hệ 0909".repeat(6) },
+      "https://www.nhatot.com/mua-ban-nha-dat/1.htm",
+    );
+    assert.ok(r);
+    assert.equal(r!.wardName, null);
+    assert.equal(r!.areaName, null);
+    assert.equal(r!.regionName, null);
+  });
+
+  await check("đường đọc HTML thuần -> geo null", () => {
+    const html = `<!doctype html><html><head><title>Nhà Đà Nẵng</title>
+      <meta property="og:description" content="Bán nhà Đà Nẵng 80m2 giá 5.5 tỷ sổ hồng riêng">
+      </head><body>${"Nội dung tin bất động sản chi tiết tại Đà Nẵng. ".repeat(6)}</body></html>`;
+    const r = extractListing(html, "https://example.vn/tin/1");
+    assert.equal(r.wardName, null);
+    assert.equal(r.areaName, null);
+    assert.equal(r.regionName, null);
+  });
+
   console.log("\n== Bóc __NEXT_DATA__ (trang Next.js) ==");
 
   const nextDataPage = `<!doctype html><html><head><title>Tin BĐS Quận 7</title>

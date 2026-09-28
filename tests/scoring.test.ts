@@ -49,6 +49,51 @@ async function main() {
     assert.equal(detectProvince("Bán đất nền giá rẻ, sổ hồng riêng, liên hệ 0909"), null);
   });
 
+  // Địa chỉ có cấu trúc phải thắng mô tả tự do nhắc tỉnh lân cận.
+  // Trước đây "quang nam" (9 ký tự) đè "da nang" (7) vì so khớp theo độ dài.
+  await check("dòng 'Địa chỉ:' thắng tỉnh lân cận trong mô tả", () => {
+    assert.equal(
+      detectProvince(
+        "Địa chỉ: Trương Quang Được, Phường Hoà Hải, Quận Ngũ Hành Sơn, Đà Nẵng\nTẠI ĐÀ NẴNG - QUẢNG NAM",
+      ),
+      "Đà Nẵng",
+    );
+  });
+
+  await check("địa chỉ không dấu vẫn nhận đúng tỉnh", () => {
+    assert.equal(
+      detectProvince("Địa chỉ: Nguyễn Kiệm, Phường 3, Quận Gò Vấp, Tp Hồ Chí Minh"),
+      "TP.HCM",
+    );
+  });
+
+  await check("không có dòng địa chỉ -> vẫn so cả bài như cũ", () => {
+    assert.equal(detectProvince("Mặt tiền Thùy Vân Vũng Tàu"), "Vũng Tàu");
+    assert.equal(detectProvince("Nhà hẻm xe hơi Sài Gòn, quận Bình Thạnh"), "TP.HCM");
+  });
+
+  await check("dòng địa chỉ chỉ có quận -> nhận tỉnh từ tên quận", () => {
+    assert.equal(
+      detectProvince("Địa chỉ: Ngõ 5, Phường An Hải Bắc, Quận Lê Chân, Hải Phòng\nBán tại Hải Phòng"),
+      "Hải Phòng",
+    );
+  });
+
+  await check("địa chỉ chỉ có quận của TP.HCM", () => {
+    assert.equal(
+      detectProvince("Địa chỉ: 12 Nguyễn Văn A, Phường 1, Quận Bình Thạnh\ngiá 8 tỷ"),
+      "TP.HCM",
+    );
+  });
+
+  await check("dòng địa chỉ không ra tỉnh nào -> thật sự lùi về so cả bài", () => {
+    // "Quận 1"/"Phường 1" không có trong ALIASES (cố tình, vì "Phường 11" chứa "1")
+    assert.equal(
+      detectProvince("Địa chỉ: 12 Nguyễn Văn A, Phường 1, Quận 1\nBán nhà tại Vũng Tàu"),
+      "Vũng Tàu",
+    );
+  });
+
   await check("provinceLabel fallback", () => {
     assert.equal(provinceLabel(null), "Khu vực của bạn");
     assert.equal(provinceLabel("Huế"), "Huế");
