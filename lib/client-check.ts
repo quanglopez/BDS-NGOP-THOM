@@ -32,6 +32,8 @@ export interface ContactInfo {
   ward?: string | null;
   /** Tên tỉnh lấy từ nguồn có cấu trúc, ví dụ "Đà Nẵng". */
   region?: string | null;
+  /** Diện tích có cấu trúc từ /api/extract (ví dụ "66 m²"). Ưu tiên hơn quét text. */
+  areaHint?: string | null;
 }
 
 // Gọi /api/check; nếu server thiếu key hoặc AI lỗi thì fallback scoring local

@@ -63,8 +63,13 @@ export function createGeoResolver(deps: GeoResolverDeps): GeoResolver {
     async resolveAreaCode(regionName, areaName, opts) {
       const regionKey = normalizePlaceName((regionName ?? "").trim());
       const areaKey = normalizePlaceName((areaName ?? "").trim());
+      // Log chỉ tên địa danh + mã lỗi. KHÔNG log url/title/SĐT/tin đăng.
+      const tag = `[geo-resolver] wardName=${areaName || "-"} regionName=${regionName || "-"}`;
       // Không có tên -> không tra. KHÔNG đoán.
-      if (!regionKey || !areaKey) return null;
+      if (!regionKey || !areaKey) {
+        console.warn(`${tag} gateway_match=skipped area_v2=- reason=empty_key`);
+        return null;
+      }
 
       // 1) Cache hit -> 0 lần gọi gateway.
       try {
@@ -72,11 +77,13 @@ export function createGeoResolver(deps: GeoResolverDeps): GeoResolver {
         // > 0 chứ không chỉ isFinite: 0 là số hợp lệ về toán học nhưng KHÔNG
         // phải mã địa danh — chấp nhận nó sẽ sinh scope_key rác.
         if (hit && Number.isFinite(hit.area_v2) && hit.area_v2 > 0) {
+          console.log(`${tag} gateway_match=cache area_v2=${hit.area_v2} reason=ok`);
           return { area_v2: hit.area_v2, region_v2: hit.region_v2, fromCache: true };
         }
       } catch (e) {
         // Cache hỏng -> bỏ qua, đi tiếp bằng gateway.
         onCacheError?.("find", e);
+        console.warn(`${tag} gateway_match=cache_error area_v2=- reason=cache_read_failed`);
       }
 
       // 2) Cache miss -> hỏi gateway.
@@ -87,9 +94,16 @@ export function createGeoResolver(deps: GeoResolverDeps): GeoResolver {
         areaV2 = await gateway.resolveAreaCode(regionName!.trim(), areaName!.trim());
       } catch (e) {
         onCacheError?.("find", e);
+        console.warn(`${tag} gateway_match=error area_v2=- reason=gateway_threw`);
         return null;
       }
-      if (areaV2 == null || !Number.isFinite(areaV2) || areaV2 <= 0) return null;
+      if (areaV2 == null || !Number.isFinite(areaV2) || areaV2 <= 0) {
+        // Trước đây chỗ này return null KHÔNG log -> mất dấu vết khiến tầng
+        // phường rơi về tầng tỉnh mà không ai biết vì sao.
+        console.warn(`${tag} gateway_match=miss area_v2=- reason=no_code`);
+        return null;
+      }
+      console.log(`${tag} gateway_match=gateway area_v2=${areaV2} reason=ok`);
 
       // 3) Mã tỉnh: ưu tiên gợi ý của pipeline (đã resolve rồi) để khỏi gọi
       //    gateway lần nữa. Chỉ hỏi gateway khi thật sự chưa biết.

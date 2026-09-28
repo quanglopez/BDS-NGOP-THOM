@@ -6,6 +6,7 @@ import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { detectProvince, provinceLabel } from "@/lib/provinces";
 import { extractPhone } from "@/lib/phone";
 import { extractBedrooms } from "@/lib/bedrooms";
+import { resolveAreaM2 } from "@/lib/area";
 import { analyzeListing, fromApiResponse, SCORING_CODE_VERSION } from "@/lib/scoring";
 import { buildScoringSnapshot } from "@/lib/score-snapshot";
 import { resolveListingGeo } from "@/lib/geo/url-parser";
@@ -254,9 +255,12 @@ export async function POST(req: NextRequest) {
     // Nhận diện tỉnh + giá + diện tích từ nội dung tin để chấm đúng khu vực và lưu lịch sử
     const detectedProvince = detectProvince(text);
     const priceMatch = text.match(/(\d+[\.,]?\d*)\s*tỷ/i);
-    const areaMatch = text.match(/(\d+)\s*m2/i);
     const priceBillion = priceMatch ? Number(priceMatch[1].replace(",", ".")) : null;
-    const areaM2 = areaMatch ? Number(areaMatch[1]) : null;
+    // Diện tích: ưu tiên số CÓ CẤU TRÚC do /api/extract trả về (areaHint).
+    // Regex cũ `/(\d+)\s*m2/` bắt nhầm số cuối của dải: "62-82,5-105,5m2" ra 5,
+    // kéo area_m2 về 5 và size band xuống 3-8 m2 -> crawl không còn mẫu nào.
+    const area = resolveAreaM2(text, body?.areaHint);
+    const areaM2 = area.areaM2;
     const bedrooms = extractBedrooms(text);
 
     let jevRes: Response;

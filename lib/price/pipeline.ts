@@ -349,6 +349,15 @@ export async function generatePriceIntelligence(
   // V2 — có TÊN phường nhưng chưa lên được tầng phường (cold-start, index rỗng)
   // thì tra gazetteer, rồi mới hỏi gateway. Không có deps.geo -> bỏ qua, y hành vi cũ.
   const wardName = (check.wardName ?? "").trim();
+  // Log trước khi quyết định có gọi resolver hay không. Đây là chỗ phân định
+  // giữa "checks.ward_name rỗng" và "có tên phường nhưng tra không ra mã".
+  // Chỉ log độ dài, không log tên/giá/url/SĐT.
+  console.log(
+    `[price-scope-geo] check_id=${check.id} has_geo=${deps.geo ? "yes" : "no"} ` +
+      `ward_present=${wardName ? "yes" : "no"} ward_len=${wardName.length} ` +
+      `region_present=${resolution.scope.region_name ? "yes" : "no"} ` +
+      `scope_before=${resolution.scope.scope_level}`,
+  );
   if (deps.geo && wardName && resolution.scope.scope_level !== "ward") {
     const regionNameForGeo = resolution.scope.region_name;
     const regionHint = resolvedRegionV2 ?? index.findRegionV2(regionNameForGeo);
@@ -364,6 +373,14 @@ export async function generatePriceIntelligence(
         // Nhớ mã để crawl dùng đúng — nếu crawl lại tra index sẽ ra null.
         resolvedAreaV2 = geo.area_v2;
         if (resolvedRegionV2 == null && geo.region_v2 != null) resolvedRegionV2 = geo.region_v2;
+        console.log(`[price-scope-geo] check_id=${check.id} recover=ward area_v2=${geo.area_v2}`);
+      } else {
+        // Có tên phường nhưng vẫn không lên được tầng phường -> biết đúng là do
+        // tra mã, không phải do mất tên ở checks.
+        console.warn(
+          `[price-scope-geo] check_id=${check.id} recover=failed reason=retry_not_ward ` +
+            `scope_after=${retry.ok ? retry.scope.scope_level : "resolve_error"}`,
+        );
       }
     }
   }

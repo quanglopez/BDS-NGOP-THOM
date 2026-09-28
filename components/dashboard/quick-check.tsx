@@ -48,7 +48,7 @@ export function QuickCheck() {
   const doCheck = async (
     payload: string,
     listingUrl?: string | null,
-    geo?: { ward: string | null; region: string | null },
+    geo?: { ward: string | null; region: string | null; areaHint: string | null },
   ) => {
     setLoading(true);
     setStatus({ kind: "loading", text: "AI đang phân tích tin của bạn..." });
@@ -59,6 +59,9 @@ export function QuickCheck() {
         // Price Intelligence chỉ lên được tỉnh.
         ward: geo?.ward ?? null,
         region: geo?.region ?? null,
+        // Diện tích có cấu trúc: mô tả tin hay chứa dải ("62-82,5-105,5m2") nên
+        // để /api/check quét text sẽ ra số sai.
+        areaHint: geo?.areaHint ?? null,
       });
 
       // Hết lượt: nói rõ + mời nâng cấp, KHÔNG hiện kết quả dự phòng như thể thành công
@@ -108,7 +111,11 @@ export function QuickCheck() {
         return;
       }
       setText(r.text);
-      await doCheck(r.text, url, { ward: r.ward_name, region: r.region_name });
+      await doCheck(r.text, url, {
+        ward: r.ward_name,
+        region: r.region_name,
+        areaHint: r.area_hint,
+      });
       return;
     }
 
