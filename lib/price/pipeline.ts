@@ -225,10 +225,13 @@ async function ensureStatsRow(args: {
   scope: PriceScope;
   regionV2: number | null;
   areaV2: number | null;
+  /** Mã quận cho tham số area_v2 khi crawl. */
+  crawlAreaV2: number | null;
+  level: "ward" | "area";
   statDate: string;
   iso: string;
 }): Promise<{ ok: true; row: PriceStatsRow } | { ok: false }> {
-  const { deps, scope, regionV2, areaV2, statDate, iso } = args;
+  const { deps, scope, regionV2, areaV2, crawlAreaV2, level, statDate, iso } = args;
 
   // Đường nhanh: scope này đã có thống kê hôm nay -> không crawl.
   const existing = await deps.stats.get(scope.scope_key, statDate);
@@ -246,7 +249,14 @@ async function ensureStatsRow(args: {
     return row ? { ok: true, row } : { ok: false };
   }
 
-  const crawled = await crawlScope({ gateway: deps.gateway, scope, regionV2, areaV2 });
+  const crawled = await crawlScope({
+    gateway: deps.gateway,
+    scope,
+    regionV2,
+    areaV2,
+    crawlAreaV2,
+    level,
+  });
   await deps.listings.upsertMany(crawled.listings);
   const computed = computeStats({
     filtered: filterSample(crawled.listings, scope),
@@ -306,6 +316,9 @@ async function widenToProvince(args: {
     scope: res.scope,
     regionV2,
     areaV2: null,
+    // Mở rộng sang tầng TỈNH: không lọc quận, không lọc phường.
+    crawlAreaV2: null,
+    level: "area",
     statDate,
     iso,
   });
@@ -326,8 +339,13 @@ export async function generatePriceIntelligence(
   const iso = now.toISOString();
   const statDate = iso.slice(0, 10);
   const index = indexFrom(deps.listings);
-  // Mã phường đã tra V2. Giữ lại để crawl dùng đúng, vì tra lại index sẽ trượt.
+  // Mã phường đã tra V2. Giữ lại để scope_key dùng đúng, vì tra lại index sẽ trượt.
   let resolvedAreaV2: number | null = null;
+  // Mã QUẬN để đưa vào tham số area_v2 khi crawl. Tách khỏi resolvedAreaV2 vì
+  // gateway không hiểu mã phường ở tham số đó (trả 200 nhưng 0 tin).
+  let resolvedCrawlAreaV2: number | null = null;
+  // Cấp của tên đã khớp: quyết định post-filter so `ward` hay `area_v2`.
+  let resolvedLevel: "ward" | "area" = "area";
   // Mã tỉnh đã resolve. PHẢI nhớ lại: index rỗng ở cold-start, nên tra lại
   // index sẽ ra null và crawl sẽ chạy KHÔNG có bộ lọc tỉnh — tức lấy dữ liệu
   // cả nước rồi dán nhãn tỉnh/phường. Đây là lý do regionV2 phải đi theo scope.
@@ -365,15 +383,20 @@ export async function generatePriceIntelligence(
       regionV2Hint: regionHint,
     });
     if (geo) {
-      const idx: WardIndex = { ...index, findAreaV2: () => ({ areaV2: geo.area_v2, areaName: wardName }) };
+      const idx: WardIndex = { ...index, findAreaV2: () => ({ areaV2: geo.areaCode, areaName: wardName }) };
       if (regionHint != null) idx.findRegionV2 = () => regionHint;
       const retry = scopeForCheck(check, idx);
       if (retry.ok && retry.scope.scope_level === "ward") {
         resolution = retry;
-        // Nhớ mã để crawl dùng đúng — nếu crawl lại tra index sẽ ra null.
-        resolvedAreaV2 = geo.area_v2;
+        // Nhớ cả hai mã: scope_key lấy mã phường, crawl lấy mã quận.
+        resolvedAreaV2 = geo.areaCode;
+        resolvedCrawlAreaV2 = geo.crawlAreaCode;
+        resolvedLevel = geo.level;
         if (resolvedRegionV2 == null && geo.region_v2 != null) resolvedRegionV2 = geo.region_v2;
-        console.log(`[price-scope-geo] check_id=${check.id} recover=ward area_v2=${geo.area_v2}`);
+        console.log(
+          `[price-scope-geo] check_id=${check.id} recover=ward area_v2=${geo.areaCode} ` +
+            `crawl_area_v2=${geo.crawlAreaCode ?? "-"} level=${geo.level}`,
+        );
       } else {
         // Có tên phường nhưng vẫn không lên được tầng phường -> biết đúng là do
         // tra mã, không phải do mất tên ở checks.
@@ -393,12 +416,23 @@ export async function generatePriceIntelligence(
     scope.scope_level === "ward"
       ? (resolvedAreaV2 ?? index.findAreaV2(scope.area_name ?? "", scope.region_name)?.areaV2 ?? null)
       : null;
+  // Tham số area_v2 của crawl LUÔN là mã quận. Ở tầng tỉnh không lọc quận.
+  let crawlAreaV2 = scope.scope_level === "ward" ? resolvedCrawlAreaV2 : null;
 
   let row: PriceStatsRow | null = null;
   let widenedFromWard = false;
 
   if (scope.scope_level === "ward") {
-    const got = await ensureStatsRow({ deps, scope, regionV2, areaV2, statDate, iso });
+    const got = await ensureStatsRow({
+      deps,
+      scope,
+      regionV2,
+      areaV2,
+      crawlAreaV2,
+      level: resolvedLevel,
+      statDate,
+      iso,
+    });
     if (!got.ok) return { ok: false, reason: REASON_NO_SAMPLE };
     row = got.row;
 
@@ -411,12 +445,22 @@ export async function generatePriceIntelligence(
         scope = wider.scope;
         regionV2 = wider.regionV2;
         areaV2 = null;
+        crawlAreaV2 = null;
         row = wider.row;
         widenedFromWard = true;
       }
     }
   } else {
-    const got = await ensureStatsRow({ deps, scope, regionV2, areaV2, statDate, iso });
+    const got = await ensureStatsRow({
+      deps,
+      scope,
+      regionV2,
+      areaV2,
+      crawlAreaV2,
+      level: "area",
+      statDate,
+      iso,
+    });
     if (!got.ok) return { ok: false, reason: REASON_NO_SAMPLE };
     row = got.row;
   }
@@ -544,6 +588,8 @@ async function buildSnapshot(args: {
 export interface CrawlOutcome {
   listings: NormalizedListing[];
   calls: number;
+  /** Số tin bị loại vì không gắn mã phường, ở tầng phường. */
+  droppedNoCode: number;
 }
 
 /**
@@ -555,12 +601,20 @@ export async function crawlScope(args: {
   scope: PriceScope;
   regionV2: number | null;
   areaV2: number | null;
+  /** Mã quận đưa vào tham số area_v2 khi crawl. Khác `areaV2` ở tầng phường. */
+  crawlAreaV2: number | null;
+  /** Cấp của tên đã khớp — quyết định post-filter so `ward` hay `area_v2`. */
+  level: "ward" | "area";
   maxCalls?: number;
 }): Promise<CrawlOutcome> {
-  const { gateway, scope, regionV2, areaV2 } = args;
+  const { gateway, scope, regionV2, areaV2, crawlAreaV2, level } = args;
   const maxCalls = args.maxCalls ?? MAX_GATEWAY_CALLS;
   const collected: NormalizedListing[] = [];
   let calls = 0;
+  // Mã dùng để SO SÁNH từng tin. Ở tầng phường đó là mã phường (`ward`),
+  // không phải mã quận — so sánh nhầm hai cấp sẽ loạt bỏ hết tin.
+  const matchCode = areaV2;
+  let droppedNoCode = 0;
 
   for (const categoryCode of [scope.category_code]) {
     for (const rooms of roomsPartitions(scope)) {
@@ -568,7 +622,9 @@ export async function crawlScope(args: {
       const ads = await gateway.fetchListings({
         categoryCode,
         regionV2,
-        areaV2,
+        // Gateway CHỈ hiểu mã quận ở tham số này. Truyền mã phường trả
+        // HTTP 200 nhưng 0 tin.
+        areaV2: crawlAreaV2,
         sizeMinM2: scope.size_min_m2,
         sizeMaxM2: scope.size_max_m2,
         rooms,
@@ -576,22 +632,37 @@ export async function crawlScope(args: {
       });
       calls += 1;
       for (const ad of ads) {
-        const n = normalizeAd(ad, gateway.source);
-        if (!n) continue;
         // KHÔNG tin tuyệt đối việc gateway lọc đúng. Tin sai địa lý = sai giá
         // tham chiếu, và đây là nơi duy nhất chặn được điều đó.
-        // Chỉ loại khi mã CÓ và MÂU THUẪN yêu cầu; tin không có mã thì không
-        // chứng minh được là sai nên vẫn giữ (nếu siết thành loại hết thì
-        // gateway không trả area_v2 sẽ khiến tầng phường luôn rỗng -> luôn rơi
-        // về tỉnh, tức V2 không bao giờ dùng được).
-        if (regionV2 != null && n.region_v2 != null && n.region_v2 !== regionV2) continue;
-        if (areaV2 != null && n.area_v2 != null && n.area_v2 !== areaV2) continue;
+        // Lọc trên ad THÔ trước khi chuẩn hoá: ward chỉ tồn tại ở gateway, không
+        // phải cột trong market_listings, nên không thể đưa vào NormalizedListing.
+        if (regionV2 != null) {
+          const adRegion = numOrNull(ad.region_v2);
+          if (adRegion != null && adRegion !== regionV2) continue;
+        }
+        if (matchCode != null) {
+          if (level === "ward") {
+            // Ở tầng phường, so mã PHƯỜNG. Tin không gắn mã phường thì KHÔNG
+            // giữ: không chứng minh được nó thuộc phường này, giữ là đoán.
+            const adWard = numOrNull(ad.ward);
+            if (adWard == null) {
+              droppedNoCode += 1;
+              continue;
+            }
+            if (adWard !== matchCode) continue;
+          } else {
+            const adArea = numOrNull(ad.area_v2);
+            if (adArea != null && adArea !== matchCode) continue;
+          }
+        }
+        const n = normalizeAd(ad, gateway.source);
+        if (!n) continue;
         collected.push(n);
       }
     }
   }
 
-  return { listings: collected, calls };
+  return { listings: collected, calls, droppedNoCode };
 }
 
 /** Các giá trị rooms cần gọi. Gateway lọc rooms TỐI THIỂU nên ta gọi theo ngưỡng. */

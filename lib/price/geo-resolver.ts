@@ -13,7 +13,7 @@
 //     pipeline: đọc/ghi cache đều nuốt lỗi, fallback sang gateway.
 //   - Chỉ ghi cache khi ĐÃ có mã. Không ghi null — tránh ghi đè kết quả tốt.
 
-import { normalizePlaceName } from "./gateway";
+import { normalizePlaceName, type ResolvedAreaCodes } from "./gateway";
 
 export interface GeoCodeRow {
   /** Tên tỉnh đã chuẩn hoá — khoá cache. */
@@ -21,7 +21,10 @@ export interface GeoCodeRow {
   /** Tên phường đã chuẩn hoá — khoá cache. */
   areaKey: string;
   region_v2: number | null;
+  /** Mã QUẬN (gateway). Dùng cho tham số lọc area_v2 khi crawl. */
   area_v2: number;
+  /** Mã PHƯỜNG (gateway). NULL = chỉ biết mã quận. Dùng cho scope_key. */
+  ward_v2: number | null;
 }
 
 export interface GeoAreaMapRepo {
@@ -31,7 +34,15 @@ export interface GeoAreaMapRepo {
 }
 
 export interface ResolvedGeo {
-  area_v2: number;
+  /** Mã cho scope_key: mã phường nếu biết tên phường, mã quận nếu không. */
+  areaCode: number;
+  /**
+   * Mã đưa vào tham số `area_v2` khi crawl. LUÔN là mã quận, vì tham số đó
+   * của gateway không hiểu mã phường (area_v2=6885 trả 0 tin).
+   */
+  crawlAreaCode: number | null;
+  /** Tên đã khớp nằm ở cấp nào — quyết định post-filter so `ward` hay `area_v2`. */
+  level: "ward" | "area";
   region_v2: number | null;
   /** true = đọc từ cache, không gọi gateway. */
   fromCache: boolean;
@@ -50,7 +61,7 @@ export interface GeoResolverDeps {
   /** Chỉ cần 2 hàm resolve của gateway; test được bằng stub. */
   gateway: {
     resolveRegionCode(regionName: string): Promise<number | null>;
-    resolveAreaCode(regionName: string, areaName: string): Promise<number | null>;
+    resolveAreaCodes(regionName: string, areaName: string): Promise<ResolvedAreaCodes | null>;
   };
   /** Ghi log cảnh báo. Mặc định im lặng. */
   onCacheError?: (stage: "find" | "save", error: unknown) => void;
@@ -72,13 +83,25 @@ export function createGeoResolver(deps: GeoResolverDeps): GeoResolver {
       }
 
       // 1) Cache hit -> 0 lần gọi gateway.
+      // ward_v2 null = dòng này chỉ biết mã quận -> cấp "area", KHÔNG dùng làm
+      // mã phường. Nhờ vậy dòng cũ ghi trước khi tách hai cấp vẫn đọc được và
+      // chỉ rơi về cấp quận, thay vì trả mã quận cho một scope gắn nhãn phường.
       try {
         const hit = await repo.find(regionKey, areaKey);
-        // > 0 chứ không chỉ isFinite: 0 là số hợp lệ về toán học nhưng KHÔNG
-        // phải mã địa danh — chấp nhận nó sẽ sinh scope_key rác.
         if (hit && Number.isFinite(hit.area_v2) && hit.area_v2 > 0) {
-          console.log(`${tag} gateway_match=cache area_v2=${hit.area_v2} reason=ok`);
-          return { area_v2: hit.area_v2, region_v2: hit.region_v2, fromCache: true };
+          const isWard = hit.ward_v2 != null && Number.isFinite(hit.ward_v2) && hit.ward_v2 > 0;
+          const areaCode = isWard ? hit.ward_v2! : hit.area_v2;
+          console.log(
+            `${tag} gateway_match=cache area_v2=${areaCode} crawl_area_v2=${hit.area_v2} ` +
+              `level=${isWard ? "ward" : "area"} reason=ok`,
+          );
+          return {
+            areaCode,
+            crawlAreaCode: hit.area_v2,
+            level: isWard ? "ward" : "area",
+            region_v2: hit.region_v2,
+            fromCache: true,
+          };
         }
       } catch (e) {
         // Cache hỏng -> bỏ qua, đi tiếp bằng gateway.
@@ -89,21 +112,24 @@ export function createGeoResolver(deps: GeoResolverDeps): GeoResolver {
       // 2) Cache miss -> hỏi gateway.
       // Bọc try/catch: lỗi mạng ở đây KHÔNG được làm hỏng cả snapshot.
       // Phải rơi về tầng tỉnh, vì đó là lời nói thật; mất dữ liệu phường thì chấp nhận.
-      let areaV2: number | null = null;
+      let codes: ResolvedAreaCodes | null = null;
       try {
-        areaV2 = await gateway.resolveAreaCode(regionName!.trim(), areaName!.trim());
+        codes = await gateway.resolveAreaCodes(regionName!.trim(), areaName!.trim());
       } catch (e) {
         onCacheError?.("find", e);
         console.warn(`${tag} gateway_match=error area_v2=- reason=gateway_threw`);
         return null;
       }
-      if (areaV2 == null || !Number.isFinite(areaV2) || areaV2 <= 0) {
+      if (codes == null || !Number.isFinite(codes.areaCode) || codes.areaCode <= 0) {
         // Trước đây chỗ này return null KHÔNG log -> mất dấu vết khiến tầng
         // phường rơi về tầng tỉnh mà không ai biết vì sao.
         console.warn(`${tag} gateway_match=miss area_v2=- reason=no_code`);
         return null;
       }
-      console.log(`${tag} gateway_match=gateway area_v2=${areaV2} reason=ok`);
+      console.log(
+        `${tag} gateway_match=gateway area_v2=${codes.areaCode} ` +
+          `crawl_area_v2=${codes.crawlAreaCode ?? "-"} level=${codes.level} reason=ok`,
+      );
 
       // 3) Mã tỉnh: ưu tiên gợi ý của pipeline (đã resolve rồi) để khỏi gọi
       //    gateway lần nữa. Chỉ hỏi gateway khi thật sự chưa biết.
@@ -117,13 +143,27 @@ export function createGeoResolver(deps: GeoResolverDeps): GeoResolver {
       }
 
       // 4) Lưu cache. Best-effort: hỏng thì lần sau hỏi lại gateway.
+      //    Lưu CẢ HAI mã: area_v2 = mã quận (cho crawl), ward_v2 = mã phường
+      //    (cho scope). Chỉ lưu một mã thì lần sau cache hit sẽ mất mã kia.
       try {
-        await repo.save({ regionKey, areaKey, region_v2: regionV2, area_v2: areaV2 });
+        await repo.save({
+          regionKey,
+          areaKey,
+          region_v2: regionV2,
+          area_v2: codes.crawlAreaCode ?? codes.areaCode,
+          ward_v2: codes.level === "ward" ? codes.areaCode : null,
+        });
       } catch (e) {
         onCacheError?.("save", e);
       }
 
-      return { area_v2: areaV2, region_v2: regionV2, fromCache: false };
+      return {
+        areaCode: codes.areaCode,
+        crawlAreaCode: codes.crawlAreaCode,
+        level: codes.level,
+        region_v2: regionV2,
+        fromCache: false,
+      };
     },
   };
 }

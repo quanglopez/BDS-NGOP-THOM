@@ -570,6 +570,142 @@ async function main() {
     assert.ok(!e.message.includes("select"));
   });
 
+  console.log("\n== Post-filter: so MÃ PHƯỜNG ở tầng phường, MÃ QUẬN ở tầng quận ==");
+
+  // Gốc rễ sample_size=0 (sau khi scope đã lên được tầng phường): post-filter
+  // cũ so listing.area_v2 (mã QUẬN 13101) với mã đang cần (mã PHƯỜNG) nên loạt
+  // bỏ HẾT tin. Ở đây khẳng định: tầng phường so `ward`, tầng quận so `area_v2`.
+  // rooms_min/max = null -> roomsPartitions trả [null] -> đúng 1 lần gọi gateway,
+  // nên số tin thu được đếm trực tiếp, không bị nhân theo số phân vùng rooms.
+  const WARD_SCOPE: PriceScope = {
+    scope_level: "ward",
+    scope_key: "ward:6885|cat:1010|size:40-106|rooms:na",
+    scope_description: "Phường An Hải Bắc, Đà Nẵng · Căn hộ",
+    region_name: "Đà Nẵng",
+    area_name: "Phường An Hải Bắc",
+    category_code: 1010,
+    category_name: "Căn hộ",
+    size_min_m2: 40,
+    size_max_m2: 106,
+    rooms_min: null,
+    rooms_max: null,
+  };
+
+  function gatewayOf(ads: RawMarketAd[], seen: FetchScope[]): MarketGateway {
+    return {
+      source: "test",
+      supportsPagination: false,
+      maxItemsPerRequest: 50,
+      async fetchListings(s) {
+        seen.push(s);
+        return ads;
+      },
+      async fetchTotal() {
+        return null;
+      },
+      async resolveRegionCode() {
+        return 3017;
+      },
+      async resolveAreaCodes() {
+        return { areaCode: 6885, crawlAreaCode: 301704, level: "ward" as const };
+      },
+      async resolveAreaCode() {
+        return 6885;
+      },
+    };
+  }
+
+  const daNangAd = (over: Partial<RawMarketAd>): RawMarketAd =>
+    makeAd({
+      region_v2: 3017,
+      region_name: "Đà Nẵng",
+      area_v2: 301704,
+      area_name: "Quận Sơn Trà",
+      ...over,
+    });
+
+  await check("tầng phường: giữ tin có ward khớp, bỏ tin ward khác", async () => {
+    const seen: FetchScope[] = [];
+    const gw = gatewayOf(
+      [
+        daNangAd({ ward: 6885 }),
+        daNangAd({ ward: 6883 }),
+        daNangAd({ ward: 6886 }),
+      ],
+      seen,
+    );
+    const out = await crawlScope({
+      gateway: gw,
+      scope: WARD_SCOPE,
+      regionV2: 3017,
+      areaV2: 6885, // mã PHƯỜNG -> dùng cho scope + post-filter
+      crawlAreaV2: 301704, // mã QUẬN -> đưa vào tham số area_v2
+      level: "ward",
+    });
+    assert.equal(out.listings.length, 1, "chỉ giữ đúng 1 tin thuộc phường 6885");
+    assert.equal(seen[0].areaV2, 301704, "tham số area_v2 phải là mã QUẬN, không phải mã phường");
+  });
+
+  await check("tầng phường: tin không gắn ward thì bỏ và đếm, KHÔNG đoán", async () => {
+    const gw = gatewayOf([daNangAd({}), daNangAd({ ward: 6885 })], []);
+    const out = await crawlScope({
+      gateway: gw,
+      scope: WARD_SCOPE,
+      regionV2: 3017,
+      areaV2: 6885,
+      crawlAreaV2: 301704,
+      level: "ward",
+    });
+    assert.equal(out.listings.length, 1);
+    assert.equal(out.droppedNoCode, 1, "phải báo số tin bị loại vì thiếu mã phường");
+  });
+
+  await check("tầng quận: vẫn so area_v2, giữ đúng nhóm quận", async () => {
+    const seen: FetchScope[] = [];
+    const gw = gatewayOf(
+      [daNangAd({ ward: 6885 }), makeAd({ area_v2: 13101, area_name: "Quận 6", region_v2: 13000 })],
+      seen,
+    );
+    const out = await crawlScope({
+      gateway: gw,
+      scope: { ...WARD_SCOPE, scope_level: "area", scope_key: "area:301704|cat:1010" },
+      regionV2: 3017,
+      areaV2: 301704,
+      crawlAreaV2: 301704,
+      level: "area",
+    });
+    assert.equal(out.listings.length, 1, "tầng quận so area_v2, KHÔNG so ward");
+    assert.equal(seen[0].areaV2, 301704);
+  });
+
+  await check("tầng tỉnh: không lọc quận, không lọc phường", async () => {
+    const seen: FetchScope[] = [];
+    const gw = gatewayOf([daNangAd({ ward: 6885 }), daNangAd({ ward: 6886 })], seen);
+    const out = await crawlScope({
+      gateway: gw,
+      scope: { ...WARD_SCOPE, scope_level: "province", scope_key: "province:3017|cat:1010" },
+      regionV2: 3017,
+      areaV2: null,
+      crawlAreaV2: null,
+      level: "area",
+    });
+    assert.equal(out.listings.length, 2, "tầng tỉnh giữ mọi tin trong tỉnh");
+    assert.equal(seen[0].areaV2, null, "không được gửi area_v2 ở tầng tỉnh");
+  });
+
+  await check("sai tỉnh thì vẫn bị loại ở mọi cấp", async () => {
+    const gw = gatewayOf([daNangAd({ region_v2: 13000, ward: 6885 })], []);
+    const out = await crawlScope({
+      gateway: gw,
+      scope: WARD_SCOPE,
+      regionV2: 3017,
+      areaV2: 6885,
+      crawlAreaV2: 301704,
+      level: "ward",
+    });
+    assert.equal(out.listings.length, 0, "tin tỉnh khác không được lọt vào mẫu phường");
+  });
+
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
   // process.exit() huy async handle -> libuv assertion tren Windows.
   // process.exitCode de tien trinh tu thoat, chay lai 100%

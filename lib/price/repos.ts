@@ -249,7 +249,7 @@ export function supabaseGeoAreaMap(admin: SupabaseClient): GeoAreaMapRepo {
     async find(regionKey, areaKey) {
       const { data, error } = await admin
         .from("geo_area_map")
-        .select("region_name, area_name, region_v2, area_v2")
+        .select("region_name, area_name, region_v2, area_v2, ward_v2")
         .eq("region_name", regionKey)
         .eq("area_name", areaKey)
         .maybeSingle();
@@ -262,6 +262,9 @@ export function supabaseGeoAreaMap(admin: SupabaseClient): GeoAreaMapRepo {
         areaKey: str(r.area_name) ?? areaKey,
         region_v2: num(r.region_v2),
         area_v2: areaV2,
+        // Cột thêm ở migration 0016. Bảng cũ chưa migrate thì select sẽ lỗi và
+        // tầng trên bắt rồi bỏ qua -> coi như cache miss, hỏng thì vẫn chạy được.
+        ward_v2: num(r.ward_v2),
       };
     },
 
@@ -272,6 +275,7 @@ export function supabaseGeoAreaMap(admin: SupabaseClient): GeoAreaMapRepo {
           area_name: row.areaKey,
           region_v2: row.region_v2,
           area_v2: row.area_v2,
+          ward_v2: row.ward_v2,
           resolved_at: new Date().toISOString(),
         },
         { onConflict: "region_name,area_name" },

@@ -388,6 +388,93 @@ async function main() {
     assert.equal(calls.length, 2, `gọi ${calls.length} lần, mong đợi 2`);
   });
 
+  console.log("\n== PHASE 0.9. resolveAreaCodes trả CẢ HAI mã (scope + crawl) ==");
+
+  // Gốc rễ sample_size=0: gateway có mã phường (ward) và mã quận (area_v2) là
+  // HAI số khác nhau cho cùng một tin, và dùng cho hai việc khác nhau.
+  //   scope_key  -> cần ward 6885
+  //   area_v2=   -> cần area 301704 (truyền ward thì gateway trả 0 tin)
+  await check("33. ward match -> areaCode=ward, crawlAreaCode=area_v2, level=ward", async () => {
+    const { a } = adapterWith([
+      { ward_name: "Phường An Hải Bắc", area_name: "Quận Sơn Trà", ward: 6885, area_v2: 301704, ...DA_NANG_AD },
+    ]);
+    const r = await a.resolveAreaCodes("Đà Nẵng", "Phường An Hải Bắc");
+    assert.ok(r, "phải resolve được");
+    assert.equal(r.areaCode, 6885, "scope_key dùng mã PHƯỜNG");
+    assert.equal(r.crawlAreaCode, 301704, "crawl dùng mã QUẬN");
+    assert.equal(r.level, "ward");
+  });
+
+  await check("34. area match -> cả hai mã đều là mã quận, level=area", async () => {
+    const { a } = adapterWith([
+      { ward_name: "Phường An Hải Bắc", area_name: "Quận Sơn Trà", ward: 6885, area_v2: 301704, ...DA_NANG_AD },
+    ]);
+    const r = await a.resolveAreaCodes("Đà Nẵng", "Quận Sơn Trà");
+    assert.ok(r);
+    assert.equal(r.areaCode, 301704);
+    assert.equal(r.crawlAreaCode, 301704);
+    assert.equal(r.level, "area", "tên quận -> post-filter so area_v2, KHÔNG so ward");
+  });
+
+  await check("35. ward match nhưng thiếu ward -> rơi về cấp quận, hai mã bằng nhau", async () => {
+    const { a } = adapterWith([
+      { ward_name: "Phường An Hải Bắc", area_name: "Quận Sơn Trà", area_v2: 301704, ...DA_NANG_AD },
+    ]);
+    const r = await a.resolveAreaCodes("Đà Nẵng", "Phường An Hải Bắc");
+    assert.ok(r);
+    assert.equal(r.level, "area", "không có mã phường thì KHÔNG được gắn nhãn phường");
+    assert.equal(r.areaCode, 301704);
+    assert.equal(r.crawlAreaCode, 301704);
+  });
+
+  await check("36. ward rác (0) -> rơi về cấp quận, không sinh mã 0", async () => {
+    const { a } = adapterWith([
+      { ward_name: "Phường An Hải Bắc", area_name: "Quận Sơn Trà", ward: 0, area_v2: 301704, ...DA_NANG_AD },
+    ]);
+    const r = await a.resolveAreaCodes("Đà Nẵng", "Phường An Hải Bắc");
+    assert.ok(r);
+    assert.equal(r.areaCode, 301704);
+    assert.equal(r.level, "area");
+  });
+
+  await check("37. không khớp -> null (cả hai mã)", async () => {
+    const { a } = adapterWith([{ area_name: "Quận 1", area_v2: 301701, ...DA_NANG_AD }]);
+    assert.equal(await a.resolveAreaCodes("Đà Nẵng", "Phường An Hải Bắc"), null);
+  });
+
+  await check("38. chống chéo số vẫn giữ ở resolveAreaCodes", async () => {
+    const { a } = adapterWith([
+      { ward_name: "Phường 1", area_name: "Quận 1", ward: 6885, area_v2: 301701, ...DA_NANG_AD },
+    ]);
+    assert.equal(await a.resolveAreaCodes("Đà Nẵng", "Phường 11"), null, "'Phường 11' != 'Phường 1'");
+    const a2 = adapterWith([
+      { ward_name: "Xã 12", area_name: "Huyện Yên Thành", ward: 6887, area_v2: 301712, ...DA_NANG_AD },
+    ]);
+    assert.equal(await a2.a.resolveAreaCodes("Đà Nẵng", "Xã 2"), null, "'Xã 2' != 'Xã 12'");
+  });
+
+  await check("39. resolveAreaCode (wrapper cũ) trả đúng areaCode", async () => {
+    const { a } = adapterWith([
+      { ward_name: "Phường An Hải Bắc", area_name: "Quận Sơn Trà", ward: 6885, area_v2: 301704, ...DA_NANG_AD },
+    ]);
+    assert.equal(await a.resolveAreaCode("Đà Nẵng", "Phường An Hải Bắc"), 6885);
+  });
+
+  await check("40. lọc tỉnh vẫn áp khi lấy cả hai mã", async () => {
+    const { a } = adapterWith([
+      { ward_name: "Phường An Hải Bắc", area_name: "Quận 1", ward: 21001, area_v2: 21001, region_name: "Hà Nội", region_v2: 44 },
+    ]);
+    assert.equal(await a.resolveAreaCodes("Đà Nẵng", "Phường An Hải Bắc"), null);
+  });
+
+  await check("41. ngân sách gọi giữ nguyên với resolveAreaCodes", async () => {
+    const { a, calls } = adapterWith([
+      { ward_name: "Phường An Hải Bắc", area_name: "Quận Sơn Trà", ward: 6885, area_v2: 301704, ...DA_NANG_AD },
+    ]);
+    await a.resolveAreaCodes("Đà Nẵng", "Phường An Hải Bắc");
+    assert.equal(calls.length, 2, `gọi ${calls.length} lần, mong đợi 2`);
+  });
+
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
   process.exitCode = fail > 0 ? 1 : 0;
 }

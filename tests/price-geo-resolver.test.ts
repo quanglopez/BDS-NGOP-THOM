@@ -88,6 +88,12 @@ function fakeGateway(ads: RawMarketAd[], n: { crawl: number; region: number; are
       n.region += 1;
       return name ? 79 : null;
     },
+    async resolveAreaCodes(_r: string, area: string) {
+      n.area += 1;
+      return area
+        ? { areaCode: 13006, crawlAreaCode: 13006, level: "area" as const }
+        : null;
+    },
     async resolveAreaCode(_r: string, area: string) {
       n.area += 1;
       return area ? 13006 : null;
@@ -168,12 +174,18 @@ async function main() {
 
   await check("R1. cache hit -> KHÔNG gọi gateway", async () => {
     const repo = inMemoryGeoAreaMap([
-      { regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 },
+      { regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null},
     ]);
     const n = { crawl: 0, region: 0, area: 0 };
     const r = createGeoResolver({ repo, gateway: fakeGateway([], n) });
     const got = await r.resolveAreaCode("Tp Hồ Chí Minh", "Quận 6");
-    assert.deepEqual(got, { area_v2: 13006, region_v2: 79, fromCache: true });
+    assert.deepEqual(got, {
+      areaCode: 13006,
+      crawlAreaCode: 13006,
+      level: "area",
+      region_v2: 79,
+      fromCache: true,
+    });
     assert.equal(n.area, 0, "cache hit thì 0 lần gọi gateway");
     assert.equal(n.region, 0);
   });
@@ -183,7 +195,7 @@ async function main() {
     const n = { crawl: 0, region: 0, area: 0 };
     const r = createGeoResolver({ repo, gateway: fakeGateway([], n) });
     const got = await r.resolveAreaCode("Tp Hồ Chí Minh", "Quận 6");
-    assert.equal(got?.area_v2, 13006);
+    assert.equal(got?.areaCode, 13006);
     assert.equal(got?.fromCache, false);
     assert.equal(n.area, 1, "phải gọi gateway 1 lần");
     const saved = await repo.find("ho chi minh", "6");
@@ -206,7 +218,7 @@ async function main() {
     const n = { crawl: 0, region: 0, area: 0 };
     const r = createGeoResolver({
       repo,
-      gateway: { resolveAreaCode: async () => null, resolveRegionCode: async () => 79 },
+      gateway: { resolveAreaCodes: async () => null, resolveRegionCode: async () => 79 },
     });
     const got = await r.resolveAreaCode("Tp Hồ Chí Minh", "Quận 6");
     assert.equal(got, null);
@@ -217,7 +229,7 @@ async function main() {
     const r = createGeoResolver({
       repo: inMemoryGeoAreaMap(),
       gateway: {
-        resolveAreaCode: async () => {
+        resolveAreaCodes: async () => {
           throw new Error("mạng chết");
         },
         resolveRegionCode: async () => 79,
@@ -237,7 +249,7 @@ async function main() {
     const n = { crawl: 0, region: 0, area: 0 };
     const r = createGeoResolver({ repo: bad, gateway: fakeGateway([], n) });
     const got = await r.resolveAreaCode("Tp Hồ Chí Minh", "Quận 6");
-    assert.equal(got?.area_v2, 13006, "thiếu bảng cache vẫn phải chạy được");
+    assert.equal(got?.areaCode, 13006, "thiếu bảng cache vẫn phải chạy được");
     assert.equal(n.area, 1);
   });
 
@@ -250,7 +262,7 @@ async function main() {
     };
     const r = createGeoResolver({ repo: bad, gateway: fakeGateway([], { crawl: 0, region: 0, area: 0 }) });
     const got = await r.resolveAreaCode("Tp Hồ Chí Minh", "Quận 6");
-    assert.equal(got?.area_v2, 13006, "ghi cache hỏng không được làm mất kết quả");
+    assert.equal(got?.areaCode, 13006, "ghi cache hỏng không được làm mất kết quả");
   });
 
   await check("R8. thiếu tên -> null, KHÔNG gọi gì", async () => {
@@ -284,12 +296,12 @@ async function main() {
     // KHÔNG được lọt vào scope — phải coi như cache miss.
     for (const bad of [null, undefined, NaN, "13006" as unknown as number, 0]) {
       const repo = inMemoryGeoAreaMap([
-        { regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: bad as number },
+        { regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: bad as number , ward_v2: null},
       ]);
       const n = { crawl: 0, region: 0, area: 0 };
       const r = createGeoResolver({ repo, gateway: fakeGateway([], n) });
       const got = await r.resolveAreaCode("Tp Hồ Chí Minh", "Quận 6");
-      assert.equal(got?.area_v2, 13006, `area_v2=${String(bad)} phải bị loại, không được dùng`);
+      assert.equal(got?.areaCode, 13006, `area_v2=${String(bad)} phải bị loại, không được dùng`);
       assert.equal(got?.fromCache, false, `area_v2=${String(bad)} phải đi đường gateway`);
       assert.equal(n.area, 1, `area_v2=${String(bad)} phải gọi gateway`);
     }
@@ -302,11 +314,12 @@ async function main() {
         areaKey: "6",
         region_v2: "79" as unknown as number,
         area_v2: 13006,
+        ward_v2: null,
       },
     ]);
     const r = createGeoResolver({ repo, gateway: fakeGateway([], { crawl: 0, region: 0, area: 0 }) });
     const got = await r.resolveAreaCode("Tp Hồ Chí Minh", "Quận 6");
-    assert.equal(got?.area_v2, 13006);
+    assert.equal(got?.areaCode, 13006);
     assert.equal(got?.fromCache, true);
   });
 
@@ -320,7 +333,7 @@ async function main() {
   await check("P1. ward có + resolver OK -> scope_level = 'ward' (cold-start)", async () => {
     const n = { crawl: 0, region: 0, area: 0 };
     const geo = createGeoResolver({
-      repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+      repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
       gateway: fakeGateway([], n),
     });
     const deps: PipelineDeps = {
@@ -361,7 +374,7 @@ async function main() {
     const n = { crawl: 0, region: 0, area: 0 };
     const geo = createGeoResolver({
       repo: inMemoryGeoAreaMap(),
-      gateway: { resolveAreaCode: async () => null, resolveRegionCode: async () => 79 },
+      gateway: { resolveAreaCodes: async () => null, resolveRegionCode: async () => 79 },
     });
     const deps: PipelineDeps = {
       gateway: { ...fakeGateway(manyAds, n), resolveRegionCode: async () => 79 },
@@ -411,7 +424,7 @@ async function main() {
       listings: new MemListings(),
       stats: new MemStats(),
       geo: createGeoResolver({
-        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: CODE }]),
+        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: CODE , ward_v2: null}]),
         gateway: fakeGateway([], n),
       }),
     };
@@ -445,7 +458,7 @@ async function main() {
       listings: new MemListings(),
       stats: new MemStats(),
       geo: createGeoResolver({
-        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: CODE }]),
+        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: CODE , ward_v2: null}]),
         gateway: fakeGateway([], n),
       }),
     };
@@ -469,7 +482,7 @@ async function main() {
       listings: new MemListings(),
       stats: new MemStats(),
       geo: createGeoResolver({
-        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
         gateway: fakeGateway([], n),
       }),
     });
@@ -508,7 +521,7 @@ async function main() {
       listings: new MemListings(),
       stats: new MemStats(),
       geo: createGeoResolver({
-        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
         gateway: fakeGateway([], n),
       }),
     });
@@ -521,7 +534,7 @@ async function main() {
   await check("S3. scope_key của ward khác tỉnh, không trùng nhau", async () => {    const n = { crawl: 0, region: 0, area: 0 };
     const stats = new MemStats();
     const geo = createGeoResolver({
-      repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+      repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
       gateway: fakeGateway([], n),
     });
     const gw = { ...fakeGateway(manyAds, n), resolveRegionCode: async () => 79 };
@@ -574,6 +587,10 @@ async function main() {
         n.region += 1;
         return 79;
       },
+      async resolveAreaCodes() {
+        n.area += 1;
+        return { areaCode: 13006, crawlAreaCode: 13006, level: "area" as const };
+      },
       async resolveAreaCode() {
         n.area += 1;
         return 13006;
@@ -588,7 +605,7 @@ async function main() {
       listings: new MemListings(),
       stats: new MemStats(),
       geo: createGeoResolver({
-        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
         gateway: fakeGateway([], n),
       }),
     });
@@ -609,7 +626,7 @@ async function main() {
       listings: new MemListings(),
       stats: new MemStats(),
       geo: createGeoResolver({
-        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
         gateway: fakeGateway([], n),
       }),
     });
@@ -637,6 +654,9 @@ async function main() {
       async resolveRegionCode() {
         return 79;
       },
+      async resolveAreaCodes() {
+        return { areaCode: 13006, crawlAreaCode: 13006, level: "area" as const };
+      },
       async resolveAreaCode() {
         return 13006;
       },
@@ -646,7 +666,7 @@ async function main() {
       listings: new MemListings(),
       stats: new MemStats(),
       geo: createGeoResolver({
-        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
         gateway: fakeGateway([], { crawl: 0, region: 0, area: 0 }),
       }),
     });
@@ -670,7 +690,7 @@ async function main() {
     // Test này chỉ chứng minh: gọi lại với cùng deps không sinh scope mới bất thường.
     const n = { crawl: 0, region: 0, area: 0 };
     const geo = createGeoResolver({
-      repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+      repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
       gateway: fakeGateway([], n),
     });
     const deps: PipelineDeps = {
@@ -697,7 +717,7 @@ async function main() {
       listings: new MemListings(),
       stats,
       geo: createGeoResolver({
-        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 }]),
+        repo: inMemoryGeoAreaMap([{ regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: 13006 , ward_v2: null}]),
         gateway: fakeGateway([], n),
       }),
     };

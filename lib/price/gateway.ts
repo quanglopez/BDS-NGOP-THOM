@@ -80,8 +80,34 @@ export interface MarketGateway {
   fetchTotal(scope: FetchScope): Promise<number | null>;
   /** Dò mã tỉnh (region_v2) từ tên tỉnh. */
   resolveRegionCode(regionName: string): Promise<number | null>;
-  /** Dò mã quận (area_v2) từ tên quận, trong phạm vi tỉnh đã biết. */
+  /** Dò mã địa danh, trả CẢ HAI mã (xem ResolvedAreaCodes). */
+  resolveAreaCodes(regionName: string, areaName: string): Promise<ResolvedAreaCodes | null>;
+  /**
+   * Chỉ mã dùng cho scope_key. Giữ lại cho call cũ / test cũ.
+   * Dùng khi chỉ cần scope thì gọi resolveAreaCodes rồi lấy .areaCode.
+   */
   resolveAreaCode(regionName: string, areaName: string): Promise<number | null>;
+}
+
+/**
+ * Gateway có HAI loại mã cho cùng một địa danh, và chúng dùng cho hai việc khác nhau:
+ *
+ *   ward (6885)   -> mã PHƯỜNG. Dùng cho scope_key, để scope gắn nhãn "phường".
+ *   area (301704) -> mã QUẬN.  Dùng cho tham số lọc `area_v2` khi crawl, vì
+ *                    tham số đó CHỈ hiểu mã quận: area_v2=6885 trả HTTP 200
+ *                    nhưng 0 tin.
+ *
+ * Gộp hai mã này làm một là gốc rễ của cả hai lỗi: scope ghi mã quận cho tên
+ * phường, hoặc crawl trả 0 mẫu. Vì vậy trả cả hai, để tầng trên tự chọn đúng
+ * mã cho từng mục đích.
+ */
+export interface ResolvedAreaCodes {
+  /** Mã cho scope_key: mã phường nếu khớp tên phường, mã quận nếu khớp tên quận. */
+  areaCode: number;
+  /** Mã đưa vào tham số area_v2 khi crawl. LUÔN là mã quận. null = tin khớp không có area_v2. */
+  crawlAreaCode: number | null;
+  /** Tên đã khớp nằm ở cấp nào — quyết định post-filter so sánh `ward` hay `area_v2`. */
+  level: "ward" | "area";
 }
 
 /** Ghép tham số. Band dùng dấu gạch nối — gateway từ chối dấu phẩy. */
@@ -214,7 +240,7 @@ export class ChototGatewayAdapter implements MarketGateway {
     return null;
   }
 
-  async resolveAreaCode(regionName: string, areaName: string): Promise<number | null> {
+  async resolveAreaCodes(regionName: string, areaName: string): Promise<ResolvedAreaCodes | null> {
     const regionV2 = await this.resolveRegionCode(regionName);
     if (regionV2 === null) return null;
     const want = normalizePlaceName(areaName);
@@ -227,6 +253,7 @@ export class ChototGatewayAdapter implements MarketGateway {
         // đối rằng gateway đã lọc đúng.
         const adRegion = num(ad.region_v2);
         if (adRegion !== null && adRegion !== regionV2) continue;
+        const district = num(ad.area_v2);
         // Tên địa danh cần tra nằm ở field KHÁC NHAU tùy cấp hành chính:
         //   - tên PHƯỜNG/XÃ   -> ad.ward_name  ("Phường An Hải Bắc")
         //   - tên QUẬN/HUYỆN  -> ad.area_name  ("Quận Sơn Trà")
@@ -236,27 +263,29 @@ export class ChototGatewayAdapter implements MarketGateway {
         // Cả hai đều so KHỚP TUYỆT ĐỐI sau khi chuẩn hoá (xem placeNameMatches):
         // KHÔNG dùng includes, vì "Phường 1" là chuỗi con của "Phường 11" và sẽ
         // trả mã của phường khác — mã sai đó lại được ghi vĩnh viễn.
-        //
-        // Mã trả về PHẢI theo cấp đã khớp: khớp tên phường -> mã `ward`;
-        // khớp tên quận -> mã `area_v2`. Trả area_v2 cho một tên phường sẽ khớp
-        // đúng tên nhưng lưu MÃ QUẬN, rồi scope gắn nhãn "phường" lại lọc tin
-        // cả quận — sai địa lý mà nhìn rất thuyết phục.
         const ward = normalizePlaceName(str(ad.ward_name));
         if (ward && placeNameMatches(ward, want)) {
           const byWard = wardCode(ad.ward);
-          if (byWard !== null) return byWard;
-          // Tin không gắn mã phường -> lùi về mã quận. Vẫn hơn trượt hẳn.
-          const areaOfWard = num(ad.area_v2);
-          if (areaOfWard !== null) return areaOfWard;
+          if (byWard !== null) {
+            // scope lấy mã PHƯỜNG, crawl lấy mã QUẬN của đúng tin này.
+            return { areaCode: byWard, crawlAreaCode: district, level: "ward" };
+          }
+          // Tin không gắn mã phường -> chỉ còn mã quận, thành cấp quận.
+          if (district !== null) return { areaCode: district, crawlAreaCode: district, level: "area" };
           continue;
         }
         const area = normalizePlaceName(str(ad.area_name));
-        if (area && placeNameMatches(area, want)) {
-          const code = num(ad.area_v2);
-          if (code !== null) return code;
+        if (area && placeNameMatches(area, want) && district !== null) {
+          return { areaCode: district, crawlAreaCode: district, level: "area" };
         }
       }
     }
     return null;
+  }
+
+  /** Chỉ mã cho scope_key. Xem resolveAreaCodes. */
+  async resolveAreaCode(regionName: string, areaName: string): Promise<number | null> {
+    const r = await this.resolveAreaCodes(regionName, areaName);
+    return r ? r.areaCode : null;
   }
 }
