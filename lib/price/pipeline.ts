@@ -495,6 +495,7 @@ export async function generatePriceIntelligence(
     deps,
     regionV2,
     areaV2,
+    crawlAreaV2,
     extraLimitations: widenedFromWard ? [LIMITATION_WIDENED_FROM_WARD] : [],
   });
 }
@@ -572,12 +573,19 @@ async function buildSnapshot(args: {
   deps: PipelineDeps;
   regionV2: number | null;
   areaV2: number | null;
+  /**
+   * Mã QUẬN để tra `market_listings.area_v2`. Bắt buộc mã quận, KHÔNG phải mã
+   * phường: cột `area_v2` lưu `ad.area_v2` của tin đã crawl (gateway trả mã
+   * quận), còn `areaV2` ở trên là mã phường dùng cho scope_key. Tra bằng mã
+   * phường -> khớp 0 dòng -> `comparables` luôn rỗng ở tầng phường.
+   */
+  crawlAreaV2: number | null;
   extraLimitations?: string[];
 }): Promise<PipelineResult> {
-  const { check, scope, statsRow, iso, deps, regionV2, areaV2, extraLimitations } = args;
+  const { check, scope, statsRow, iso, deps, regionV2, crawlAreaV2, extraLimitations } = args;
   const candidates = await deps.listings.listByGeo({
     regionV2,
-    areaV2,
+    areaV2: crawlAreaV2,
     categoryCode: scope.category_code,
   });
 

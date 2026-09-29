@@ -105,6 +105,9 @@ class MemListings implements MarketListingRepo {
   rows: NormalizedListing[] = [];
   areaIndex = new Map<string, { areaV2: number; areaName: string }>();
   upserted = 0;
+  /** Mọi key đã dùng để tra comparables, theo thứ tự gọi. */
+  listByGeoCalls: { regionV2: number | null; areaV2: number | null; categoryCode: number }[] = [];
+
 
   async upsertMany(listings: NormalizedListing[]) {
     this.upserted += listings.length;
@@ -129,6 +132,7 @@ class MemListings implements MarketListingRepo {
     return null;
   }
   async listByGeo(args: { regionV2: number | null; areaV2: number | null; categoryCode: number }) {
+    this.listByGeoCalls.push(args);
     return this.rows.filter(
       (r) =>
         r.category_code === args.categoryCode &&
@@ -725,6 +729,160 @@ async function main() {
     const after1 = stats.rows.size;
     await generatePriceIntelligence(CHECK, deps);
     assert.equal(stats.rows.size, after1, "chạy lại phải dùng đường nhanh, không thêm hàng thống kê");
+  });
+
+  // ================================================================
+  // PHASE 6: comparables phải tra theo mã QUẬN, không phải mã phường
+  // ================================================================
+  // market_listings.area_v2 lưu ad.area_v2 (mã QUẬN của tin đã crawl).
+  // scope_key dùng mã PHƯỜNG. Nếu comparables lấy nhầm mã phường thì
+  // .eq("area_v2", <mã phường>) khớp 0 dòng -> comparables luôn rỗng.
+  console.log("\n== PHASE 6: comparables tra bằng mã quận (không phải mã phường) ==");
+
+  const WARD_CODE = 6877;
+  const CRAWL_CODE = 301703;
+
+  /** Ads mang mã QUẬN đúng như cột sẽ lưu. */
+  function wardLevelGeo(n: { crawl: number; region: number; area: number }, level: "ward" | "area") {
+    return createGeoResolver({
+      repo: inMemoryGeoAreaMap(),
+      gateway: {
+        source: "test",
+        supportsPagination: false,
+        maxItemsPerRequest: 50,
+        async fetchListings() {
+          return [];
+        },
+        async fetchTotal() {
+          return null;
+        },
+        async resolveRegionCode() {
+          n.region += 1;
+          return 79;
+        },
+        async resolveAreaCodes() {
+          n.area += 1;
+          return { areaCode: WARD_CODE, crawlAreaCode: CRAWL_CODE, level };
+        },
+        async resolveAreaCode() {
+          n.area += 1;
+          return CRAWL_CODE;
+        },
+      },
+    });
+  }
+
+  /** Gateway trả ads mang mã quận CRAWL_CODE, đủ mẫu để không mở rộng tỉnh. */
+  function districtGateway(n: { crawl: number; region: number; area: number }): MarketGateway {
+    const ads = Array.from({ length: 20 }, (_, i) =>
+      makeAd({ external_id: `d${i}`, area_name: "Phường Nam Dương", area_v2: CRAWL_CODE, ward: WARD_CODE }),
+    );
+    return {
+      source: "test",
+      supportsPagination: false,
+      maxItemsPerRequest: 50,
+      async fetchListings() {
+        n.crawl += 1;
+        return ads;
+      },
+      async fetchTotal() {
+        return null;
+      },
+      async resolveRegionCode() {
+        n.region += 1;
+        return 79;
+      },
+      async resolveAreaCodes() {
+        n.area += 1;
+        return { areaCode: WARD_CODE, crawlAreaCode: CRAWL_CODE, level: "ward" as const };
+      },
+      async resolveAreaCode() {
+        n.area += 1;
+        return CRAWL_CODE;
+      },
+    };
+  }
+
+  await check("P8. tầng phường: comparables tra mã QUẬN, KHÔNG phải mã phường", async () => {
+    const n = { crawl: 0, region: 0, area: 0 };
+    const listings = new MemListings();
+    const r = await generatePriceIntelligence(
+      { ...CHECK, id: "p8", wardName: "Phường Nam Dương", originalText: `${CHECK.originalText}\nPhường Nam Dương` },
+      { gateway: districtGateway(n), listings, stats: new MemStats(), geo: wardLevelGeo(n, "ward") },
+    );
+    assert.ok(r.ok, "phải tạo được snapshot");
+    if (!r.ok) return;
+
+    assert.equal(r.snapshot.scope_level, "ward");
+    assert.ok(
+      r.snapshot.scope.scope_key.startsWith(`ward:${WARD_CODE}`),
+      `scope_key phải dùng mã phường, thấy: ${r.snapshot.scope.scope_key}`,
+    );
+
+    assert.ok(listings.listByGeoCalls.length > 0, "phải có lần tra comparables");
+    for (const c of listings.listByGeoCalls) {
+      assert.equal(
+        c.areaV2,
+        CRAWL_CODE,
+        `comparables phải tra mã quận ${CRAWL_CODE}, thấy ${String(c.areaV2)} (mã phường ${WARD_CODE} là sai)`,
+      );
+      assert.notEqual(c.areaV2, WARD_CODE, "không được dùng mã phường để tra market_listings");
+    }
+  });
+
+  await check("P8b. tầng phường: comparables thật sự ra dòng (bug cũ trả 0)", async () => {
+    const n = { crawl: 0, region: 0, area: 0 };
+    const listings = new MemListings();
+    const r = await generatePriceIntelligence(
+      { ...CHECK, id: "p8b", wardName: "Phường Nam Dương", originalText: `${CHECK.originalText}\nPhường Nam Dương` },
+      { gateway: districtGateway(n), listings, stats: new MemStats(), geo: wardLevelGeo(n, "ward") },
+    );
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.ok(
+      r.snapshot.comparables.length > 0,
+      `phải có comparable từ dòng đã lưu, thấy ${r.snapshot.comparables.length}`,
+    );
+  });
+
+  await check("P9. tầng quận (area): comparables vẫn dùng mã quận, không đổi hành vi", async () => {
+    const n = { crawl: 0, region: 0, area: 0 };
+    const listings = new MemListings();
+    const r = await generatePriceIntelligence(CHECK, {
+      gateway: districtGateway(n),
+      listings,
+      stats: new MemStats(),
+      geo: createGeoResolver({
+        repo: inMemoryGeoAreaMap([
+          { regionKey: "ho chi minh", areaKey: "6", region_v2: 79, area_v2: CRAWL_CODE, ward_v2: null },
+        ]),
+        gateway: fakeGateway([], n),
+      }),
+    });
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.ok(listings.listByGeoCalls.length > 0, "phải có lần tra comparables");
+    for (const c of listings.listByGeoCalls) {
+      assert.equal(c.areaV2, CRAWL_CODE, `tầng quận phải giữ mã quận, thấy ${String(c.areaV2)}`);
+    }
+  });
+
+  await check("P10. tầng tỉnh: không lọc area, chỉ lọc tỉnh", async () => {
+    const n = { crawl: 0, region: 0, area: 0 };
+    const listings = new MemListings();
+    const r = await generatePriceIntelligence({ ...CHECK, id: "p10", wardName: null }, {
+      gateway: districtGateway(n),
+      listings,
+      stats: new MemStats(),
+    });
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.equal(r.snapshot.scope_level, "province");
+    assert.ok(listings.listByGeoCalls.length > 0, "phải có lần tra comparables");
+    for (const c of listings.listByGeoCalls) {
+      assert.equal(c.areaV2, null, "tầng tỉnh không được lọc area");
+      assert.notEqual(c.areaV2, WARD_CODE, "tầng tỉnh tuyệt đối không dùng mã phường");
+    }
   });
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
