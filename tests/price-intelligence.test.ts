@@ -133,6 +133,15 @@ class MemListings implements MarketListingRepo {
   }
 }
 
+/** Ghi lại mọi lần gọi listByGeo để assert key tra comparables. */
+class SpyListings extends MemListings {
+  listByGeoCalls: { regionV2: number | null; areaV2: number | null; categoryCode: number }[] = [];
+  async listByGeo(args: { regionV2: number | null; areaV2: number | null; categoryCode: number }) {
+    this.listByGeoCalls.push(args);
+    return super.listByGeo(args);
+  }
+}
+
 class MemStats implements PriceStatsRepo {
   rows = new Map<string, PriceStatsRow>();
   claims = new Set<string>();
@@ -542,6 +551,129 @@ async function main() {
     });
     assert.equal(r, null, "pipeline ném lỗi ra -> route phải bắt được");
     assert.equal(safeErrorCode(new PricePipelineError("listing_upsert_failed")), "listing_upsert_failed");
+  });
+
+  // ================================================================
+  // P0: gateway HỎNG không được biến thành "khu vực hết tin" rồi cache.
+  // ================================================================
+  console.log("\n== P0: gateway lỗi KHÔNG được ghi stats sample_size=0 ==");
+
+  /** Gateway có biết lỗi (fetchListingsResult) — giả lập timeout/HTTP lỗi. */
+  function failingGateway(n: { n: number }, fail: boolean): MarketGateway {
+    return {
+      source: "chotot_gateway",
+      supportsPagination: false,
+      maxItemsPerRequest: 50,
+      async fetchListings() {
+        n.n += 1;
+        return fail ? [] : Array.from({ length: 40 }, () => makeAd());
+      },
+      async fetchListingsResult() {
+        n.n += 1;
+        // fail = gateway hỏng (mạng/timeout/HTTP lỗi) -> ok=false, KHÔNG phải 0 tin
+        return fail ? { ok: false, ads: [] } : { ok: true, ads: Array.from({ length: 40 }, () => makeAd()) };
+      },
+      async fetchTotal() {
+        return null;
+      },
+      async resolveRegionCode() {
+        return 13000;
+      },
+      async resolveAreaCode() {
+        return 13101;
+      },
+    };
+  }
+
+  /** MemStats theo dõi thêm: có bị ghi dòng 0 rác không, và claim đã bỏ chưa. */
+  class TrackingStats extends MemStats {
+    released: string[] = [];
+    override async releaseClaim(scopeKey: string, statDate: string): Promise<void> {
+      this.released.push(`${scopeKey}|${statDate}`);
+      this.rows.delete(`${scopeKey}|${statDate}`);
+      this.claims.delete(`${scopeKey}|${statDate}`);
+    }
+  }
+
+  await check("P0-1. gateway lỗi -> KHÔNG gọi upsert, KHÔNG lưu dòng stats 0", async () => {
+    const n = { n: 0 };
+    const stats = new TrackingStats();
+    const r = await generatePriceSafe(CHECK, {
+      gateway: failingGateway(n, true),
+      listings: new MemListings(),
+      stats,
+    });
+    assert.equal(r, null, "crawl hỏng phải ném lỗi ra (route trả 'tạm thời chưa khả dụng')");
+    assert.equal(stats.rows.size, 0, "KHÔNG được để lại dòng stats nào — kể cả dòng 0");
+    assert.equal(stats.released.length, 1, "phải bỏ dòng claim để lần sau crawl lại được");
+  });
+
+  await check("P0-2b. gateway OK, đúng 0 tin -> snapshot 0 vẫn được ghi", async () => {
+    const n = { n: 0 };
+    const stats = new MemStats();
+    const emptyGw: MarketGateway = {
+      source: "chotot_gateway",
+      supportsPagination: false,
+      maxItemsPerRequest: 50,
+      async fetchListings() {
+        n.n += 1;
+        return [];
+      },
+      async fetchListingsResult() {
+        n.n += 1;
+        return { ok: true, ads: [] };
+      },
+      async fetchTotal() {
+        return null;
+      },
+      async resolveRegionCode() {
+        return 13000;
+      },
+      async resolveAreaCode() {
+        return 13101;
+      },
+    };
+    const r = await generatePriceIntelligence(CHECK, {
+      gateway: emptyGw,
+      listings: new MemListings(),
+      stats,
+    });
+    assert.ok(r.ok, "0 tin thật vẫn phải tạo được snapshot, không được coi là lỗi");
+    if (!r.ok) return;
+    assert.equal(r.snapshot.sample_size, 0, "hành vi cũ: 0 tin -> sample_size=0");
+    assert.equal(r.snapshot.statistics, null);
+    assert.equal(stats.rows.size, 1, "phải ghi dòng stats (kể cả khi 0)");
+  });
+
+  await check("P0-3. lỗi gateway rồi thử lại -> lần sau sinh snapshot thành công", async () => {
+    const stats = new TrackingStats();
+    const first = await generatePriceSafe(CHECK, {
+      gateway: failingGateway({ n: 0 }, true),
+      listings: new MemListings(),
+      stats,
+    });
+    assert.equal(first, null, "lần 1 hỏng");
+    assert.equal(stats.rows.size, 0, "lần 1 không để lại dòng nào");
+
+    const n2 = { n: 0 };
+    const second = await generatePriceIntelligence(CHECK, {
+      gateway: failingGateway(n2, false),
+      listings: new MemListings(),
+      stats,
+    });
+    assert.ok(second.ok, "lần 2 gateway OK -> phải sinh được snapshot");
+    if (!second.ok) return;
+    assert.ok(second.snapshot.sample_size > 0, "lần 2 phải có mẫu thật");
+    assert.equal(stats.rows.size, 1, "chỉ ghi đúng 1 dòng stats");
+    assert.equal(
+      [...stats.rows.values()][0].sample_size,
+      second.snapshot.sample_size,
+      "dòng stats phải khớp snapshot",
+    );
+  });
+
+  await check("P0-4. gateway lỗi -> mã lỗi an toàn, không lộ message gốc", () => {
+    assert.equal(safeErrorCode(new PricePipelineError("crawl_gateway_unavailable")), "crawl_gateway_unavailable");
   });
 
   await check("safeErrorCode phân loại đúng lỗi schema, không lộ message", () => {

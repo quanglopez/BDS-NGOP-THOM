@@ -76,6 +76,12 @@ export interface MarketGateway {
   /** Số tin tối đa 1 lần gọi. */
   readonly maxItemsPerRequest: number;
   fetchListings(scope: FetchScope): Promise<RawMarketAd[]>;
+  /**
+   * Bản CÓ trạng thái lỗi, dành riêng cho crawl. Optional để fake cũ (chỉ
+   * implement `fetchListings`) vẫn dùng được — khi thiếu, pipeline coi kết quả
+   * là thành công, đúng như hành vi cũ.
+   */
+  fetchListingsResult?(scope: FetchScope): Promise<GatewayFetchResult>;
   /** Trả total của truy vấn. CHỈ tin cậy được ở cấp quận, không tin ở cấp tỉnh (bị trần 10000). */
   fetchTotal(scope: FetchScope): Promise<number | null>;
   /** Dò mã tỉnh (region_v2) từ tên tỉnh. */
@@ -128,9 +134,28 @@ export function buildGatewayParams(scope: FetchScope): string {
   return p.toString();
 }
 
-async function gatewayJson(params: string): Promise<Record<string, unknown> | null> {
+/**
+ * Kết quả MỘT lần gọi gateway cho mục đích CRAWL.
+ *
+ * `ok = false` nghĩa là TA KHÔNG BIẾT còn bao nhiêu tin — mạng lỗi, timeout,
+ * HTTP lỗi, body không đọc được. Tách khỏi `ok = true, ads = []` là bắt buộc:
+ * trước đây cả hai đều thành `[]` và pipeline tưởng là khu vực hết tin, rồi lưu
+ * `sample_size=0` vào `market_price_stats` — `get()` đọc lại đúng dòng đó cả ngày
+ * và không bao giờ crawl lại.
+ */
+export interface GatewayFetchResult {
+  ok: boolean;
+  ads: RawMarketAd[];
+}
+
+interface GatewayResponse {
+  ok: boolean;
+  data: Record<string, unknown> | null;
+}
+
+async function gatewayJsonDetailed(params: string): Promise<GatewayResponse> {
   const checked = await assertPublicUrl(`${GATEWAY_LIST}?${params}`);
-  if (!checked.ok) return null;
+  if (!checked.ok) return { ok: false, data: null };
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -138,13 +163,20 @@ async function gatewayJson(params: string): Promise<Record<string, unknown> | nu
       signal: ctrl.signal,
       headers: { Accept: "application/json", "User-Agent": FETCH_UA },
     });
-    if (!res.ok) return null;
-    return (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok) return { ok: false, data: null };
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    // 200 nhưng body không đọc được -> KHÔNG phải "khu vực hết tin".
+    if (data === null) return { ok: false, data: null };
+    return { ok: true, data };
   } catch {
-    return null;
+    return { ok: false, data: null };
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function gatewayJson(params: string): Promise<Record<string, unknown> | null> {
+  return (await gatewayJsonDetailed(params)).data;
 }
 
 // Chuẩn hoá tên địa danh để so khớp: bỏ dấu, bỏ chữ hoa/thường, gộp khoảng trắng
@@ -212,10 +244,16 @@ export class ChototGatewayAdapter implements MarketGateway {
   readonly supportsPagination = false;
   readonly maxItemsPerRequest = 50;
 
+  async fetchListingsResult(scope: FetchScope): Promise<GatewayFetchResult> {
+    const res = await gatewayJsonDetailed(buildGatewayParams(scope));
+    const ads = res.ok ? (res.data?.ads ?? []) : [];
+    return { ok: res.ok, ads: Array.isArray(ads) ? ads : [] };
+  }
+
   async fetchListings(scope: FetchScope): Promise<RawMarketAd[]> {
-    const data = await gatewayJson(buildGatewayParams(scope));
-    const ads = (data?.ads ?? []) as RawMarketAd[];
-    return Array.isArray(ads) ? ads : [];
+    // GIỮ NGUYÊN hành vi cũ: lỗi -> mảng rỗng. Chỉ dùng cho tra cứu tên/mã
+    // (resolveRegionCode, resolveAreaCodes) nơi null là kết quả hợp lệ.
+    return (await this.fetchListingsResult(scope)).ads;
   }
 
   async fetchTotal(scope: FetchScope): Promise<number | null> {

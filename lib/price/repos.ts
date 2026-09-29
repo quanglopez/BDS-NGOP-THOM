@@ -205,6 +205,24 @@ export function supabasePriceStats(admin: SupabaseClient): PriceStatsRepo {
       return !error;
     },
 
+    /**
+     * Bỏ dòng claim sau khi crawl hỏng. Chỉ xoá placeholder `sample_size=0`
+     * mà chính lần claim này tạo ra — không đụng dòng đã có số thật.
+     * Lỗi xoá bị nuốt: tầng trên vẫn phải ném lỗi gốc.
+     */
+    async releaseClaim(scopeKey, statDate) {
+      try {
+        await admin
+          .from("market_price_stats")
+          .delete()
+          .eq("scope_key", scopeKey)
+          .eq("stat_date", statDate)
+          .eq("sample_size", 0);
+      } catch {
+        /* best effort */
+      }
+    },
+
     async upsert(row: PriceStatsRow) {
       const { error } = await admin
         .from("market_price_stats")

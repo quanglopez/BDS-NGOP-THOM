@@ -5,6 +5,7 @@ import { haversineKm } from "@/lib/geo/distance";
 import { calcPpm2, computeStats, confidenceFrom, differencePercent, filterSample } from "./stats";
 import { detectCategoryCode, resolveScope, type WardIndex } from "./scope";
 import type { GeoResolver } from "./geo-resolver";
+import { PricePipelineError } from "./errors";
 import type { MarketGateway, RawMarketAd } from "./gateway";
 import {
   MARKET_SOURCE,
@@ -51,6 +52,13 @@ export interface PriceStatsRepo {
     scope: PriceScope;
     source: string;
   }): Promise<boolean>;
+  /**
+   * Bỏ dòng claim khi crawl hỏNG. Bắt buộc: dòng claim là placeholder
+   * `sample_size=0`, mà `get()` coi bất kỳ dòng nào có mặt là dữ liệu thật.
+   * Giữ lại sau một lần crawl hỏng -> cả ngày đọc nhầm 0 tin thật, không crawl lại.
+   * Optional để fake cũ không phải implement.
+   */
+  releaseClaim?(scopeKey: string, statDate: string): Promise<void>;
   upsert(row: PriceStatsRow): Promise<void>;
 }
 
@@ -257,6 +265,20 @@ async function ensureStatsRow(args: {
     crawlAreaV2,
     level,
   });
+
+  // CRAWL HỎNG (gateway lỗi/timeout) khác HẾT TIN: ta không biết khu vực này có
+  // bao nhiêu tin. Ghi `sample_size=0` lúc này là nói dối, và vì dòng đó tồn tại
+  // cả ngày nên không lần nào crawl lại được. Bỏ claim rồi ném lỗi: route đã
+  // catch, trả "tạm thời chưa khả dụng" và KHÔNG lưu snapshot.
+  if (!crawled.ok) {
+    try {
+      await deps.stats.releaseClaim?.(scope.scope_key, statDate);
+    } catch {
+      /* Best effort: lỗi xoá claim không được che lỗi gốc. */
+    }
+    throw new PricePipelineError("crawl_gateway_unavailable");
+  }
+
   await deps.listings.upsertMany(crawled.listings);
   const computed = computeStats({
     filtered: filterSample(crawled.listings, scope),
@@ -586,6 +608,11 @@ async function buildSnapshot(args: {
 }
 
 export interface CrawlOutcome {
+  /**
+   * false = CRAWL HỎNG (gateway lỗi/timeout), KHÔNG phải khu vực hết tin.
+   * Tầng trên phải bỏ dòng claim và KHÔNG ghi stats, thay vì lưu sample_size=0.
+   */
+  ok: boolean;
   listings: NormalizedListing[];
   calls: number;
   /** Số tin bị loại vì không gắn mã phường, ở tầng phường. */
@@ -619,7 +646,7 @@ export async function crawlScope(args: {
   for (const categoryCode of [scope.category_code]) {
     for (const rooms of roomsPartitions(scope)) {
       if (calls >= maxCalls || collected.length >= MAX_LISTINGS) break;
-      const ads = await gateway.fetchListings({
+      const fetchScope = {
         categoryCode,
         regionV2,
         // Gateway CHỈ hiểu mã quận ở tham số này. Truyền mã phường trả
@@ -629,8 +656,20 @@ export async function crawlScope(args: {
         sizeMaxM2: scope.size_max_m2,
         rooms,
         limit: gateway.maxItemsPerRequest,
-      });
+      };
+      // CÓ fetchListingsResult -> biết lỗi gateway với "0 tin thật".
+      // KHÔNG có -> coi như thành công (đúng hành vi cũ, fake cũ không đổi).
+      const fetched = gateway.fetchListingsResult
+        ? await gateway.fetchListingsResult(fetchScope)
+        : { ok: true, ads: await gateway.fetchListings(fetchScope) };
       calls += 1;
+      if (!fetched.ok) {
+        // Dừng ngay: trả về 0 tin kèm ok=false. Tầng trên KHÔNG được ghi stats,
+        // vì ta không biết khu vực này thật sự có bao nhiêu tin.
+        return { ok: false, listings: [], calls, droppedNoCode };
+      }
+      const ads = fetched.ads;
+
       for (const ad of ads) {
         // KHÔNG tin tuyệt đối việc gateway lọc đúng. Tin sai địa lý = sai giá
         // tham chiếu, và đây là nơi duy nhất chặn được điều đó.
@@ -662,7 +701,7 @@ export async function crawlScope(args: {
     }
   }
 
-  return { listings: collected, calls, droppedNoCode };
+  return { ok: true, listings: collected, calls, droppedNoCode };
 }
 
 /** Các giá trị rooms cần gọi. Gateway lọc rooms TỐI THIỂU nên ta gọi theo ngưỡng. */
