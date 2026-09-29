@@ -3,7 +3,7 @@
 
 import { haversineKm } from "@/lib/geo/distance";
 import { calcPpm2, computeStats, confidenceFrom, differencePercent, filterSample } from "./stats";
-import { detectCategoryCode, resolveScope, type WardIndex } from "./scope";
+import { buildDistrictScope, detectCategoryCode, resolveScope, type WardIndex } from "./scope";
 import type { GeoResolver } from "./geo-resolver";
 import { PricePipelineError } from "./errors";
 import type { MarketGateway, RawMarketAd } from "./gateway";
@@ -92,6 +92,36 @@ export interface PipelineDeps {
  */
 export const LIMITATION_WIDENED_FROM_WARD =
   "Không đủ dữ liệu tham chiếu ở phạm vi phường, đang mở rộng phạm vi so sánh.";
+
+export const LIMITATION_WIDENED_TO_DISTRICT =
+  "Phường của tin không đủ mẫu, số tham chiếu lấy từ phạm vi QUẬN chứ không phải phường.";
+export const LIMITATION_WIDENED_TO_PROVINCE =
+  "Phường và quận đều không đủ mẫu, số tham chiếu lấy từ phạm vi TỈNH.";
+
+/**
+ * Mã lý do mở rộng, máy đọc được — đừng đoán từ chuỗi tiếng Việt.
+ *
+ * Chỉ MỘT mã là đủ: mọi lần mở rộng đều bắt nguồn từ việc tầng phường không
+ * đủ mẫu. Tầng quận có đủ hay không là chi tiết đi trong `limitations`. Không thêm
+ * mã cho tầng tỉnh vì "thiếu mẫu ở tỉnh" không hề là fallback — đó là khi không
+ * có tên phường nào để bắt đầu, tỉnh là tầng ĐẦU chứ không phải tầng mở rộng.
+ */
+export const FALLBACK_REASON_INSUFFICIENT_WARD = "insufficient_ward_sample";
+
+/**
+ * Tên quận lấy từ chính các tin vừa crawl: `normalizeAd` lưu `area_name` =
+ * tên QUẬN của gateway (khác `ward_name` của phường). Nhờ vậy không cần thêm
+ * cột DB và không phải đoán tên từ mã. Trả null nếu không có tin nào khớp mã.
+ */
+function districtNameFrom(
+  listings: readonly NormalizedListing[],
+  districtCode: number,
+): string | null {
+  for (const l of listings) {
+    if (l.area_v2 === districtCode && l.area_name) return l.area_name;
+  }
+  return null;
+}
 
 export type PipelineResult =
   | { ok: true; snapshot: PriceIntelligence; fromCache: boolean }
@@ -238,12 +268,12 @@ async function ensureStatsRow(args: {
   level: "ward" | "area";
   statDate: string;
   iso: string;
-}): Promise<{ ok: true; row: PriceStatsRow } | { ok: false }> {
+}): Promise<{ ok: true; row: PriceStatsRow; listings: NormalizedListing[] } | { ok: false }> {
   const { deps, scope, regionV2, areaV2, crawlAreaV2, level, statDate, iso } = args;
 
   // Đường nhanh: scope này đã có thống kê hôm nay -> không crawl.
   const existing = await deps.stats.get(scope.scope_key, statDate);
-  if (existing) return { ok: true, row: existing };
+  if (existing) return { ok: true, row: existing, listings: [] };
 
   const claimed = await deps.stats.claim({
     scopeKey: scope.scope_key,
@@ -254,7 +284,7 @@ async function ensureStatsRow(args: {
   if (!claimed) {
     // Người khác đang crawl cùng scope -> đọc lại, không tự crawl trùng
     const row = await deps.stats.get(scope.scope_key, statDate);
-    return row ? { ok: true, row } : { ok: false };
+    return row ? { ok: true, row, listings: [] } : { ok: false };
   }
 
   const crawled = await crawlScope({
@@ -309,14 +339,82 @@ async function ensureStatsRow(args: {
     computedAt: iso,
   });
   await deps.stats.upsert(row);
-  return { ok: true, row };
+  return { ok: true, row, listings: crawled.listings };
 }
 
 /**
- * PHASE 5 — tầng phường không đủ mẫu thì thử tầng tỉnh.
- * CHỈ trả về khi tầng tỉnh THẬT SỰ có số. Nếu tỉnh cũng thiếu thì trả null để
- * giữ kết quả phường (statistics = null) — thà không có số còn hơn nói sai.
+ * PHASE 5 — mở rộng phạm vi khi tầng phường không đủ mẫu.
+ *
+ * Thứ tự: phường -> QUẬN -> tỉnh. Tầng quận đứng trước tỉnh vì nó hẹp hơn nên
+ * số tham chiếu sát hơn; đo thật trên gateway cho cùng một tin: quận ra
+ * median ở sample 20, tỉnh chỉ 15 — mở tới tỉnh sớm là mất thông tin.
+ *
+ * Mỗi tầng CHỈ được nhận khi tầng đó THẬT SỰ có median. Nếu cả ba đều thiếu thì
+ * trả null để giữ kết quả phường (statistics = null) — thà không có số còn hơn
+ * nói sai.
  */
+async function widenToDistrict(args: {
+  deps: PipelineDeps;
+  wardScope: PriceScope;
+  regionV2: number | null;
+  /** Mã quận. null = không tra được mã quận thì bỏ qua tầng này. */
+  districtCode: number | null;
+  statDate: string;
+  iso: string;
+}): Promise<{ scope: PriceScope; regionV2: number | null; row: PriceStatsRow } | null> {
+  const { deps, wardScope, regionV2, districtCode, statDate, iso } = args;
+  if (districtCode == null || regionV2 == null) return null;
+
+  // Band giữ nguyên của tin để hai tầng so sánh được với nhau.
+  const scope = buildDistrictScope({
+    districtCode,
+    districtName: null,
+    regionName: wardScope.region_name,
+    categoryCode: wardScope.category_code,
+    sizeMinM2: wardScope.size_min_m2,
+    sizeMaxM2: wardScope.size_max_m2,
+    roomsMin: wardScope.rooms_min,
+    roomsMax: wardScope.rooms_max,
+  });
+
+  const got = await ensureStatsRow({
+    deps,
+    scope,
+    regionV2,
+    // Mã quận cho CẢ post-filter lẫn tham số crawl -> không loạt bỏ nhầm cấp.
+    areaV2: districtCode,
+    crawlAreaV2: districtCode,
+    level: "area",
+    statDate,
+    iso,
+  });
+  if (!got.ok || got.row.median_ppm2 == null) return null;
+
+  // Tên quận lấy từ dữ liệu vừa ghi. Cần cho `scope_description`, nên cập nhật
+  // cả dòng stats để lần sau đọc được tên (nếu không thì chỉ hiện mã quận).
+  const name = districtNameFrom(got.listings, districtCode);
+  if (name && name !== scope.area_name) {
+    const named = buildDistrictScope({
+      districtCode,
+      districtName: name,
+      regionName: wardScope.region_name,
+      categoryCode: wardScope.category_code,
+      sizeMinM2: wardScope.size_min_m2,
+      sizeMaxM2: wardScope.size_max_m2,
+      roomsMin: wardScope.rooms_min,
+      roomsMax: wardScope.rooms_max,
+    });
+    try {
+      await deps.stats.upsert({ ...got.row, area_name: name, scope_description: named.scope_description });
+    } catch {
+      /* tên quận là phụ trì — mất nó thì hiện mã quận, không sai số. */
+    }
+    return { scope: named, regionV2, row: { ...got.row, area_name: name, scope_description: named.scope_description } };
+  }
+
+  return { scope, regionV2, row: got.row };
+}
+
 async function widenToProvince(args: {
   deps: PipelineDeps;
   check: CheckInput;
@@ -442,7 +540,9 @@ export async function generatePriceIntelligence(
   let crawlAreaV2 = scope.scope_level === "ward" ? resolvedCrawlAreaV2 : null;
 
   let row: PriceStatsRow | null = null;
-  let widenedFromWard = false;
+  let fallbackTo: "district" | "province" | null = null;
+  let fallbackReason: string | null = null;
+  const primaryScope = resolution.scope;
 
   if (scope.scope_level === "ward") {
     const got = await ensureStatsRow({
@@ -458,18 +558,42 @@ export async function generatePriceIntelligence(
     if (!got.ok) return { ok: false, reason: REASON_NO_SAMPLE };
     row = got.row;
 
-    // PHẢI đủ mẫu mới được dựng số. Thiếu thì mở rộng sang tầng tỉnh —
-    // nhưng chỉ khi tầng tỉnh THẬT SỰ có số, nếu không thì giữ kết quả phường
-    // (statistics = null) để không nói dối rằng đã mở rộng.
+    // Phải đủ mẫu mới dựng được số. Thiếu thì mở rộng theo thứ tự hẹp -> rộng:
+    // phường -> QUẬN -> tỉnh. Mỗi tầng chỉ được nhận khi tầng đó THẬT SỰ có median.
+    // Cả ba đều thiếu thì giữ kết quả phường (statistics = null) — không nói dối
+    // rằng đã mở rộng.
     if (row.median_ppm2 == null) {
-      const wider = await widenToProvince({ deps, check, index, statDate, iso, regionV2Hint: regionV2 });
-      if (wider) {
-        scope = wider.scope;
-        regionV2 = wider.regionV2;
-        areaV2 = null;
+      // Tầng quận dùng CHÍNH mã đã crawl (resolvedCrawlAreaV2) nên không cần tra
+      // lại: tra lại ở cold-start sẽ ra null và mất cả tầng trung gian. Trong
+      // nhánh ward, crawlAreaV2 chính là resolvedCrawlAreaV2 nên đây là một giá trị.
+      const byDistrict = await widenToDistrict({
+        deps,
+        wardScope: scope,
+        regionV2,
+        districtCode: resolvedCrawlAreaV2,
+        statDate,
+        iso,
+      });
+      if (byDistrict) {
+        scope = byDistrict.scope;
+        regionV2 = byDistrict.regionV2;
+        // Tầng quận khớp theo MÃ QUẬN, nên đổi luôn khóa địa lý sang mã quận.
+        areaV2 = resolvedCrawlAreaV2;
         crawlAreaV2 = null;
-        row = wider.row;
-        widenedFromWard = true;
+        row = byDistrict.row;
+        fallbackTo = "district";
+        fallbackReason = FALLBACK_REASON_INSUFFICIENT_WARD;
+      } else {
+        const wider = await widenToProvince({ deps, check, index, statDate, iso, regionV2Hint: regionV2 });
+        if (wider) {
+          scope = wider.scope;
+          regionV2 = wider.regionV2;
+          areaV2 = null;
+          crawlAreaV2 = null;
+          row = wider.row;
+          fallbackTo = "province";
+          fallbackReason = FALLBACK_REASON_INSUFFICIENT_WARD;
+        }
       }
     }
   } else {
@@ -487,6 +611,15 @@ export async function generatePriceIntelligence(
     row = got.row;
   }
 
+  // Mở rộng phải nói rõ, không im lặng. Cả tầng quận lẫn tầng tỉnh đều ghi
+  // limitation để UI hiện ngay dưới phần giá.
+  const widenLimitations: string[] = [];
+  if (fallbackTo === "district") {
+    widenLimitations.push(LIMITATION_WIDENED_FROM_WARD, LIMITATION_WIDENED_TO_DISTRICT);
+  } else if (fallbackTo === "province") {
+    widenLimitations.push(LIMITATION_WIDENED_FROM_WARD, LIMITATION_WIDENED_TO_PROVINCE);
+  }
+
   return buildSnapshot({
     check,
     scope,
@@ -496,7 +629,9 @@ export async function generatePriceIntelligence(
     regionV2,
     areaV2,
     crawlAreaV2,
-    extraLimitations: widenedFromWard ? [LIMITATION_WIDENED_FROM_WARD] : [],
+    primaryScope,
+    fallbackReason,
+    extraLimitations: widenLimitations,
   });
 }
 
@@ -519,17 +654,25 @@ export function buildSnapshotFromRow(args: {
   check: CheckInput;
   iso: string;
   comparables: PriceComparable[];
-  /** Limitation bổ sung, ví dụ khi đã mở rộng từ phường sang tỉnh. */
+  /** Limitation bổ sung, ví dụ khi đã mở rộng từ phường sang quận/tỉnh. */
   extraLimitations?: string[];
+  /** Scope GỐC của tin (thường là phường) — không đổi khi mở rộng. */
+  primaryScope?: PriceScope;
+  /** Mã lý do mở rộng, null = dùng đúng tầng đầu tiên. */
+  fallbackReason?: string | null;
 }): PriceIntelligence {
   const { row, scope, check, iso, comparables } = args;
   const targetPpm2 = calcPpm2(check.priceVnd, check.areaM2);
+  const primary = args.primaryScope ?? scope;
+  const fallbackReason = args.fallbackReason ?? null;
 
   const limitations = [
     "Giá chào bán lấy từ tin đăng, không phải giá giao dịch thực tế.",
     scope.scope_level === "ward"
       ? "Nhóm tham chiếu gồm tin cùng phường, cùng loại và diện tích tương đương."
-      : "Nhóm tham chiếu đang ở phạm vi rộng hơn do chưa xác định được khu vực chi tiết.",
+      : scope.scope_level === "district"
+        ? "Nhóm tham chiếu gồm tin cùng QUẬN, cùng loại và diện tích tương đương."
+        : "Nhóm tham chiếu đang ở phạm vi rộng hơn do chưa xác định được khu vực chi tiết.",
     ...(args.extraLimitations ?? []),
   ];
 
@@ -562,6 +705,11 @@ export function buildSnapshotFromRow(args: {
       difference_percent: differencePercent(targetPpm2, row.median_ppm2),
     },
     limitations,
+    // Vị trí tin KHÔNG đổi theo tầng mở rộng — luôn là phường nếu biết.
+    primary_scope_level: primary.scope_level,
+    // Tầng thực sự sinh ra số. null khi mọi tầng đều thiếu mẫu.
+    reference_scope_level: row.median_ppm2 == null ? null : scope.scope_level,
+    fallback_reason: fallbackReason,
   };
 }
 
@@ -580,6 +728,8 @@ async function buildSnapshot(args: {
    * phường -> khớp 0 dòng -> `comparables` luôn rỗng ở tầng phường.
    */
   crawlAreaV2: number | null;
+  primaryScope?: PriceScope;
+  fallbackReason?: string | null;
   extraLimitations?: string[];
 }): Promise<PipelineResult> {
   const { check, scope, statsRow, iso, deps, regionV2, crawlAreaV2, extraLimitations } = args;
@@ -611,6 +761,8 @@ async function buildSnapshot(args: {
       iso,
       comparables,
       extraLimitations,
+      primaryScope: args.primaryScope,
+      fallbackReason: args.fallbackReason,
     }),
   };
 }

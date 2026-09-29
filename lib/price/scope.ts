@@ -4,6 +4,7 @@
 import {
   SIZE_BAND_RATIO_MAX,
   SIZE_BAND_RATIO_MIN,
+  type PriceScope,
   type ScopeLevel,
   type ScopeResolution,
 } from "./types";
@@ -166,10 +167,58 @@ function describe(args: {
   categoryCode: number;
 }): string {
   const cat = CATEGORY_LABEL[args.categoryCode] ?? "Bất động sản";
-  if (args.scopeLevel === "ward" && args.areaName) {
+  if (args.scopeLevel !== "province" && args.areaName) {
     return `${args.areaName}${args.regionName ? `, ${args.regionName}` : ""} · ${cat}`;
   }
   return `${args.regionName ?? "Khu vực"} · ${cat}`;
+}
+
+/**
+ * Dựng scope tầng QUẬN từ mã quận đã tra được.
+ *
+ * Tách khỏi `resolveScope` vì tầng quận KHÔNG phải đầu vào của 1 lần check:
+ * nó chỉ được dựng khi tầng phường đã thử và không đủ mẫu. Mã quận là
+ * `crawlAreaV2` — đúng mã đã dùng để crawl, nên không có nguy cơ lấy nhầm cấp.
+ * Giữ nguyên band diện tích/phòng của tin để mẫu hai tầng so sánh được với nhau.
+ */
+export function buildDistrictScope(args: {
+  districtCode: number;
+  districtName: string | null;
+  regionName: string | null;
+  categoryCode: number;
+  sizeMinM2: number | null;
+  sizeMaxM2: number | null;
+  roomsMin: number | null;
+  roomsMax: number | null;
+}): PriceScope {
+  const catName = CATEGORY_LABEL[args.categoryCode] ?? null;
+  return {
+    scope_level: "district",
+    scope_key: buildScopeKey({
+      scopeLevel: "district",
+      geoCode: args.districtCode,
+      categoryCode: args.categoryCode,
+      sizeMin: args.sizeMinM2,
+      sizeMax: args.sizeMaxM2,
+      roomsMin: args.roomsMin,
+      roomsMax: args.roomsMax,
+    }),
+    // Không có tên quận thì KHÔNG bịa. Ghi rõ mã để người đọc vẫn tra được.
+    scope_description: describe({
+      scopeLevel: "district",
+      areaName: args.districtName ?? `Mã quận ${args.districtCode}`,
+      regionName: args.regionName,
+      categoryCode: args.categoryCode,
+    }),
+    region_name: args.regionName,
+    area_name: args.districtName,
+    category_code: args.categoryCode,
+    category_name: catName,
+    size_min_m2: args.sizeMinM2,
+    size_max_m2: args.sizeMaxM2,
+    rooms_min: args.roomsMin,
+    rooms_max: args.roomsMax,
+  };
 }
 
 /**

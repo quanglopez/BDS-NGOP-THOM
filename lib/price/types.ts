@@ -1,8 +1,13 @@
 // P1 Price Intelligence — kiểu dữ liệu dùng chung.
 // Snapshot là BẤT BIẾN: có rồi thì không tính lại (giống analysis_json của Pro).
 
-/** Tầng địa lý thật của gateway: tỉnh / quận-phường. Không có tầng trung gian. */
-export type ScopeLevel = "ward" | "province";
+/**
+ * Cấp phạm vi nhóm tham chiếu, từ hẹp sang rộng:
+ *   ward     — cùng phường
+ *   district — cùng quận/huyện (mở rộng khi phường không đủ mẫu)
+ *   province — cùng tỉnh (mở rộng khi quận cũng không đủ mẫu)
+ */
+export type ScopeLevel = "ward" | "district" | "province";
 
 export type PriceConfidence = "low" | "medium" | "high";
 
@@ -133,6 +138,23 @@ export interface PriceIntelligence {
     difference_percent: number | null;
   };
   limitations: string[];
+  /**
+   * Cấp của CHÍNH TIN ĐANG CHECK (phường nếu biết). Không đổi theo tầng mở rộng —
+   * để UI luôn hiện đúng vị trí tin, không bị "nuốt" vào tầng rộng hơn.
+   */
+  primary_scope_level: ScopeLevel | null;
+  /** Cấp thực sự sinh ra con số. null khi chưa đủ mẫu ở tầng nào. */
+  reference_scope_level: ScopeLevel | null;
+  /**
+   * Vì sao phải mở rộng. Mã máy đọc được, để UI/đối tác không phải đoán từ chuỗi.
+   *   null — dùng đúng tầng đầu tiên, không mở rộng.
+   *
+   * Chỉ có MỘT mã mở rộng: mọi lần mở rộng đều bắt nguồn từ việc tầng phường
+   * không đủ mẫu. Tầng quận có đủ hay không là chi tiết, nằm trong `limitations`.
+   * Không thêm mã cho tầng tỉnh: "thiếu mẫu ở tỉnh" không phải fallback, đó là
+   * tình huống không có tên phường để bắt đầu — tỉnh là tầng ĐẦU.
+   */
+  fallback_reason: string | null;
 }
 
 export interface PriceStatsRow {

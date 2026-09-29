@@ -138,12 +138,18 @@ export function qualityScore(args: {
   if (!(sample > 0)) return null;
   const samplePart = Math.min(1, trimmed / 60);
   const ratioPart = trimmed / sample;
-  const scopePart = scopeLevel === "ward" ? 1 : 0.6;
+  const scopePart = scopeLevel === "ward" ? 1 : scopeLevel === "district" ? 0.8 : 0.6;
   const score = 0.5 * samplePart + 0.2 * ratioPart + 0.3 * scopePart;
   return Math.round(Math.min(1, Math.max(0, score)) * 1000) / 1000;
 }
 
-/** Confidence theo quy tắc đơn giản đã duyệt — dễ giải thích, không tối ưu scoring. */
+/**
+ * Confidence theo quy tắc đơn giản đã duyệt — dễ giải thích, không tối ưu scoring.
+ *
+ * Mở rộng phạm vi làm mẫu KHÔNG còn cùng vị trí với tin, nên tầng quận bị CHẶN
+ * trần "medium": dữ liệu quận vẫn cục bộ, nhưng không được tôn như dữ liệu phường.
+ * Ngưỡng tầng tỉnh giữ nguyên như cũ.
+ */
 export function confidenceFrom(args: {
   scopeLevel: ScopeLevel;
   trimmed: number;
@@ -151,6 +157,8 @@ export function confidenceFrom(args: {
   const { scopeLevel, trimmed } = args;
   if (scopeLevel === "ward" && trimmed >= 30) return "high";
   if (scopeLevel === "ward" && trimmed >= 15) return "medium";
+  // Quận: đủ số mẫu thì lên "medium", KHÔNG bao giờ "high" (đã mở rộng phạm vi).
+  if (scopeLevel === "district" && trimmed >= 15) return "medium";
   if (scopeLevel === "province" && trimmed >= 30) return "medium";
   return "low";
 }
