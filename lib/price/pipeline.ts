@@ -5,7 +5,7 @@ import { haversineKm } from "@/lib/geo/distance";
 import { calcPpm2, computeStats, confidenceFrom, differencePercent, filterSample } from "./stats";
 import { buildDistrictScope, detectCategoryCode, resolveScope, type WardIndex } from "./scope";
 import type { GeoResolver } from "./geo-resolver";
-import { PricePipelineError } from "./errors";
+import { PricePipelineError, safeErrorCode } from "./errors";
 import type { MarketGateway, RawMarketAd } from "./gateway";
 import {
   MARKET_SOURCE,
@@ -355,6 +355,7 @@ async function ensureStatsRow(args: {
  */
 async function widenToDistrict(args: {
   deps: PipelineDeps;
+  checkId: string;
   wardScope: PriceScope;
   regionV2: number | null;
   /** Mã quận. null = không tra được mã quận thì bỏ qua tầng này. */
@@ -362,8 +363,20 @@ async function widenToDistrict(args: {
   statDate: string;
   iso: string;
 }): Promise<{ scope: PriceScope; regionV2: number | null; row: PriceStatsRow } | null> {
-  const { deps, wardScope, regionV2, districtCode, statDate, iso } = args;
-  if (districtCode == null || regionV2 == null) return null;
+  const { deps, checkId, wardScope, regionV2, districtCode, statDate, iso } = args;
+  // [TẠM] Chỉ đo đạc, không đổi hành vi. Gỡ sau khi chốt được nguyên nhân.
+  const dbg = (result: string, reason: string, extra = "") =>
+    console.log(
+      `[price-fallback-district] check_id=${checkId} result=${result} reason=${reason} ${extra}`.trimEnd(),
+    );
+  if (districtCode == null || regionV2 == null) {
+    dbg(
+      "skip",
+      "missing_district_code",
+      `district_code=${districtCode ?? "-"} region_v2=${regionV2 ?? "-"}`,
+    );
+    return null;
+  }
 
   // Band giữ nguyên của tin để hai tầng so sánh được với nhau.
   const scope = buildDistrictScope({
@@ -377,18 +390,44 @@ async function widenToDistrict(args: {
     roomsMax: wardScope.rooms_max,
   });
 
-  const got = await ensureStatsRow({
-    deps,
-    scope,
-    regionV2,
-    // Mã quận cho CẢ post-filter lẫn tham số crawl -> không loạt bỏ nhầm cấp.
-    areaV2: districtCode,
-    crawlAreaV2: districtCode,
-    level: "area",
-    statDate,
-    iso,
-  });
-  if (!got.ok || got.row.median_ppm2 == null) return null;
+  let got: Awaited<ReturnType<typeof ensureStatsRow>>;
+  try {
+    got = await ensureStatsRow({
+      deps,
+      scope,
+      regionV2,
+      // Mã quận cho CẢ post-filter lẫn tham số crawl -> không loạt bỏ nhầm cấp.
+      areaV2: districtCode,
+      crawlAreaV2: districtCode,
+      level: "area",
+      statDate,
+      iso,
+    });
+  } catch (e) {
+    // ensureStatsRow ném khi crawl hỏng (gateway lỗi/timeout). Chỉ ghi lại rồi
+    // ném tiếp — không nuốt lỗi, không đổi luồng.
+    dbg("skip", "gateway_failed", `error_code=${safeErrorCode(e)}`);
+    throw e;
+  }
+  if (!got.ok) {
+    dbg("skip", "stats_unavailable", `district_code=${districtCode} region_v2=${regionV2}`);
+    return null;
+  }
+  if (got.row.median_ppm2 == null) {
+    dbg(
+      "skip",
+      "insufficient_median",
+      `sample_size=${got.row.sample_size} trimmed_size=${got.row.trimmed_size} median_ppm2=- ` +
+        `min_required=${MIN_SAMPLE_SIZE}`,
+    );
+    return null;
+  }
+  dbg(
+    "success",
+    "ok",
+    `sample_size=${got.row.sample_size} trimmed_size=${got.row.trimmed_size} ` +
+      `median_ppm2=${got.row.median_ppm2}`,
+  );
 
   // Tên quận lấy từ dữ liệu vừa ghi. Cần cho `scope_description`, nên cập nhật
   // cả dòng stats để lần sau đọc được tên (nếu không thì chỉ hiện mã quận).
@@ -417,6 +456,7 @@ async function widenToDistrict(args: {
 
 async function widenToProvince(args: {
   deps: PipelineDeps;
+  checkId: string;
   check: CheckInput;
   index: WardIndex;
   statDate: string;
@@ -424,25 +464,58 @@ async function widenToProvince(args: {
   /** Mã tỉnh đã resolve ở tầng trước — index có thể rỗng ở cold-start. */
   regionV2Hint: number | null;
 }): Promise<{ scope: PriceScope; regionV2: number | null; row: PriceStatsRow } | null> {
-  const { deps, check, index, statDate, iso, regionV2Hint } = args;
+  const { deps, checkId, check, index, statDate, iso, regionV2Hint } = args;
+  // [TẠM] Chỉ đo đạc, không đổi hành vi. Gỡ sau khi chốt được nguyên nhân.
+  const dbg = (result: string, reason: string, extra = "") =>
+    console.log(
+      `[price-fallback-province] check_id=${checkId} result=${result} reason=${reason} ${extra}`.trimEnd(),
+    );
   const idx: WardIndex = { ...index };
   if (regionV2Hint != null) idx.findRegionV2 = () => regionV2Hint;
   const res = scopeForCheck({ ...check, wardName: null }, idx);
-  if (!res.ok || res.scope.scope_level !== "province") return null;
+  if (!res.ok || res.scope.scope_level !== "province") {
+    dbg("skip", "no_province_scope", `region_v2_hint=${regionV2Hint ?? "-"}`);
+    return null;
+  }
 
   const regionV2 = regionV2Hint ?? index.findRegionV2(res.scope.region_name);
-  const got = await ensureStatsRow({
-    deps,
-    scope: res.scope,
-    regionV2,
-    areaV2: null,
-    // Mở rộng sang tầng TỈNH: không lọc quận, không lọc phường.
-    crawlAreaV2: null,
-    level: "area",
-    statDate,
-    iso,
-  });
-  if (!got.ok || got.row.median_ppm2 == null) return null;
+  let got: Awaited<ReturnType<typeof ensureStatsRow>>;
+  try {
+    got = await ensureStatsRow({
+      deps,
+      scope: res.scope,
+      regionV2,
+      areaV2: null,
+      // Mở rộng sang tầng TỈNH: không lọc quận, không lọc phường.
+      crawlAreaV2: null,
+      level: "area",
+      statDate,
+      iso,
+    });
+  } catch (e) {
+    // Ném lại nguyên vẹn — chỉ ghi lại lý do.
+    dbg("skip", "gateway_failed", `error_code=${safeErrorCode(e)}`);
+    throw e;
+  }
+  if (!got.ok) {
+    dbg("skip", "stats_unavailable", `region_v2=${regionV2 ?? "-"}`);
+    return null;
+  }
+  if (got.row.median_ppm2 == null) {
+    dbg(
+      "skip",
+      "insufficient_median",
+      `sample_size=${got.row.sample_size} trimmed_size=${got.row.trimmed_size} median_ppm2=- ` +
+        `min_required=${MIN_SAMPLE_SIZE}`,
+    );
+    return null;
+  }
+  dbg(
+    "success",
+    "ok",
+    `sample_size=${got.row.sample_size} trimmed_size=${got.row.trimmed_size} ` +
+      `median_ppm2=${got.row.median_ppm2}`,
+  );
 
   return { scope: res.scope, regionV2, row: got.row };
 }
@@ -563,11 +636,19 @@ export async function generatePriceIntelligence(
     // Cả ba đều thiếu thì giữ kết quả phường (statistics = null) — không nói dối
     // rằng đã mở rộng.
     if (row.median_ppm2 == null) {
+      // [TẠM] Đo đạc: in ra tầng đang mở rộng + mã dùng để tra, để biết tầng
+      // nào bị từ chối và vì sao. Không đổi quyết định nào.
+      console.log(
+        `[price-fallback] check_id=${check.id} from_scope=${scope.scope_level} to_scope=district ` +
+          `district_code=${resolvedCrawlAreaV2 ?? "-"} region_v2=${regionV2 ?? "-"} ` +
+          `ward_sample=${row.sample_size}`,
+      );
       // Tầng quận dùng CHÍNH mã đã crawl (resolvedCrawlAreaV2) nên không cần tra
       // lại: tra lại ở cold-start sẽ ra null và mất cả tầng trung gian. Trong
       // nhánh ward, crawlAreaV2 chính là resolvedCrawlAreaV2 nên đây là một giá trị.
       const byDistrict = await widenToDistrict({
         deps,
+        checkId: check.id,
         wardScope: scope,
         regionV2,
         districtCode: resolvedCrawlAreaV2,
@@ -584,7 +665,20 @@ export async function generatePriceIntelligence(
         fallbackTo = "district";
         fallbackReason = FALLBACK_REASON_INSUFFICIENT_WARD;
       } else {
-        const wider = await widenToProvince({ deps, check, index, statDate, iso, regionV2Hint: regionV2 });
+        // [TẠM] Đo đạc tầng tỉnh — chỉ ghi, không đổi hành vi.
+        console.log(
+          `[price-fallback] check_id=${check.id} from_scope=${scope.scope_level} to_scope=province ` +
+            `region_v2=${regionV2 ?? "-"} ward_sample=${row.sample_size}`,
+        );
+        const wider = await widenToProvince({
+          deps,
+          checkId: check.id,
+          check,
+          index,
+          statDate,
+          iso,
+          regionV2Hint: regionV2,
+        });
         if (wider) {
           scope = wider.scope;
           regionV2 = wider.regionV2;
