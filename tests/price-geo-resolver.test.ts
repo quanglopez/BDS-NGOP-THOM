@@ -1,12 +1,18 @@
 // Self-check: Price Intelligence Geo Resolver V2 (gazetteer) + tích hợp pipeline.
 // Chạy: npm test — fake gateway/repo, không network, không DB.
 import { strict as assert } from "node:assert";
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   createGeoResolver,
   inMemoryGeoAreaMap,
   type GeoAreaMapRepo,
   type GeoCodeRow,
 } from "../lib/price/geo-resolver.ts";
+import { supabasePriceStats } from "../lib/price/repos.ts";
+import { PricePipelineError, safeErrorCode } from "../lib/price/errors.ts";
 import {
   generatePriceIntelligence,
   LIMITATION_WIDENED_FROM_WARD,
@@ -1105,6 +1111,246 @@ async function main() {
     for (const c of listings.listByGeoCalls) {
       assert.notEqual(c.areaV2, WARD_CODE, "không được tra comparables bằng mã phường");
     }
+  });
+
+  // ================================================================
+  // PHASE 8: DB schema phai cho phep tang QUAN (P1)
+  //
+  // Loi goc: migration 0013 chan scope_level IN ('ward','province') trong khi
+  // code ghi 'district'. Insert tang quan chắc chắn bi 23514, claim() nuot
+  // loi -> tang quan bi coi nhu "nguoi khac giu khoa" -> lui xuong tinh.
+  //
+  // Test o day DOC CHINH file migration de biet DB that cho phep gi, roi chan
+  // insert theo dung danh sach do. Fake mem trong RAM thi "cho phep het", nen
+  // revert 0017 van xanh — dung thu muc supabase/migrations moi lam test do.
+  console.log("\n== PHASE 8: constraint DB khop voi ScopeLevel cua code ==");
+
+  type DbRow = Record<string, unknown>;
+
+  const MIGRATIONS_DIR = fileURLToPath(new URL("../supabase/migrations", import.meta.url));
+  const TYPES_FILE = fileURLToPath(new URL("../lib/price/types.ts", import.meta.url));
+
+  /** scope_level cuoi cung trong migration = rang buoc DB dang co. */
+  function allowedScopeLevels(): string[] {
+    const files = readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
+    let found: string[] = [];
+    for (const f of files) {
+      const sql = readFileSync(join(MIGRATIONS_DIR, f), "utf8");
+      for (const m of sql.matchAll(/check\s*\(\s*scope_level\s+in\s*\(([^)]*)\)\s*\)/gi)) {
+        found = m[1]
+          .split(",")
+          .map((s) => s.trim().replace(/^'|'$/g, ""))
+          .filter(Boolean);
+      }
+    }
+    return found;
+  }
+
+  /** ScopeLevel trong lib/price/types.ts. */
+  function codeScopeLevels(): string[] {
+    const src = readFileSync(TYPES_FILE, "utf8");
+    const m = src.match(/export type ScopeLevel\s*=\s*([^;]+);/);
+    assert.ok(m, "khong tim thay khai bao ScopeLevel trong lib/price/types.ts");
+    return (m![1].match(/["']([a-z]+)["']/g) ?? []).map((s) => s.slice(1, -1));
+  }
+
+  interface FakeDb {
+    allowed: string[];
+    /** Ep loi cho moi lan ghi (mo phong DB hong). null = binh thuong. */
+    forcedCode: string | null;
+    stats: DbRow[];
+    /** So lan ghi bi rang buoc chan. Phai la 0 sau khi fix. */
+    rejected: number;
+  }
+
+  /**
+   * Supabase client toi thieu cho supabasePriceStats, co thuc thi check
+   * constraint theo danh sach tu migration. Chỉ 5 lời gọi mà repo đó dùng:
+   * select/eq/maybeSingle, insert, upsert, delete/eq.
+   */
+  function fakeAdmin(db: FakeDb) {
+    const key = (r: DbRow) => `${r.scope_key}|${r.stat_date}`;
+    const reject = (row: DbRow) => {
+      if (typeof row.scope_level === "string" && !db.allowed.includes(row.scope_level)) {
+        db.rejected += 1;
+        return { code: "23514", message: `check constraint on scope_level (${row.scope_level})` };
+      }
+      return null;
+    };
+    return {
+      from(_table: string) {
+        let filters: [string, unknown][] = [];
+        const match = (r: DbRow) => filters.every(([c, v]) => r[c] === v);
+        const forced = () =>
+          db.forcedCode ? { code: db.forcedCode, message: "forced failure" } : null;
+        const api = {
+          select(_cols?: string) {
+            return api;
+          },
+          eq(col: string, val: unknown) {
+            filters.push([col, val]);
+            return api;
+          },
+          not() {
+            return api;
+          },
+          limit(_n?: number) {
+            return api;
+          },
+          async maybeSingle() {
+            return { data: db.stats.filter(match)[0] ?? null, error: null };
+          },
+          async insert(row: DbRow) {
+            const e = forced() ?? reject(row);
+            if (e) return { data: null, error: e };
+            if (db.stats.some((r) => key(r) === key(row))) {
+              return { data: null, error: { code: "23505", message: "duplicate key" } };
+            }
+            db.stats.push({ ...row });
+            return { data: null, error: null };
+          },
+          async upsert(rows: DbRow[]) {
+            for (const row of rows) {
+              const e = forced() ?? reject(row);
+              if (e) return { data: null, error: e };
+              const i = db.stats.findIndex((r) => key(r) === key(row));
+              if (i >= 0) db.stats[i] = { ...row };
+              else db.stats.push({ ...row });
+            }
+            return { data: null, error: null };
+          },
+          async delete() {
+            db.stats = db.stats.filter((r) => !match(r));
+            return { data: null, error: null };
+          },
+        };
+        return api;
+      },
+    };
+  }
+
+  const freshDb = (forcedCode: string | null = null): FakeDb => ({
+    allowed: allowedScopeLevels(),
+    forcedCode,
+    stats: [],
+    rejected: 0,
+  });
+
+  const asAdmin = (db: FakeDb) => fakeAdmin(db) as unknown as SupabaseClient;
+
+  const D_SCOPE: PriceScope = {
+    scope_level: "district",
+    scope_key: `district:${CRAWL_CODE}|cat:${CAT}|size:40-70|rooms:3`,
+    scope_description: "Quận Hải Châu · Nhà đất",
+    region_name: "Tp Hồ Chí Minh",
+    area_name: "Quận Hải Châu",
+    category_code: CAT,
+    category_name: "Nhà đất",
+    size_min_m2: 40,
+    size_max_m2: 70,
+    rooms_min: 3,
+    rooms_max: 3,
+  };
+
+  const CLAIM = { scopeKey: D_SCOPE.scope_key, statDate: "2026-09-29", scope: D_SCOPE, source: "test" };
+
+  await check("D0. rang buoc DB cho phep DUNG cap ma ScopeLevel cua code", () => {
+    const db = allowedScopeLevels();
+    const code = codeScopeLevels();
+    assert.ok(db.length > 0, "khong tim thay check constraint scope_level trong migrations");
+    assert.ok(
+      db.includes("district"),
+      `DB khong cho phep 'district': ${db.join(",")} — thieu migration sua constraint`,
+    );
+    assert.deepEqual([...db].sort(), [...code].sort(), `DB ${db.join(",")} <> code ${code.join(",")}`);
+  });
+
+  await check("D1. claim() tra TRUE khi insert tang quan duoc phep", async () => {
+    const db = freshDb();
+    const stats = supabasePriceStats(asAdmin(db));
+    assert.equal(await stats.claim(CLAIM), true, "insert 'district' hop le phai claim duoc");
+    assert.equal(db.rejected, 0);
+    assert.equal(db.stats.length, 1);
+  });
+
+  await check("D2. claim() tra FALSE khi co nguoi giu khoa (23505 duplicate)", async () => {
+    const db = freshDb();
+    const stats = supabasePriceStats(asAdmin(db));
+    assert.equal(await stats.claim(CLAIM), true);
+    assert.equal(await stats.claim(CLAIM), false, "23505 la khoa bi giu -> false, khong phai loi");
+  });
+
+  await check("D3. claim() nem loi schema, KHONG dua ve false (23514/42501/42xxx/5xxxx)", async () => {
+    for (const code of ["23514", "42501", "42P01", "50001", "PGRST204"]) {
+      const db = freshDb(code);
+      const stats = supabasePriceStats(asAdmin(db));
+      await assert.rejects(
+        () => stats.claim(CLAIM),
+        (e: Error) => {
+          assert.ok(e instanceof PricePipelineError, `${code} phai nem PricePipelineError`);
+          assert.equal(e.code, "stats_claim_failed", `${code} phai giu ma loi rieng`);
+          return true;
+        },
+        `${code} khong duoc nuot thanh false`,
+      );
+    }
+  });
+
+  await check("D4. safeErrorCode phan loai duoc loi constraint de log", () => {
+    assert.equal(safeErrorCode({ code: "23514" }), "check_violation");
+    assert.equal(safeErrorCode({ code: "42P01" }), "db_error");
+    assert.equal(safeErrorCode({ code: "50001" }), "db_unavailable");
+  });
+
+  await check("D5. ward thieu mau -> tang QUAN ghi duoc dong stats scope_level='district'", async () => {
+    const n = { crawl: 0, region: 0, area: 0 };
+    const db = freshDb();
+    const r = await generatePriceIntelligence(wardCheck("d5"), {
+      gateway: tieredGateway(n, { wardAds: 0, districtAds: 40, provinceAds: 40 }),
+      listings: new MemListings(),
+      // REPO THAT chứ không phải fake: đường ghi scope_level phải qua đúng
+      // constraint mà migration 0017 khai báo.
+      stats: supabasePriceStats(asAdmin(db)),
+      geo: tieredGeo(n),
+    });
+    assert.equal(db.rejected, 0, "DB phai nhan duoc scope_level='district'");
+    assert.ok(r.ok, "phai tao duoc snapshot");
+    if (!r.ok) return;
+
+    const s = r.snapshot;
+    assert.equal(s.primary_scope_level, "ward", "vi tri tin van la phuong");
+    assert.equal(s.scope_level, "district", "phai mo sang tang quan");
+    assert.equal(s.reference_scope_level, "district", "so den tu tang quan");
+    assert.ok(s.statistics, "tang quan du mau thi phai co so");
+
+    const districtRow = db.stats.find((row) => row.scope_level === "district");
+    assert.ok(districtRow, `khong co dong stats tang quan, thay co: ${JSON.stringify(db.stats.map((x) => x.scope_key))}`);
+    assert.equal(districtRow!.scope_level, "district");
+    assert.ok(
+      (districtRow!.sample_size as number) >= 15,
+      `sample_size tang quan = ${districtRow!.sample_size}`,
+    );
+    assert.ok(districtRow!.median_ppm2 != null, "phai co median o tang quan");
+  });
+
+  await check("D6. tang quan bi constraint chan -> pipeline nem loi, KHONG lui tinh im lang", async () => {
+    // Mô phỏng đúng trạng thái DB trước migration 0017: cấm 'district'.
+    const n = { crawl: 0, region: 0, area: 0 };
+    const db = freshDb();
+    db.allowed = ["ward", "province"];
+    await assert.rejects(
+      () =>
+        generatePriceIntelligence(wardCheck("d6"), {
+          gateway: tieredGateway(n, { wardAds: 0, districtAds: 40, provinceAds: 40 }),
+          listings: new MemListings(),
+          stats: supabasePriceStats(asAdmin(db)),
+          geo: tieredGeo(n),
+        }),
+      (e: Error) => e instanceof PricePipelineError && e.code === "stats_claim_failed",
+      "constraint 23514 phai nem ra route, khong duoc bien thanh 'chua du mau'",
+    );
   });
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);

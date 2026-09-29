@@ -4,8 +4,9 @@
 
 export class PricePipelineError extends Error {
   readonly code: string;
-  constructor(code: string) {
-    super(`price-intelligence:${code}`);
+  /** Lỗi gốc (PostgREST/PG) để truy vết. Không bao giờ log message thô ra ngoài. */
+  constructor(code: string, options?: { cause?: unknown }) {
+    super(`price-intelligence:${code}`, options);
     this.name = "PricePipelineError";
     this.code = code;
   }
@@ -21,8 +22,16 @@ export function safeErrorCode(e: unknown): string {
     if (pgCode === "42703" || pgCode === "PGRST204") return "schema_missing";
     if (pgCode === "42501") return "rls_denied";
     if (pgCode === "23505") return "duplicate_key";
+    // 23514 = vi pham check constraint. Hay gap nhat khi code va DB lech
+    // (vi du 0013 cau scope_level chi cho ward/province trong khi code ghi
+    // district) -> phai log ra, khong dua ve chung "unknown".
+    if (pgCode === "23514") return "check_violation";
     if (pgCode === "57014" || pgCode === "PGRST116") return "timeout";
     if (pgCode === "PGRST301") return "unauthorized";
+    // Lop loi 42xxx (syntax/access rule) va 5xxxx (system) deu la loi DB, khong
+    // phai loi nghiep vu -> gom lai de log doc la duoc.
+    if (pgCode.startsWith("42")) return "db_error";
+    if (pgCode.startsWith("5")) return "db_unavailable";
   }
 
   if (e instanceof Error) {

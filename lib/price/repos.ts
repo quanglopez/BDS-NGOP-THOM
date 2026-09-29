@@ -201,8 +201,16 @@ export function supabasePriceStats(admin: SupabaseClient): PriceStatsRepo {
         excluded_invalid: 0,
         source: "chotot_gateway",
       });
-      // 23505 = unique violation -> người khác đang giữ khoá
-      return !error;
+      if (!error) return true;
+      // 23505 = unique violation -> người khác đang giữ khoá (scope_key,
+      // stat_date). Đây là kết quả bình thường của cơ chế khoá, giữ trả false.
+      if (error.code === "23505") return false;
+      // Mọi lỗi còn lại là lỗi DB (23514 check, 42501 RLS, 42xxx, 5xxxx, ...),
+      // KHÔNG phải "có người giữ khoá". Trả false ở đây biến hỏng schema thành
+      // "chưa ai crawl" -> tầng quận rơi xuống tỉnh trong im lặng, đúng cái
+      // lỗi mà migration 0017 sửa. Phải ném để route báo "tạm thời chưa khả
+      // dụng" và log ra error_code thay vì âm thầm hạ chất lượng báo cáo.
+      throw new PricePipelineError("stats_claim_failed", { cause: error });
     },
 
     /**
