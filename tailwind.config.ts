@@ -60,10 +60,10 @@ const config: Config = {
         // DEFAULT = #0B1D3A (giá trị cũ, chưa đổi) — dùng bởi 38 chỗ `bg-navy`.
         navy: {
           DEFAULT: "#0B1D3A",
-          900: "var(--cb-navy-900)",
-          800: "var(--cb-navy-800)",
-          700: "var(--cb-navy-700)",
-          600: "var(--cb-navy-600)",
+          900: "#071B3A",
+          800: "#0B2450",
+          700: "#12305F",
+          600: "#1C3F78",
         },
 
         // --- Brand: gold ---
@@ -71,9 +71,9 @@ const config: Config = {
         // `base` là gold CTA mới của Design System; Phase 2 mới chuyển CTA sang.
         gold: {
           DEFAULT: "#C9A86A",
-          base: "var(--cb-gold)",
-          soft: "var(--cb-gold-soft)",
-          deep: "var(--cb-gold-deep)",
+          base: "#D8B46A",
+          soft: "#E8CE96",
+          deep: "#A9853C",
         },
 
         // --- Brand: cream (nền ấm cũ) ---
@@ -83,44 +83,54 @@ const config: Config = {
 
         // --- Ink ---
         ink: {
-          900: "var(--cb-ink-900)",
-          700: "var(--cb-ink-700)",
-          600: "var(--cb-ink-600)",
-          500: "var(--cb-ink-500)",
-          "on-navy": "var(--cb-ink-on-navy)",
-          "on-navy-muted": "var(--cb-ink-on-navy-muted)",
-          "on-navy-faint": "var(--cb-ink-on-navy-faint)",
+          900: "#0B1220",
+          700: "#2A3646",
+          600: "#4B5B70",
+          500: "#64748B",
+          "on-navy": "#FFFFFF",
+          "on-navy-muted": "#A9BBD4",
+          "on-navy-faint": "#7E94B4",
         },
 
         // --- Surface ---
         surface: {
-          DEFAULT: "var(--cb-ground)",
-          mist: "var(--cb-ground-mist)",
+          DEFAULT: "#FFFFFF",
+          mist: "#F6F8FB",
         },
 
         // --- Emerald: trạng thái AI. KHÔNG dùng cho CTA, link, icon điều hướng ---
         ai: {
-          DEFAULT: "var(--cb-emerald)",
-          ink: "var(--cb-emerald-ink)",
-          wash: "var(--cb-emerald-wash)",
+          DEFAULT: "#10B981",
+          ink: "#047857",
+          wash: "#ECFDF5",
         },
 
         // --- Risk: luôn đi kèm icon + nhãn chữ, không chỉ bằng màu ---
         risk: {
-          high: "var(--cb-risk-high)",
-          "high-wash": "var(--cb-risk-high-wash)",
-          medium: "var(--cb-risk-medium)",
-          "medium-wash": "var(--cb-risk-medium-wash)",
-          low: "var(--cb-risk-low)",
-          "low-wash": "var(--cb-risk-low-wash)",
-          clear: "var(--cb-risk-clear)",
-          "clear-wash": "var(--cb-risk-clear-wash)",
+          high: "#B42318",
+          "high-wash": "#FEF3F2",
+          medium: "#B54708",
+          "medium-wash": "#FFFAEB",
+          low: "#175CD3",
+          "low-wash": "#EFF8FF",
+          clear: "#047857",
+          "clear-wash": "#ECFDF5",
+        },
+
+        // --- Line / border ---
+        // Dùng rgb() có alpha sẵn: modifier dạng `/10` không áp dụng được cho
+        // token đã chứa alpha. Dùng nguyên bản, không thêm opacity.
+        line: {
+          DEFAULT: "#D8E0EA",
+          strong: "#7E8FA6",
+          navy: "rgb(216 180 106 / 0.22)",
+          "navy-strong": "rgb(216 180 106 / 0.42)",
         },
 
         // --- Focus ---
         focus: {
-          light: "var(--cb-navy-800)",
-          navy: "var(--cb-gold)",
+          light: "#0B2450",
+          navy: "#D8B46A",
         },
       },
 

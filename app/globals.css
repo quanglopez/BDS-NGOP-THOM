@@ -8,6 +8,10 @@
    Single source of truth cho màu, chữ, spacing, radius, elevation, motion.
    Component KHÔNG được viết hex/rgb trực tiếp — phải đi qua token.
 
+   Lưu ý: màu ở `tailwind.config.ts` phải khai báo bằng hex thật, KHÔNG dùng
+   `var(--cb-*)`. Tailwind không tiêm được alpha vào `var()`, nên modifier
+   `/10`, `/40`, `/90` sẽ bị bỏ qua âm thầm. Hai nơi này phải khớp nhau.
+
    Trạng thái: token đã khai báo nhưng CHƯA được áp dụng vào
    components/site/*. Giá trị `DEFAULT` của navy / gold / cream giữ nguyên
    đúng như trước để Phase 2 review từng component mà không đổi hình loạt.
