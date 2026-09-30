@@ -14,7 +14,7 @@ import { parseProAnalysis, type ProAnalysis, type ProNextStep, type ProWarning }
 import { PRO_ANALYSIS_JSON_SCHEMA, PRO_ANALYSIS_JSON_SCHEMA_NAME } from "./json-schema";
 import { guardProAnalysis } from "./guard";
 import { calcPricePerM2 } from "./evidence";
-import { resolveModelChain, structuredModeFor } from "./model-chain";
+import { resolveModelChain, structuredModeFor, timeoutMsFor } from "./model-chain";
 import { askProRoute, formatJevDecisionReceipt, type ProFailureKind } from "./jev-decision";
 import type { EvidencePack } from "./evidence";
 
@@ -281,6 +281,7 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
           mode === "json_schema"
             ? { name: PRO_ANALYSIS_JSON_SCHEMA_NAME, strict: false, schema: PRO_ANALYSIS_JSON_SCHEMA }
             : undefined,
+        timeoutMs: timeoutMsFor(model),
       });
 
       metrics.attempts += 1;

@@ -11,6 +11,7 @@ import {
   PRO_ANALYSIS_DEFAULT_MODEL,
   PRO_ANALYSIS_BENCHMARK_CANDIDATES,
   isRetiredModel,
+  timeoutMsFor,
 } from "../lib/ai/model-chain.ts";
 import { generateProAnalysis, formatProAnalysisMetrics } from "../lib/ai/pro-analysis.ts";
 import { buildSnapshotUpdate, isFreshSnapshot, shouldPersistSnapshot } from "../lib/ai/report-cache.ts";
@@ -38,6 +39,9 @@ function check(name: string, fn: () => void | Promise<void>) {
 const QWEN = "qwen/qwen3.8-27b:free";
 // Slug OpenRouter đã rút: từng là fallback v1, nay trả 404 mọi lần gọi.
 const LING_RETIRED = "inclusionai/ling-3.0-flash-fin:free";
+// Bản -vl CÒN sống (khác -fin đã rút ở trên): đây là fallback production
+// hiện tại. Đo 2026-09-30 11:05: provider_timeout tại đúng trần 15s.
+const LING_VL = "inclusionai/ling-3.0-flash-vl";
 const GEMMA = "google/gemma-4-31b-it:free";
 const NEMO = "nvidia/nemotron-3.5-lightning:free";
 
@@ -237,6 +241,100 @@ async function retiredModelTests() {
   await check("capability: Gemma json_object, Ling không còn capability riêng", () => {
     assert.equal(structuredModeFor(GEMMA), "json_object");
     assert.equal(structuredModeFor(LING_RETIRED), "json_object", "slug lạ -> mode rộng, không hỏng");
+  });
+}
+
+// Hồi quy cho lỗi production 2026-09-30 11:05 (check adc166ee):
+//   [pro-analysis-error] provider_error=provider_429
+//     requested_model=qwen/qwen3.8-27b:free
+//     fallback_model=inclusionai/ling-3.0-flash-vl structured_mode=json_schema
+//   [pro-analysis-error] provider_error=provider_timeout http_status=-
+//     requested_model=inclusionai/ling-3.0-flash-vl
+//     structured_mode=json_object latency_ms=15003
+//
+// Hai lỗi độc lập: (1) VL bị gán mode rộng json_object thay vì
+// json_schema; (2) deadline 15s của client cắt ngang request của VL.
+async function lingVlTests() {
+  console.log("\n== 13. Ling VL: chain, json_schema, timeout 30s ==");
+
+  const VL_ENV = { ...CHAIN_ENV, PRO_ANALYSIS_FALLBACK_MODELS: LING_VL };
+
+  await check("Ling VL qua được bộ lọc (không dính RETIRED của -fin)", () => {
+    assert.equal(isRetiredModel(LING_VL), false, "-vl khác -fin, không được lọc nhầm");
+    assert.equal(isDeniedModel(LING_VL), false);
+    assert.equal(isV1ExcludedModel(LING_VL), false);
+    assert.deepEqual(
+      resolveModelChain({ PRO_ANALYSIS_MODEL: QWEN, PRO_ANALYSIS_FALLBACK_MODELS: LING_VL }),
+      [QWEN, LING_VL],
+    );
+  });
+
+  await check("Qwen 429 -> Ling VL được gọi đúng 1 lần rồi trả lời", async () => {
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
+    const out = await withEnv(VL_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false);
+    assert.equal(out.model, LING_VL, "kết quả phải do Ling VL trả, không phải deterministic");
+    assert.equal(captured().filter((c) => c.model === QWEN).length, 1, "Qwen 429 không retry");
+    assert.equal(captured().filter((c) => c.model === LING_VL).length, 1, "VL gọi đúng 1 lần");
+    assert.equal(out.metrics.rate_limited, true);
+  });
+
+  await check("Ling VL dùng json_schema (response_format json_schema trên wire)", async () => {
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
+    await withEnv(VL_ENV, () => generateProAnalysis(sampleEvidence()));
+    const vl = captured().find((c) => c.model === LING_VL);
+    assert.ok(vl, "phải có request tới Ling VL");
+    const rf = vl!.body.response_format as { type?: string } | undefined;
+    assert.equal(rf?.type, "json_schema", "VL phải dùng json_schema, không phải json_object");
+    assert.equal(structuredModeFor(LING_VL), "json_schema");
+  });
+
+  await check("deadline: Ling VL = 30s, Qwen giữ mặc định 15s", async () => {
+    // callOpenRouter đăng ký setTimeout(..., Math.max(1000, timeoutMs)).
+    // Ghi lại delay thay vì chờ thật: kiểm chứng giá trị deadline đã truyền
+    // vào client, không phụ thuộc thời gian thực. clearTimeout trong finally
+    // của openrouter.ts nhận handle này nên không cần dọn gì thêm.
+    const real = globalThis.setTimeout;
+    const delays: number[] = [];
+    globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+      if (typeof ms === "number") delays.push(ms);
+      return real(fn, 2_000_000, ...rest); // không bao giờ abort trong test
+    }) as typeof setTimeout;
+    try {
+      stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
+      await withEnv(VL_ENV, () => generateProAnalysis(sampleEvidence()));
+    } finally {
+      globalThis.setTimeout = real;
+    }
+    assert.ok(delays.includes(30000), `phải đăng ký deadline 30s cho VL, thấy: ${delays.join(",")}`);
+    assert.ok(delays.includes(15000), "Qwen phải giữ deadline mặc định 15s");
+  });
+
+  await check("timeoutMsFor: chỉ Ling VL được nới", () => {
+    assert.equal(timeoutMsFor(LING_VL), 30000);
+    assert.equal(timeoutMsFor(QWEN), 15000);
+    assert.equal(timeoutMsFor(GEMMA), 15000);
+    assert.equal(timeoutMsFor(NEMO), 15000);
+    assert.equal(timeoutMsFor(LING_RETIRED), 15000, "slug đã rút không được hưởng deadline riêng");
+  });
+
+  await check("VL timeout (AbortError thật) vẫn retry 2 lần rồi mới deterministic", async () => {
+    // status:0 KHÔNG tạo timeout — Response() ném TypeError => provider_network.
+    // Timeout thật là fetch bị AbortController hủy, nên stub phải ném AbortError
+    // đúng như abort() của callOpenRouter (openrouter.ts dò chữ ký name này).
+    const captured = stubFetch((m) => {
+      if (m === QWEN) return rateLimited();
+      throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+    });
+    const out = await withEnv(VL_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(captured().filter((c) => c.model === LING_VL).length, 2, "timeout phải retry 2 lần");
+    assert.equal(out.fromFallback, true);
+    assert.equal(out.fallbackReason, "all_models_failed", "429 + timeout -> all_models_failed");
+    assert.equal(
+      out.metrics.provider_errors.join("|"),
+      "provider_429|provider_timeout|provider_timeout",
+      "phải ghi nhận 429 của Qwen + 2 timeout của VL",
+    );
   });
 }
 
@@ -875,6 +973,7 @@ async function main() {
   });
 
   await retiredModelTests();
+  await lingVlTests();
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
   // process.exit() huy async handle -> libuv assertion tren Windows.

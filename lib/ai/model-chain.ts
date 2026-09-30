@@ -8,11 +8,43 @@
 //                                          => dùng json_object
 // - nvidia/nemotron-3.5-lightning:free   -> KHÔNG structured_outputs/response_format
 //                                          => KHÔNG gửi response_format, prompt strict JSON
+// - inclusionai/ling-3.0-flash-vl    -> structured_outputs ✔  => dùng JSON Schema
 // Vì capability KHÁC NHAU, KHÔNG dùng native `models` array + route:'fallback'
 // của OpenRouter (một body chung sẽ gửi param không model fallback chấp nhận).
 // Thay bằng application-level chain có kiểm soát, mỗi model 1 body riêng.
 
 import type { StructuredMode } from "./openrouter";
+
+
+// Timeout mặc định của callOpenRouter (lib/ai/openrouter.ts). Không lặp ở
+// đây: đổi DEFAULT_TIMEOUT_MS ở client là đủ, tránh hai nguồn sự thật.
+const DEFAULT_TIMEOUT_MS = 15000;
+
+// Timeout riêng cho model CHẬM. Số ở đây là deadline của HTTP request
+// tới provider, không phải của cả chain.
+//
+// Ling VL là model vision-language: phải route qua provider có cold
+// start, nên 15s mặc định bị abort giữa chừng. Đo production 2026-09-30
+// 11:05 (check adc166ee): Qwen 429 sau 165ms, rồi
+// requested_model=inclusionai/ling-3.0-flash-vl -> provider_timeout tại
+// latency_ms=15003 — đúng trần 15s, http_status=-, response_body_safe=-
+// => KHÔNG phải provider từ chối, mà client tự huỷ trước khi provider
+// kịp trả lời.
+//
+// Suy ra từ một mẫu, không phải kết luận: 30s chỉ là mức nới để phân biệt
+// "VL chậm" với "VL hỏng". Nếu sau khi nới vẫn provider_timeout ở ~30s thì
+// vấn đề không nằm ở deadline.
+const MODEL_TIMEOUT_MS: readonly (readonly [RegExp, number])[] = [
+  [/^inclusionai\/ling-3\.0-flash-vl/, 30000],
+];
+
+// Deadline cho 1 request tới `model`. Model không khai báo -> default.
+export function timeoutMsFor(model: string): number {
+  for (const [re, ms] of MODEL_TIMEOUT_MS) {
+    if (re.test(model)) return ms;
+  }
+  return DEFAULT_TIMEOUT_MS;
+}
 
 export const PRO_ANALYSIS_DEFAULT_MODEL = "qwen/qwen3.8-27b:free";
 // Chain v1 (production): Qwen -> Gemma -> deterministic fallback.
@@ -70,6 +102,7 @@ export function isRetiredModel(model: string): boolean {
 export function structuredModeFor(model: string): StructuredMode {
   const id = model.toLowerCase();
   if (id.startsWith("qwen/qwen3.8-27b")) return "json_schema";
+  if (id.startsWith("inclusionai/ling-3.0-flash-vl")) return "json_schema";
   if (id.startsWith("google/gemma-4-31b")) return "json_object";
   if (id.startsWith("nvidia/nemotron-3.5-lightning")) return "none";
   return "json_object";
