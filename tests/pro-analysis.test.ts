@@ -2,7 +2,11 @@
 // Không gọi mạng, không cần OPENROUTER_API_KEY.
 import { strict as assert } from "node:assert";
 import { buildEvidencePack, calcPricePerM2 } from "../lib/ai/evidence.ts";
-import { parseProAnalysis, type ProAnalysis } from "../lib/ai/schema.ts";
+import {
+  parseProAnalysis,
+  parseProAnalysisDetailed,
+  type ProAnalysis,
+} from "../lib/ai/schema.ts";
 import { guardProAnalysis } from "../lib/ai/guard.ts";
 import { buildFallbackAnalysis, generateProAnalysis } from "../lib/ai/pro-analysis.ts";
 import { analyzeListing } from "../lib/scoring.ts";
@@ -144,6 +148,43 @@ async function main() {
   await check("bóc code fence nếu model lỡ bọc markdown", () => {
     const p = parseProAnalysis("```json\n" + JSON.stringify(sampleAnalysis()) + "\n```");
     assert.ok(p);
+  });
+
+  // Chẩn đoán parse (lỗi production 2026-09-30 15:18, check 8b1f1bb0).
+  // Log cũ gộp cả 3 ca vào "json_unparseable_or_missing_headline" nên không
+  // phân biệt được model trả JSON hỏng với model trả JSON thiếu headline.
+  await check("parse lỗi -> nêu đúng lý do, không gộp", () => {
+    const broken = parseProAnalysisDetailed("{khong phai json");
+    assert.equal(broken.ok, false);
+    assert.equal(broken.ok === false && broken.reason, "json_parse_failed");
+
+    const arr = parseProAnalysisDetailed("[1,2,3]");
+    assert.equal(arr.ok === false && arr.reason, "not_an_object");
+
+    const noHeadline = parseProAnalysisDetailed(
+      JSON.stringify({ ...sampleAnalysis(), summary: { headline: "", text: "x", confidence: "low" } }),
+    );
+    assert.equal(noHeadline.ok === false && noHeadline.reason, "missing_headline");
+  });
+
+  await check("parse detail KHÔNG rò nội dung model", () => {
+    const r = parseProAnalysisDetailed("{khong phai json");
+    assert.equal(r.ok, false);
+    // detail chỉ được chứa message của JSON.parse + cờ fence, KHÔNG raw text.
+    assert.ok(!(r.ok === false && r.detail.includes("khong phai")));
+  });
+
+  await check("JSON thiếu field nhưng có headline -> vẫn parse, key lọt vào top_keys", () => {
+    // json_object ép "là JSON" chứ không ép hình dạng: model bỏ field là
+    // chuyện thường. Parse phải chấp nhận phần có và báo tên key còn lại
+    // để log chẩn đoán được, thay vì ném toàn bộ.
+    const partial = { summary: { headline: "Tin tốt", text: "x", confidence: "high" } };
+    const r = parseProAnalysisDetailed(JSON.stringify(partial));
+    assert.ok(r.ok, "headline có thì phải parse được dù thiếu field khác");
+    assert.equal(r.ok === true && r.analysis.summary.headline, "Tin tốt");
+    const miss = parseProAnalysisDetailed(JSON.stringify({ price_analysis: {}, summary: {} }));
+    assert.equal(miss.ok === false && miss.reason, "missing_headline");
+    assert.deepEqual(miss.ok === false && miss.topKeys, ["price_analysis", "summary"]);
   });
 
   await check("reference bịa bị ép false khi không có median", () => {

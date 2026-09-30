@@ -91,25 +91,71 @@ function sw(v: unknown): ProStrengthWeakness {
   };
 }
 
+// Lý do parse thất bại. Log trước đây gộp cả 3 ca vào một chuỗi
+// "json_unparseable_or_missing_headline" nên không phân biệt được model
+// trả JSON hỏng với model trả JSON thiếu headline. Tách ra để log đúng.
+export type ParseFailureReason = "json_parse_failed" | "not_an_object" | "missing_headline";
+
+export type ParseResult =
+  | { ok: true; analysis: ProAnalysis }
+  | { ok: false; reason: ParseFailureReason; detail: string; topKeys: string[] };
+
+// Dùng khi cần chẩn đoán (pro-analysis log). KHÔNG log nội dung model —
+// chỉ log hình dạng: lý do, kích thước, và tên key cấp 1 (tên key đến từ
+// schema, không phải PII của listing).
+export function parseProAnalysisDetailed(raw: string): ParseResult {
+  const trimmed = raw.trim();
+  const unfenced = trimmed
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  const hadFence = unfenced !== trimmed;
+  let data: unknown;
+  try {
+    data = JSON.parse(unfenced);
+  } catch (e) {
+    return {
+      ok: false,
+      reason: "json_parse_failed",
+      // Chỉ lấy message của JSON.parse (vị trí lỗi), KHÔNG log raw.
+      detail: `${e instanceof Error ? e.message : "unknown"} fence=${hadFence}`,
+      topKeys: [],
+    };
+  }
+  if (!isRecord(data)) {
+    return {
+      ok: false,
+      reason: "not_an_object",
+      detail: `typeof=${Array.isArray(data) ? "array" : typeof data} fence=${hadFence}`,
+      topKeys: [],
+    };
+  }
+
+  const topKeys = Object.keys(data).slice(0, 20);
+  const summary = isRecord(data.summary) ? data.summary : {};
+  const headline = str(summary.headline, 200);
+  if (!headline) {
+    return {
+      ok: false,
+      reason: "missing_headline",
+      detail: `has_summary=${isRecord(data.summary)} fence=${hadFence}`,
+      topKeys,
+    };
+  }
+  return { ok: true, analysis: coerce(data, summary, headline) };
+}
+
 // Parse + ép chuẩn JSON AI trả về. Trả null nếu thiếu hẳn khung tối thiểu
 // (không có summary/headline) để caller retry hoặc fallback.
 export function parseProAnalysis(raw: string): ProAnalysis | null {
-  let data: unknown;
-  try {
-    // Bóc code fence nếu model lỡ bọc markdown dù đã dặn không bọc
-    const cleaned = raw
-      .trim()
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/, "");
-    data = JSON.parse(cleaned);
-  } catch {
-    return null;
-  }
-  if (!isRecord(data)) return null;
+  const r = parseProAnalysisDetailed(raw);
+  return r.ok ? r.analysis : null;
+}
 
-  const summary = isRecord(data.summary) ? data.summary : {};
-  const headline = str(summary.headline, 200);
-  if (!headline) return null;
+function coerce(
+  data: Record<string, unknown>,
+  summary: Record<string, unknown>,
+  headline: string,
+): ProAnalysis {
 
   const scoreExplanation = isRecord(data.score_explanation) ? data.score_explanation : {};
   const priceRaw = isRecord(data.price_analysis) ? data.price_analysis : {};

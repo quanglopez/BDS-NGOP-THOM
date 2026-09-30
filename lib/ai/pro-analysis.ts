@@ -10,7 +10,12 @@ import {
   PRO_ANALYSIS_STRICT_JSON_INSTRUCTION,
   PRO_ANALYSIS_SYSTEM_PROMPT,
 } from "./prompts";
-import { parseProAnalysis, type ProAnalysis, type ProNextStep, type ProWarning } from "./schema";
+import {
+  parseProAnalysisDetailed,
+  type ProAnalysis,
+  type ProNextStep,
+  type ProWarning,
+} from "./schema";
 import { PRO_ANALYSIS_JSON_SCHEMA, PRO_ANALYSIS_JSON_SCHEMA_NAME } from "./json-schema";
 import { guardProAnalysis } from "./guard";
 import { calcPricePerM2 } from "./evidence";
@@ -346,15 +351,17 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
         continue;
       }
 
-      const parsed = parseProAnalysis(res.text);
-      if (!parsed) {
+      const parsed = parseProAnalysisDetailed(res.text);
+      if (!parsed.ok) {
         metrics.validation_failed = true;
         console.error(
           `[pro-analysis-error] provider_error=validation_failed http_status=${res.status ?? 200} ` +
             `requested_model=${model} actual_model=${res.actualModel ?? "-"} ` +
             `fallback_attempt=${attempt + 1} fallback_model=${fallbackModel} ` +
             `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
-            `latency_ms=${res.latencyMs} response_body_safe=json_unparseable_or_missing_headline`,
+            `latency_ms=${res.latencyMs} parse_reason=${parsed.reason} ` +
+            `response_body_safe=parse_failed:${parsed.detail} ` +
+            `top_keys=${parsed.topKeys.join(",") || "-"} text_len=${res.text.length}`,
         );
         const go = await routeAfterFailure(model, mi, attempt + 1, "validation_failed", []);
         priorModels.push(model);
@@ -363,8 +370,9 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
         if (go === "next_model") break;
         continue;
       }
+      const analysis = parsed.analysis;
 
-      const guard = guardProAnalysis(evidence, parsed);
+      const guard = guardProAnalysis(evidence, analysis);
       if (!guard.ok) {
         metrics.guard_failed = true;
         console.error(
@@ -397,7 +405,7 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
       metrics.fallback_used = false;
       metrics.latency_ms = Date.now() - startedAt;
       return {
-        analysis: parsed,
+        analysis,
         fromFallback: false,
         model: actualModel,
         requestedModel: metrics.requested_model,

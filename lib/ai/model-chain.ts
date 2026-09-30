@@ -114,9 +114,16 @@ export function isRetiredModel(model: string): boolean {
 // Chế độ structured output theo model (đã audit ở trên).
 // Model lạ chưa biết -> json_object (mode rộng); nếu provider từ chối, pro-analysis
 // hạ xuống "none" (prompt strict JSON) thay vì sập cả chain.
+// deepseek/deepseek-v4.1-flash khai structured_outputs=true (audit
+// /api/v1/models 2026-09-30) -> nâng lên json_schema, không dùng
+// json_object. Đo production 15:18 (check 8b1f1bb0): với json_object cả
+// 2 attempt DeepSeek trả validation_failed dù finish_reason=stop và KHÔNG
+// bị cắt — json_object chỉ ép "là JSON", không ép đúng hình dạng schema,
+// nên model tự do bỏ/sửa field và parseProAnalysis không tìm thấy headline.
 export function structuredModeFor(model: string): StructuredMode {
   const id = model.toLowerCase();
   if (id.startsWith("qwen/qwen3.8-27b")) return "json_schema";
+  if (id.startsWith("deepseek/deepseek-v4.1-flash")) return "json_schema";
   if (id.startsWith("inclusionai/ling-3.0-flash-vl")) return "json_schema";
   if (id.startsWith("google/gemma-4-31b")) return "json_object";
   if (id.startsWith("nvidia/nemotron-3.5-lightning")) return "none";

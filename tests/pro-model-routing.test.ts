@@ -783,6 +783,59 @@ async function deepseekReasoningTests() {
     );
     assert.equal(out.metrics.attempts, 2, "1 attempt DeepSeek + 1 attempt Qwen");
   });
+
+  await check("DeepSeek dùng json_schema (không phải json_object)", async () => {
+    // Đo production 15:18 (check 8b1f1bb0): json_object ép "là JSON" nhưng
+    // không ép hình dạng -> DeepSeek bỏ field, validation_failed cả 2 attempt.
+    assert.equal(structuredModeFor(DEEPSEEK), "json_schema");
+    const captured = stubFetch((m) => ok(m));
+    await withEnv(DEEPSEEK_ENV, () => generateProAnalysis(sampleEvidence()));
+    const rf = captured()[0].body.response_format as
+      | { type?: string; json_schema?: { name?: string; schema?: unknown } }
+      | undefined;
+    assert.equal(rf?.type, "json_schema", "DeepSeek phải gửi response_format json_schema");
+    assert.equal(rf?.json_schema?.name, "pro_analysis", "phải kèm schema pro_analysis");
+    assert.ok(rf?.json_schema?.schema, "schema body không được rỗng");
+  });
+
+  await check("DeepSeek JSON hợp lệ -> lưu analysis (không rơi fallback)", async () => {
+    // Hồi quy đúng ca production: cùng một payload JSON sạch, nhưng đi qua
+    // json_schema thì phải ra analysis thật. Nếu mode sai, payload này vẫn
+    // hỏng -> test bắt được.
+    const captured = stubFetch((m) => ok(m, cleanAnalysis()));
+    const out = await withEnv(DEEPSEEK_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false, "payload hợp lệ phải ra analysis, không fallback");
+    assert.equal(out.model, DEEPSEEK);
+    assert.equal(out.metrics.validation_failed, false);
+    assert.equal(out.metrics.attempts, 1);
+    assert.equal(captured().filter((c) => c.model === QWEN_PAID).length, 0, "không gọi fallback");
+  });
+
+  await check("DeepSeek JSON hỏng -> validation_failed rồi fallback đúng cách", async () => {
+    const captured = stubFetch((m) =>
+      m === DEEPSEEK ? badJson() : ok(m),
+    );
+    const out = await withEnv(DEEPSEEK_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.metrics.validation_failed, true, "JSON hỏng phải ghi nhận validation_failed");
+    assert.equal(out.fromFallback, false, "Qwen phải cứu được chuỗi");
+    assert.equal(out.model, QWEN_PAID);
+    assert.ok(
+      captured().some((c) => c.model === QWEN_PAID),
+      "phải gọi Qwen sau khi DeepSeek hỏng",
+    );
+  });
+
+  await check("DeepSeek thiếu headline -> chẩn đoán missing_headline, không gộp với JSON hỏng", async () => {
+    // Hai ca khác nhau về nguyên nhân, phải phân biệt được trong metric.
+    const noHeadline = { ...cleanAnalysis(), summary: { headline: "", text: "x", confidence: "low" } };
+    const captured = stubFetch((m) => (m === DEEPSEEK ? ok(m, noHeadline) : ok(m)));
+    const out = await withEnv(DEEPSEEK_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.metrics.validation_failed, true, "thiếu headline phải là validation_failed");
+    assert.ok(
+      captured().filter((c) => c.model === DEEPSEEK).length >= 1,
+      "DeepSeek phải được gọi",
+    );
+  });
 }
 async function main() {
   console.log("\n== Chain & capability (env-driven) ==");
