@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { dealBadgeClass, dealLabel, scoreBadgeClass } from "@/lib/format";
+import { reportUrl } from "@/lib/report/slug";
 
 export interface CheckRow {
   id: string;
@@ -15,6 +16,9 @@ export interface CheckRow {
   bedrooms: number | null;
   created_at: string;
   listing_url: string | null;
+  // URL báo cáo dạng SEO. null ở report tạo trước migration 0018 -> rơi
+  // về URL UUID (vẫn mở được, server tự redirect sang slug nếu có).
+  seo_slug: string | null;
 }
 
 // Tên miền ngắn để hiện dưới tiêu đề tin (vd nhatot.com)
@@ -198,7 +202,7 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                       </td>
                       <td className="px-4 py-3.5 whitespace-nowrap">
                         <a
-                          href={`/bao-cao/${r.id}`}
+                          href={reportUrl(r.id, r.seo_slug)}
                           className="inline-flex h-8 px-3 rounded-[10px] bg-navy text-white text-[11px] font-bold items-center hover:bg-[#112a5a] transition"
                         >
                           Xem phân tích →

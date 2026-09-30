@@ -8,6 +8,7 @@ import { savePendingReport } from "@/lib/pending-report";
 import { scoreContributions } from "@/lib/score-explain";
 import { trackEvent } from "@/lib/analytics";
 import { ShareImage } from "@/components/site/share-image";
+import { reportUrl } from "@/lib/report/slug";
 
 interface Props {
   result: AnalysisResult;
@@ -20,6 +21,8 @@ interface Props {
   // Plan-aware: Pro thấy CTA mở report chuyên sâu; Free thấy CTA mở khóa
   isPro?: boolean;
   checkId?: string | null;
+  // Slug SEO để dựng link /bao-cao/{slug}; null thì reportUrl rơi về UUID.
+  seoSlug?: string | null;
   onCheckAnother: () => void;
 }
 
@@ -60,6 +63,7 @@ export function ResultCard({
   pendingListingUrl,
   isPro = false,
   checkId = null,
+  seoSlug = null,
   onCheckAnother,
 }: Props) {
   const t = result;
@@ -401,14 +405,14 @@ export function ResultCard({
               <div className="mt-4">
                 {isPro ? (
                   <Link
-                    href={`/bao-cao/${checkId}`}
+                    href={reportUrl(checkId, seoSlug)}
                     className="h-11 w-full rounded-[12px] bg-navy text-white text-[13px] font-black flex items-center justify-center hover:bg-[#112a5a] transition"
                   >
                     Xem phân tích chuyên sâu →
                   </Link>
                 ) : (
                   <Link
-                    href={`/bao-cao/${checkId}`}
+                    href={reportUrl(checkId, seoSlug)}
                     onClick={() => {
                       trackEvent("pro_unlock_click", { checkId });
                       trackEvent("upgrade_from_report_click", { checkId });

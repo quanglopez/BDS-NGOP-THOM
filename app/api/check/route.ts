@@ -13,6 +13,7 @@ import { resolveListingGeo } from "@/lib/geo/url-parser";
 import { persistCheckGeo } from "@/lib/check-geo";
 import { adminClient } from "@/lib/admin";
 import { safeErrorCode } from "@/lib/price/errors";
+import { buildReportSlug } from "@/lib/report/slug";
 
 // API check 1 tin BĐS qua Jev. Key chỉ nằm ở server, không bao giờ lộ ra client.
 // Cần đăng nhập (session Supabase) + có quota trong ngày.
@@ -383,6 +384,36 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Slug SEO cho URL /bao-cao/{slug}. Ghi TÁCH RIÊNG, sau khi đã có id
+    // (shortId cần uuid). Bọc try/catch + catch lỗi cột: nếu migration
+    // 0018 chưa chạy, check vẫn tạo bình thường, chỉ mất URL SEO.
+    let seoSlug: string | null = null;
+    if (checkId) {
+      try {
+        seoSlug = buildReportSlug({
+          id: checkId,
+          title: text.split("\n")[0] ?? "",
+          province: detectedProvince,
+          price: typeof priceBillion === "number" && priceBillion > 0 ? priceBillion * 1e9 : null,
+        });
+        const { error: slugError } = await adminClient()
+          .from("checks")
+          .update({ seo_slug: seoSlug })
+          .eq("id", checkId);
+        if (slugError) {
+          // Bất kỳ lỗi ghi nào (thiếu cột, trùng UNIQUE, hết quyền) đều
+          // phải trả null: slug KHÔNG nằm trong DB thì URL đó sẽ 404, và
+          // nếu trùng slug mà vẫn trả thì còn mở NHẦM report người khác.
+          seoSlug = null;
+          // KHÔNG log nội dung tin (PII). Chỉ log id + mã lỗi.
+          console.warn(`[check-slug-warning] check=${checkId} error_code=${slugError.code ?? "unknown"}`);
+        }
+      } catch (e) {
+        seoSlug = null;
+        console.warn(`[check-slug-warning] check=${checkId} error_code=${safeErrorCode(e)}`);
+      }
+    }
+
     // Nếu check bằng credits thưởng thì trừ 1
     if (usingCredit) {
       await supabase
@@ -401,6 +432,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         check_id: checkId,
+        // Slug đã ghi vào DB. null khi ghi lỗi (thiếu cột / trùng slug) —
+        // client rơi về URL UUID, vốn luôn mở được.
+        seo_slug: seoSlug,
         investment_score: invest100,
         deal_type: dealType,
         confidence: ans.deal_type?.confidence || 0.7,

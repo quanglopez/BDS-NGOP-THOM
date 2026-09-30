@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { effectivePlan } from "@/lib/quota";
 import { dealLabel } from "@/lib/format";
 import { fmtVnd } from "@/lib/price/format";
+import { parseReportRef } from "@/lib/report/slug";
 import { ProReport, type ReportSeed } from "@/components/report/pro-report";
 import { PriceIntelligenceSection } from "@/components/report/price-intelligence-section";
 
@@ -15,24 +16,81 @@ export const metadata: Metadata = {
 
 // Trang báo cáo 1 lần check: auth -> ownership -> plan.
 // Free thấy locked modules (không gọi AI). Pro mở toàn bộ (AI gọi 1 lần, có cache).
+
+// Dùng type cụ thể thay vì Record<string, unknown>: các truy cập field bên
+// dưới (row.score, row.price_billion…) sẽ bị mất kiểu và build fail.
+interface ReportRow {
+  id: string;
+  user_id: string;
+  original_text: string | null;
+  score: number | null;
+  deal_type: string | null;
+  province: string | null;
+  price_billion: number | null;
+  area_m2: number | null;
+  bedrooms: number | null;
+  listing_url: string | null;
+  created_at: string;
+  seo_slug?: string | null;
+}
+// MỘT route duy nhất cho cả hai dạng URL:
+//   /bao-cao/{uuid}       — URL cũ, report tạo trước migration 0018
+//   /bao-cao/{seo_slug}   — URL SEO, report mới
+// Không tách route: slug phải tra cứu DB mới biết, UUID thì không.
 export default async function ReportPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id: rawRef } = await params;
+  const ref = parseReportRef(rawRef);
+  if (!ref) notFound();
+
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) redirect(`/login?next=${encodeURIComponent(`/bao-cao/${id}`)}`);
+  if (!user) redirect(`/login?next=${encodeURIComponent(`/bao-cao/${rawRef}`)}`);
 
-  const { data: row } = await supabase
-    .from("checks")
-    .select(
-      "id, user_id, original_text, score, deal_type, province, price_billion, area_m2, bedrooms, listing_url, created_at",
-    )
-    .eq("id", id)
-    .maybeSingle();
+  // URL cŨ (UUID) KHÔNG đọc seo_slug: nếu migration 0018 chưa chạy thì cột
+  // không tồn tại, mà select cột lạ làm hỏNG MỌI report — kể cả URL UUID.
+  // Nhánh slug mới cần cột đó và được bọc riêng để hỏng cục bộ.
+  const BASE_COLUMNS =
+    "id, user_id, original_text, score, deal_type, province, price_billion, area_m2, bedrooms, listing_url, created_at";
+
+  let row: ReportRow | null = null;
+  if (ref.kind === "uuid") {
+    const { data } = await supabase
+      .from("checks")
+      .select(BASE_COLUMNS)
+      .eq("id", ref.id)
+      .maybeSingle();
+    row = data as ReportRow | null;
+  } else {
+    try {
+      const { data, error } = await supabase
+        .from("checks")
+        .select(`${BASE_COLUMNS}, seo_slug`)
+        .eq("seo_slug", ref.slug)
+        .maybeSingle();
+      if (error) {
+        // Migration 0018 chưa chạy -> URL slug chưa dùng được, nhưng URL
+        // UUID vẫn phải chạy. KHÔNG ném lỗi ra ngoài.
+        console.error(`[report-slug-missing-column] error_code=${error.code ?? "unknown"}`);
+        notFound();
+      }
+      row = data as ReportRow | null;
+    } catch (e) {
+      console.error(`[report-slug-lookup-failed] error_code=${e instanceof Error ? e.name : "unknown"}`);
+      notFound();
+    }
+  }
 
   if (!row) notFound();
   if (row.user_id !== user.id) notFound();
+
+  // URL cũ -> URL SEO. Đặt SAU kiểm tra ownership: redirect trước sẽ lộ
+  // việc report tồn tại (và slug của nó) cho user khác.
+  const seoSlug = (row.seo_slug as string | null) ?? null;
+  if (ref.kind === "uuid" && seoSlug && seoSlug.length > 0) {
+    redirect(`/bao-cao/${seoSlug}`);
+  }
 
   const { data: profile } = await supabase
     .from("users")

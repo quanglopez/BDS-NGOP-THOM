@@ -47,6 +47,8 @@ export interface QuotaInfo {
 
 export interface CheckApiResponse {
   check_id?: string | null;
+  /** Slug SEO đã ghi trong DB; null/undefined khi ghi lỗi -> dùng URL UUID. */
+  seo_slug?: string | null;
   investment_score: number;
   deal_type: string;
   confidence: number;

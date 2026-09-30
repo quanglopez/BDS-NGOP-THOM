@@ -32,6 +32,7 @@ export function QuickCheck() {
   const [quota, setQuota] = useState<QuotaInfo | null>(null);
   // ID dòng checks vừa lưu (để mở /bao-cao/[id]); null khi preview local
   const [checkId, setCheckId] = useState<string | null>(null);
+  const [seoSlug, setSeoSlug] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
   // Sau mỗi lần check: đồng bộ quota, chỉ mời nâng cấp khi thật sự hết lượt
@@ -76,6 +77,7 @@ export function QuickCheck() {
       setSource(outcome.source);
       setAnalyzedAt(outcome.analyzedAt);
       setCheckId(outcome.checkId ?? null);
+      setSeoSlug(outcome.seoSlug ?? null);
       setStatus({ kind: "idle", text: "" });
       router.refresh();
       setTimeout(
@@ -129,6 +131,7 @@ export function QuickCheck() {
     setResult(null);
     setText("");
     setCheckId(null);
+    setSeoSlug(null);
     setStatus({ kind: "idle", text: "" });
   };
 
@@ -246,6 +249,7 @@ export function QuickCheck() {
               analyzedAt={analyzedAt}
               isPro={quota?.plan != null && quota.plan !== "free"}
               checkId={checkId}
+              seoSlug={seoSlug}
               onCheckAnother={resetToInput}
             />
           </div>

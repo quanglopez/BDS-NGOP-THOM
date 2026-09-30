@@ -19,6 +19,9 @@ export interface CheckOutcome {
   serverError?: string;
   // ID dòng checks vừa lưu (để mở /bao-cao/[id]). Null khi preview local / lỗi.
   checkId?: string | null;
+  // Slug SEO đã ghi trong DB. null khi ghi lỗi (thiếu cột, trùng slug) —
+  // khi đó URL UUID vẫn mở được.
+  seoSlug?: string | null;
 }
 
 // Thông tin kèm theo khi check (người đăng + địa lý có cấu trúc).
@@ -78,6 +81,7 @@ export async function runCheck(text: string, contact?: ContactInfo): Promise<Che
       source: "ai",
       analyzedAt: data.analyzed_at,
       checkId: typeof data.check_id === "string" ? data.check_id : null,
+      seoSlug: typeof data.seo_slug === "string" ? data.seo_slug : null,
     };
   } catch {
     trackEvent("property_checked", { source: "local" });

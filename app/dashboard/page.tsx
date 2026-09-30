@@ -24,7 +24,13 @@ export default async function DashboardPage() {
 
   if (!user) redirect("/login");
 
-  const [{ data: profile }, today, total, good, history] = await Promise.all([
+  const [
+    { data: profile },
+    today,
+    total,
+    good,
+    { data: historyData, error: historyError },
+  ] = await Promise.all([
     supabase.from("users").select("name, phone, plan, credits, plan_expires_at").eq("id", user.id).single(),
     supabase
       .from("checks")
@@ -37,10 +43,12 @@ export default async function DashboardPage() {
       .select("id", { count: "exact", head: true })
       .eq("user_id", user.id)
       .gte("score", 80),
+    // Lịch sử: select seo_slug, CÒ fallback bản cũ nếu migration 0018 chưa
+    // chạy (select cột không tồn tại sẽ hỏng cả dashboard).
     supabase
       .from("checks")
       .select(
-        "id, original_text, score, deal_type, is_ngop, province, price_billion, area_m2, bedrooms, created_at, listing_url",
+        "id, original_text, score, deal_type, is_ngop, province, price_billion, area_m2, bedrooms, created_at, listing_url, seo_slug",
       )
       .eq("user_id", user.id)
       .order("created_at", { ascending: false })
@@ -49,7 +57,24 @@ export default async function DashboardPage() {
 
   // Gói đã hết hạn = Free
   const plan = effectivePlan(profile?.plan, profile?.plan_expires_at);
-  const rows = (history.data ?? []) as CheckRow[];
+  const HISTORY_COLUMNS_LEGACY =
+    "id, original_text, score, deal_type, is_ngop, province, price_billion, area_m2, bedrooms, created_at, listing_url";
+
+  // Query chính có seo_slug; query fallback (migration 0018 chưa chạy) thì
+  // không. Cả hai đọc cùng bảng nên ép kiểu ỨNG BIÊN trung thực, thay vì
+  // làm mọi field thành optional (sẽ lan xuống HistoryTable).
+  let rows = (historyData ?? []) as CheckRow[];
+  if (historyError) {
+    const retry = await supabase
+      .from("checks")
+      .select(HISTORY_COLUMNS_LEGACY)
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    console.warn(`[dashboard-slug-column-missing] error_code=${historyError.code ?? "unknown"}`);
+    // Query fallback không trả seo_slug -> null, reportUrl() rơi về UUID.
+    rows = (retry.data ?? []) as unknown as CheckRow[];
+  }
 
   return (
     <main className="min-h-screen bg-cream">

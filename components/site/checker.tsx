@@ -36,6 +36,7 @@ export function Checker() {
   // Plan + check id để ResultCard hiển thị đúng CTA (Pro: mở report sâu / Free: mở khóa)
   const [isPro, setIsPro] = useState(false);
   const [checkId, setCheckId] = useState<string | null>(null);
+  const [seoSlug, setSeoSlug] = useState<string | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
 
   // Biết plan 1 lần khi mount (null khi chưa login -> coi như Free, không gọi AI)
@@ -96,6 +97,7 @@ export function Checker() {
       setAnalyzedAt(outcome.analyzedAt);
       setAuthRequired(Boolean(outcome.authRequired));
       setCheckId(outcome.checkId ?? null);
+      setSeoSlug(outcome.seoSlug ?? null);
       setStatus({ kind: "idle", text: "" });
       router.refresh();
       setTimeout(
@@ -141,6 +143,7 @@ export function Checker() {
     setText("");
     setAuthRequired(false);
     setCheckId(null);
+    setSeoSlug(null);
     setStatus({ kind: "idle", text: "" });
     document.getElementById("kiem-tra")?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
@@ -296,6 +299,7 @@ export function Checker() {
             authRequired={authRequired}
             isPro={isPro}
             checkId={checkId}
+            seoSlug={seoSlug}
             pendingText={text}
             pendingListingUrl={(() => {
               const raw = text.trim();
