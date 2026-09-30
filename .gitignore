@@ -24,3 +24,7 @@ tests/.sample-listing.png
 /pricing.html
 /homepage*.html
 
+
+.vercel
+.env*
+!.env.example
