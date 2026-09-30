@@ -413,6 +413,87 @@ async function main() {
     assert.ok(upd.ai_generated_at);
   });
 
+  console.log("\n== 3b. 429 KHÔNG retry, chuyển model ngay ==");
+
+  await check("Qwen 429 -> Gemma gọi đúng 1 lần (không retry Qwen)", async () => {
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false);
+    assert.equal(out.model, GEMMA);
+    const qwenCalls = captured().filter((c) => c.model === QWEN);
+    const gemmaCalls = captured().filter((c) => c.model === GEMMA);
+    assert.equal(qwenCalls.length, 1, "Qwen 429 phải gọi đúng 1 lần, không retry");
+    assert.equal(gemmaCalls.length, 1, "Gemma phải gọi đúng 1 lần rồi trả lời");
+    assert.equal(out.metrics.rate_limited, true, "phải ghi nhận provider_rate_limited");
+  });
+
+  await check("429 không hỏi Jev (log không có receipt cho provider_429)", async () => {
+    const realError = console.error;
+    const lines: string[] = [];
+    console.error = (...a: unknown[]) => {
+      lines.push(a.map(String).join(" "));
+    };
+    try {
+      stubFetch(() => rateLimited());
+      await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    } finally {
+      console.error = realError;
+    }
+    assert.equal(
+      lines.filter((l) => l.includes("[pro-analysis-jev]")).length,
+      0,
+      "429 là quyết định cố định, không được hỏi Jev (hỏi chỉ ra retry lại model vừa 429)",
+    );
+  });
+
+  await check("Qwen 429 + Gemma 429 -> deterministic fallback, reason rate_limited", async () => {
+    const captured = stubFetch(() => rateLimited());
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, true, "phải trả deterministic fallback");
+    assert.equal(out.model, null, "không lưu model khi không có AI trả lời");
+    assert.equal(out.fallbackReason, "all_models_rate_limited", "giữ nguyên reason cũ");
+    assert.equal(out.metrics.rate_limited, true);
+    assert.ok(out.analysis.summary.headline.length > 0, "fallback vẫn có nội dung dùng được");
+    assert.equal(captured().length, 2, "mỗi model đúng 1 lần, không retry 429");
+  });
+
+  await check("429 không retry cả khi chain có 3 model (không gọi trùng model)", async () => {
+    const captured = stubFetch(() => rateLimited());
+    const out = await withEnv(
+      { ...CHAIN_ENV, PRO_ANALYSIS_FALLBACK_MODELS: `${GEMMA},qwen/qwen3-32b:free` },
+      () => generateProAnalysis(sampleEvidence()),
+    );
+    assert.equal(out.fromFallback, true);
+    const perModel = captured().reduce<Record<string, number>>((acc, c) => {
+      acc[c.model] = (acc[c.model] ?? 0) + 1;
+      return acc;
+    }, {});
+    for (const [model, n] of Object.entries(perModel)) {
+      assert.equal(n, 1, `model ${model} bị gọi ${n} lần sau 429 — phải đúng 1`);
+    }
+  });
+
+  console.log("\n== 3c. Timeout VẪN retry (không đổi hành vi) ==");
+
+  await check("Qwen timeout -> retry cùng model 2 lần rồi mới đổi", async () => {
+    const captured = stubFetch((m) => {
+      if (m === QWEN) return { status: 0, payload: { error: { message: "timeout" } } };
+      return ok(m);
+    });
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(captured().filter((c) => c.model === QWEN).length, 2, "timeout phải retry 2 lần");
+    assert.equal(out.fromFallback, false);
+    assert.equal(out.model, GEMMA, "sau khi hết retry thì đổi sang Gemma");
+  });
+
+  await check("lỗi 500 vẫn retry (không phải 429 thì giữ nguyên)", async () => {
+    const captured = stubFetch((m) =>
+      m === QWEN ? { status: 500, payload: { error: { message: "upstream boom" } } } : ok(m),
+    );
+    await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(captured().filter((c) => c.model === QWEN).length, 2, "500 phải retry 2 lần");
+  });
+
   await check("refresh sau khi Gemma lưu -> cache_hit=true, không gọi model", async () => {
     let calls = 0;
     const realFetch = globalThis.fetch;
@@ -445,8 +526,13 @@ async function main() {
     assert.equal(out.fallbackReason, "all_models_rate_limited");
     assert.equal(out.metrics.fallback_used, true);
     assert.ok(out.analysis.summary.headline.length > 0, "fallback vẫn có nội dung");
-    // Không loop vô hạn: chain v1 = 2 model, mỗi model tối đa 2 attempt
-    assert.equal(captured().length, 4);
+    // 429 không retry: mỗi model gọi ĐÚNG 1 lần rồi đổi model (trước đây là 4).
+    assert.equal(captured().length, 2);
+    assert.deepEqual(
+      captured().map((c) => c.model),
+      [QWEN, GEMMA],
+      "phải thử từng model đúng 1 lần, theo thứ tự chain",
+    );
   });
 
   await check("mọi model trả 500 -> fallback, provider_errors có ghi", async () => {
@@ -699,9 +785,9 @@ async function main() {
   });
 
   await check("mọi lần lỗi đều log đủ trường chẩn đoán", async () => {
-    const captured = stubFetch((m, n) =>
-      n === 1 ? rateLimited() : { status: 200, payload: { model: m, choices: [{ finish_reason: "stop", message: { content: "{bad" } }] } },
-    );
+    // 429 chuyển model ngay nên không còn "attempt 2 cùng model" — dựng lại
+    // Case E bằng Gemma trả JSON hỏng, để log vẫn phải phân biệt được 2 case.
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : badJson()));
     const logged: string[] = [];
     const realLog = console.error;
     console.error = (msg?: unknown) => {

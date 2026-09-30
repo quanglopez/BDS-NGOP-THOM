@@ -15,6 +15,7 @@ import { PRO_ANALYSIS_JSON_SCHEMA, PRO_ANALYSIS_JSON_SCHEMA_NAME } from "./json-
 import { guardProAnalysis } from "./guard";
 import { calcPricePerM2 } from "./evidence";
 import { resolveModelChain, structuredModeFor } from "./model-chain";
+import { askProRoute, formatJevDecisionReceipt, type ProFailureKind } from "./jev-decision";
 import type { EvidencePack } from "./evidence";
 
 export const PRO_ANALYSIS_VERSION_FALLBACK = "pro-v1";
@@ -226,6 +227,39 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
   const userPayload = JSON.stringify(evidence);
   const startedAt = Date.now();
 
+  // Lich su fail cua chain - input cho quyet dinh Jev. KHONG chua PII.
+  const priorModels: string[] = [];
+  const priorFailures: ProFailureKind[] = [];
+
+  /**
+   * Hoi Jev buoc tiep theo sau 1 lan fail.
+   * Tra "continue" = thu lai attempt nay, "next_model" = bo qua model nay,
+   * "fallback" = dung luon, tra report deterministic.
+   * Loi Jev -> ve duong danh co dinh (retry het attempt truoc het).
+   */
+  const routeAfterFailure = async (
+    model: string,
+    modelIndex: number,
+    attempt: number,
+    failure: ProFailureKind,
+    guardReasons: string[],
+  ): Promise<"continue" | "next_model" | "fallback"> => {
+    const receipt = await askProRoute({
+      attempt,
+      modelIndex,
+      model,
+      failure,
+      priorModels: [...priorModels],
+      priorFailures: [...priorFailures],
+      guardReasons,
+      modelsRemaining: chain.length - modelIndex - 1,
+    });
+    console.log(`[pro-analysis-jev] ${formatJevDecisionReceipt(receipt)}`);
+    if (receipt.route === "deterministic_fallback") return "fallback";
+    if (receipt.route === "switch_model") return "next_model";
+    return "continue";
+  };
+
   for (let mi = 0; mi < chain.length; mi++) {
     const model = chain[mi];
     let mode = structuredModeFor(model);
@@ -271,14 +305,39 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
         );
       }
 
+      // 429 KHÔNG phải lỗi nội dung: provider đã từ chối hết quota cho key
+      // này. Gọi lại cùng model sau ~100ms chỉ để nhận 429 lần nữa, mỗi lần
+      // lại tiêu quota mà request hợp lệ sau có thể dùng. (Đo production
+      // 2026-09-30: 4 provider call / 1 user request, tất cả 429.)
+      // -> Ghi nhận rate limit rồi đổi model ngay, KHÔNG hỏi Jev: hỏi ở đây
+      // chỉ cho phép trả về "thử lại model này", tức là quay lại 429.
+      if (res.error === "provider_429") {
+        metrics.rate_limited = true;
+        priorModels.push(model);
+        priorFailures.push("provider_429");
+        if (mi >= chain.length - 1) return finishFallback("all_models_rate_limited");
+        break;
+      }
+
       // Provider từ chối param structured output -> hạ xuống prompt-only
       // rồi thử lại model này (thay vì làm hỏng cả fallback chain).
+      // Đây là lỗi CẤU HÌNH, không phải lỗi nội dung -> không hỏi Jev.
       if (res.error === "provider_unsupported_param" && mode !== "none") {
         mode = "none";
         continue;
       }
 
-      if (!res.ok || !res.text) continue;
+      if (!res.ok || !res.text) {
+        const go = await routeAfterFailure(model, mi, attempt + 1, (res.error ?? "provider_error") as ProFailureKind, []);
+        priorModels.push(model);
+        priorFailures.push((res.error ?? "provider_error") as ProFailureKind);
+        if (go === "fallback") {
+          const allRateLimitedSoFar = metrics.rate_limited && metrics.provider_errors.every((e) => e === "provider_429");
+          return finishFallback(allRateLimitedSoFar ? "all_models_rate_limited" : "all_models_failed");
+        }
+        if (go === "next_model") break;
+        continue;
+      }
 
       const parsed = parseProAnalysis(res.text);
       if (!parsed) {
@@ -290,6 +349,11 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
             `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
             `latency_ms=${res.latencyMs} response_body_safe=json_unparseable_or_missing_headline`,
         );
+        const go = await routeAfterFailure(model, mi, attempt + 1, "validation_failed", []);
+        priorModels.push(model);
+        priorFailures.push("validation_failed");
+        if (go === "fallback") return finishFallback("all_models_failed");
+        if (go === "next_model") break;
         continue;
       }
 
@@ -303,6 +367,20 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
             `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
             `latency_ms=${res.latencyMs} response_body_safe=${guard.reasons.join(" | ").slice(0, 200)}`,
         );
+        // BIẢ DAI: guard reject thường lặp lại y hệt ở attempt 2 -> tốn 1 lần
+        // gọi model (~vài nghìn token) để nhận ra điều đã biết. Đây là chỗ Jev
+        // tiết kiệm rõ nhất: đổi model ngay thay vì lặp lại.
+        //
+        // THỨ TỰ QUAN TRỌNG: hỏi Jev TRƯỚC khi push lỗi hiện tại vào lịch sử.
+        // `priorFailures` phải nghĩa là "các lần đã hỏng TRƯỚC attempt này".
+        // Nếu push trước, state nói "lỗi này đã lặp" ngay lần đầu -> model đổi
+        // sớm, bỏ mất attempt 2 vốn để cứu lỗi ngẫu nhiên. (Đã bắt được bằng
+        // npm run jev:bench — 2/6 kịch bản bị hỏng thêm trước khi sửa.)
+        const go = await routeAfterFailure(model, mi, attempt + 1, "guard_failed", guard.reasons);
+        priorModels.push(model);
+        priorFailures.push("guard_failed");
+        if (go === "fallback") return finishFallback("all_models_failed");
+        if (go === "next_model") break;
         continue;
       }
 
