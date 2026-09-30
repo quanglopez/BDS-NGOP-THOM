@@ -24,7 +24,7 @@ const STRENGTHS = REASONS.filter((r) => r.delta > 0);
 export function ExampleAnalysis() {
   return (
     <section className="mx-auto max-w-[1120px] px-5 py-12 md:px-8 md:py-16">
-      <div className="grid items-start gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:gap-10">
+      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-10">
         {/* Nhận định chính + cảnh báo + CTA */}
         <div className="lg:sticky lg:top-24">
           <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-deep">

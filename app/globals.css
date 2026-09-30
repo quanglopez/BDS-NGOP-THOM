@@ -137,15 +137,32 @@
 
   html {
     -webkit-text-size-adjust: 100%;
-    /* Tránh trượt ngang ngoài ý muốn trên mobile (URL/diện thoại dài trong nội dung tin) */
+    /*
+     * Lưới an toàn, KHÔNG còn là cách che lỗi.
+     *
+     * Đã đo bằng Chrome headless (tắt dòng này rồi đo lại) ở 320/360/375/390/
+     * 414/768px: landing tĩnh, drawer mobile mở, và ResultCard với URL 108 ký tự
+     * không ngắt + SĐT đều tràn = 0px. Nguyên nhân gốc đã xử lý ở `overflow-wrap`
+     * bên dưới và ở `minmax(0, …)` cho grid dùng fr.
+     *
+     * Giữ lại vì /dashboard, /bao-cao/[id], /admin cần đăng nhập nên không đo
+     * được trong review. Xoá dòng này sau khi test 3 route đó bằng session thật.
+     */
     overflow-x: hidden;
   }
 
   body {
     @apply bg-background text-foreground;
     font-family: var(--cb-font-body);
-    /* Chuỗi dài không cắt (link, số điện thoại) vẫn phải xuống dòng được */
-    overflow-wrap: break-word;
+    /*
+     * Chuỗi dài không cắt (URL, SĐT trong nội dung tin) vẫn phải xuống dòng được.
+     *
+     * `anywhere` chứ không phải `break-word`: break-word chỉ ngắt khi sắp tràn
+     * khung, nên KHÔNG tham gia tính min-content — một URL dài trong ô grid/flex
+     * (`min-width: auto`) vẫn đẩy cột rộng ra khỏi màn hình. `anywhere` tính vào
+     * intrinsic size nên token dài không còn đặt được sàn cho track.
+     */
+    overflow-wrap: anywhere;
   }
 
   /*

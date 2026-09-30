@@ -356,7 +356,7 @@ export function ResultCard({
           />
         </div>
 
-        <div className="relative mt-6 grid gap-6 md:grid-cols-[1.2fr_0.8fr]">
+        <div className="relative mt-6 grid gap-6 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
           {authRequired && (
             <Link
               href={unlockHref}
