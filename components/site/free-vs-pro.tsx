@@ -31,57 +31,65 @@ const TRUST = [
 // Bảng Free vs Pro — CTA thống nhất toàn site: "Dùng miễn phí" / "Nâng cấp PRO"
 export function FreeVsPro() {
   return (
-    <section id="bang-gia" className="mx-auto max-w-[1120px] px-5 md:px-8 py-12 md:py-16 scroll-mt-20">
-      <div className="text-center max-w-[640px] mx-auto">
-        <div className="text-[11px] font-black tracking-[0.2em] uppercase text-[#a5823f]">Bảng giá</div>
-        <h2 className="mt-3 text-[24px] md:text-[32px] font-black tracking-tight text-navy">
-          Chọn gói phù hợp với bạn
-        </h2>
-        <p className="mt-3 text-[14px] leading-relaxed text-slate-500">
+    <section id="bang-gia" className="mx-auto max-w-[1120px] scroll-mt-20 px-5 py-12 md:px-8 md:py-16">
+      <div className="mx-auto max-w-[640px] text-center">
+        <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-deep">
+          Bảng giá
+        </div>
+        <h2 className="mt-3 font-display text-h2 text-ink-900">Chọn gói phù hợp với bạn</h2>
+        <p className="mt-3 text-lead text-ink-600">
           Không cần thẻ. Không tự động gia hạn. Nâng cấp bất cứ lúc nào.
         </p>
       </div>
 
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-5 items-stretch">
+      <div className="mt-8 grid grid-cols-1 items-stretch gap-5 md:grid-cols-2">
         {/* FREE */}
-        <div className="rounded-[20px] border border-slate-200 bg-white p-6 md:p-7 flex flex-col">
-          <div className="text-[12px] font-black tracking-widest text-slate-500">FREE</div>
+        <div className="flex flex-col rounded-panel border border-line bg-white p-6 md:p-7">
+          <div className="text-micro font-bold tracking-widest text-ink-500">FREE</div>
           <div className="mt-3 flex items-baseline gap-2">
-            <div className="text-[38px] font-black text-navy">0đ</div>
-            <div className="text-[13px] text-slate-500">/ mãi mãi</div>
+            <div className="font-display text-[38px] font-extrabold tabular-nums tracking-tight text-ink-900">
+              0đ
+            </div>
+            <div className="text-small text-ink-600">/ mãi mãi</div>
           </div>
-          <ul className="mt-5 space-y-2.5 flex-1">
+          <ul className="mt-5 flex-1 space-y-2.5">
             {FREE.map((f) => (
-              <li key={f} className="flex gap-2.5 text-[13px] text-slate-600">
-                <span className="text-emerald-600 font-bold">✓</span>
+              <li key={f} className="flex gap-2.5 text-small text-ink-600">
+                <span className="font-bold text-ai-ink">✓</span>
                 {f}
               </li>
             ))}
           </ul>
           <Link
             href="#kiem-tra"
-            className="mt-6 h-[48px] rounded-[12px] border border-slate-200 bg-white hover:bg-slate-50 text-[14px] font-bold text-slate-700 flex items-center justify-center transition"
+            className="mt-6 flex h-[48px] items-center justify-center rounded-md border border-line bg-white text-small font-bold text-ink-700 transition-colors duration-micro ease-cb hover:bg-surface-mist"
           >
             Dùng miễn phí
           </Link>
-          <div className="mt-3 text-[11px] text-center text-slate-400">Không cần thẻ • Không cần nhập SĐT</div>
+          <div className="mt-3 text-center text-micro text-ink-500">
+            Không cần thẻ • Không cần nhập SĐT
+          </div>
         </div>
 
         {/* PRO */}
-        <div className="rounded-[20px] bg-navy text-white p-6 md:p-7 flex flex-col relative overflow-hidden shadow-[0_24px_70px_-24px_rgba(11,29,58,0.6)]">
-          <div className="absolute -top-24 right-[-80px] w-[300px] h-[300px] bg-gold/15 rounded-full blur-[70px]" />
+        <div className="relative flex flex-col overflow-hidden rounded-panel bg-navy-900 p-6 text-white shadow-navy md:p-7">
+          <div className="absolute -right-20 -top-24 h-[300px] w-[300px] rounded-full bg-gold-base/10 blur-[70px]" />
           <div className="relative flex items-center gap-2">
-            <div className="text-[12px] font-black tracking-widest text-gold">PRO</div>
-            <span className="px-2 py-0.5 rounded-full bg-gold text-navy text-[10px] font-black">PHỔ BIẾN</span>
+            <div className="text-micro font-bold tracking-widest text-gold-base">PRO</div>
+            <span className="rounded-pill bg-gold-base px-2 py-0.5 text-micro font-bold text-navy-900">
+              PHỔ BIẾN
+            </span>
           </div>
           <div className="relative mt-3 flex items-baseline gap-2">
-            <div className="text-[38px] font-black">299.000đ</div>
-            <div className="text-[13px] text-slate-300">/ tháng</div>
+            <div className="font-display text-[38px] font-extrabold tabular-nums tracking-tight">
+              299.000đ
+            </div>
+            <div className="text-small text-ink-on-navy-muted">/ tháng</div>
           </div>
-          <ul className="relative mt-5 space-y-2.5 flex-1">
+          <ul className="relative mt-5 flex-1 space-y-2.5">
             {PRO.map((f) => (
-              <li key={f} className="flex gap-2.5 text-[13px] text-slate-200">
-                <span className="text-gold font-bold">✓</span>
+              <li key={f} className="flex gap-2.5 text-small text-ink-on-navy">
+                <span className="font-bold text-gold-base">✓</span>
                 {f}
               </li>
             ))}
@@ -89,11 +97,11 @@ export function FreeVsPro() {
           <Link
             href="/pricing"
             onClick={() => trackEvent("upgrade_clicked", { from: "free_vs_pro" })}
-            className="relative mt-6 h-[48px] rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[14px] font-black flex items-center justify-center hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
+            className="relative mt-6 flex h-[48px] items-center justify-center rounded-md bg-gold-base text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
           >
             Nâng cấp PRO
           </Link>
-          <div className="relative mt-3 space-y-1 text-[11px] text-slate-300 text-center">
+          <div className="relative mt-3 space-y-1 text-center text-micro text-ink-on-navy-muted">
             <div>✓ Hoàn tiền 100% trong 3 ngày nếu không phù hợp</div>
             <div>✓ Có thể hủy bất kỳ lúc nào</div>
           </div>
@@ -101,7 +109,7 @@ export function FreeVsPro() {
       </div>
 
       {/* Trust signals */}
-      <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[12px] text-slate-500">
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-micro text-ink-600">
         {TRUST.map((t) => (
           <span key={t} className="flex items-center gap-1.5">
             {t}

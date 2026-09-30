@@ -36,27 +36,27 @@ const QA: { q: string; a: string }[] = [
 
 export function Faq() {
   return (
-    <section id="faq" className="mx-auto max-w-[760px] px-5 md:px-8 py-12 md:py-16 scroll-mt-20">
+    <section id="faq" className="mx-auto max-w-[760px] scroll-mt-20 px-5 py-12 md:px-8 md:py-16">
       <div className="text-center">
-        <div className="text-[11px] font-black tracking-[0.2em] uppercase text-[#a5823f]">Giải đáp</div>
-        <h2 className="mt-3 text-[24px] md:text-[32px] font-black tracking-tight text-navy">
-          Câu hỏi thường gặp
-        </h2>
+        <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-deep">
+          Giải đáp
+        </div>
+        <h2 className="mt-3 font-display text-h2 text-ink-900">Câu hỏi thường gặp</h2>
       </div>
 
       <div className="mt-8 space-y-3">
         {QA.map((item) => (
           <details
             key={item.q}
-            className="group rounded-[16px] border border-slate-200 bg-white p-5 hover:border-navy/25 hover:shadow-[0_12px_32px_-20px_rgba(11,29,58,0.35)] transition open:shadow-[0_12px_32px_-20px_rgba(11,29,58,0.35)] open:border-navy/25"
+            className="group rounded-lg border border-line bg-white p-5 transition-colors duration-micro ease-cb hover:border-navy-600/25 hover:shadow-lift open:border-navy-600/25 open:shadow-lift"
           >
-            <summary className="cursor-pointer list-none flex items-center justify-between gap-4 text-[14px] font-bold text-navy">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-small font-bold text-ink-900">
               {item.q}
-              <span className="shrink-0 w-7 h-7 rounded-full bg-cream border border-slate-200 flex items-center justify-center text-slate-500 group-open:rotate-45 group-open:bg-navy group-open:text-white group-open:border-navy transition text-[16px] leading-none">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line bg-surface-mist text-[16px] leading-none text-ink-600 transition-colors duration-micro ease-cb group-open:rotate-45 group-open:border-navy-900 group-open:bg-navy-900 group-open:text-white">
                 +
               </span>
             </summary>
-            <p className="mt-3 text-[13px] leading-[1.7] text-slate-600">{item.a}</p>
+            <p className="mt-3 text-micro leading-[1.7] text-ink-600">{item.a}</p>
           </details>
         ))}
       </div>

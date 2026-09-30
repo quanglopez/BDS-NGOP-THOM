@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Play } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 
 // Video hướng dẫn sử dụng (Loom) — đặt tại vị trí Demo mà nút "Xem demo" trên hero trỏ tới.
@@ -17,19 +18,19 @@ export function ProductDemo() {
   };
 
   return (
-    <section id="demo" className="mx-auto max-w-[1120px] px-5 md:px-8 py-12 md:py-16 scroll-mt-20">
-      <div className="text-center max-w-[640px] mx-auto">
-        <div className="text-[11px] font-black tracking-[0.2em] uppercase text-[#a5823f]">Xem demo</div>
-        <h2 className="mt-3 text-[24px] md:text-[32px] font-black tracking-tight text-navy">
-          Xem thao tác trong 2 phút
-        </h2>
-        <p className="mt-3 text-[14px] leading-relaxed text-slate-500">
+    <section id="demo" className="mx-auto max-w-[1120px] scroll-mt-20 px-5 py-12 md:px-8 md:py-16">
+      <div className="mx-auto max-w-[640px] text-center">
+        <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-deep">
+          Xem demo
+        </div>
+        <h2 className="mt-3 font-display text-h2 text-ink-900">Xem thao tác trong 2 phút</h2>
+        <p className="mt-3 text-lead text-ink-600">
           Xem cách dán tin, quét danh mục và lọc ra những kèo đáng gọi trước — không cần đọc tài liệu.
         </p>
       </div>
 
-      <div className="mt-8 mx-auto max-w-[880px]">
-        <div className="relative rounded-[20px] overflow-hidden border border-slate-200 bg-navy shadow-[0_24px_70px_-30px_rgba(11,29,58,0.5)]">
+      <div className="mx-auto mt-8 max-w-[880px]">
+        <div className="relative overflow-hidden rounded-panel border border-line-navy bg-navy-900 shadow-navy">
           {/* Tỉ lệ 16:9 để không bị lệch layout trước khi iframe tải */}
           <div className="relative w-full" style={{ aspectRatio: "16 / 9" }}>
             {playing ? (
@@ -45,7 +46,7 @@ export function ProductDemo() {
                 type="button"
                 onClick={start}
                 aria-label="Phát video hướng dẫn sử dụng"
-                className="absolute inset-0 group flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-navy via-[#132A56] to-[#0B1D3A]"
+                className="group absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-navy-800 via-navy-700 to-navy-900"
               >
                 <div
                   className="absolute inset-0 opacity-[0.13]"
@@ -54,16 +55,13 @@ export function ProductDemo() {
                       "linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)",
                     backgroundSize: "44px 44px",
                     maskImage: "radial-gradient(ellipse 80% 70% at 50% 50%, black 30%, transparent 75%)",
-                    WebkitMaskImage:
-                      "radial-gradient(ellipse 80% 70% at 50% 50%, black 30%, transparent 75%)",
+                    WebkitMaskImage: "radial-gradient(ellipse 80% 70% at 50% 50%, black 30%, transparent 75%)",
                   }}
                 />
-                <span className="relative w-[72px] h-[72px] rounded-full bg-gradient-to-br from-[#C9A86A] to-[#d8ba7f] flex items-center justify-center shadow-[0_10px_34px_-8px_rgba(201,168,106,0.8)] transition-transform group-hover:scale-105">
-                  <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true" className="translate-x-[2px]">
-                    <path fill="#0B1D3A" d="M8 5v14l11-7z" />
-                  </svg>
+                <span className="relative flex h-[72px] w-[72px] items-center justify-center rounded-full bg-gold-base shadow-lift transition-transform duration-micro ease-cb group-hover:scale-105">
+                  <Play size={26} strokeWidth={1.75} aria-hidden="true" className="translate-x-[2px] fill-navy-900 text-navy-900" />
                 </span>
-                <span className="relative text-[13px] font-bold text-slate-200">
+                <span className="relative text-small font-bold text-ink-on-navy">
                   Video hướng dẫn sử dụng
                 </span>
               </button>
@@ -71,7 +69,7 @@ export function ProductDemo() {
           </div>
         </div>
 
-        <p className="mt-3 text-center text-[12px] text-slate-400">
+        <p className="mt-3 text-center text-micro text-ink-500">
           Không cần cài đặt gì thêm — làm theo video là dùng được ngay.
         </p>
       </div>
