@@ -35,10 +35,22 @@ const DEFAULT_TIMEOUT_MS = 15000;
 // kịp trả lời.
 //
 // Suy ra từ một mẫu, không phải kết luận: 30s chỉ là mức nới để phân biệt
-// "VL chậm" với "VL hỏng". Nếu sau khi nới vẫn provider_timeout ở ~30s thì
-// vấn đề không nằm ở deadline.
+// "model chậm" với "model hỏng". Nếu sau khi nới vẫn provider_timeout ở
+// ~30s thì vấn đề không nằm ở deadline.
+//
+// Mẫu thứ hai, slug TRẢ PHÍ (đo 2026-09-30 11:28, check 103a3f9c):
+// Qwen free 429, rồi requested_model=qwen/qwen3.8-27b ->
+// provider_timeout tại latency_ms=15002, timeout_ms=15000, http_status=-,
+// response_body_safe=-. Ba slug khác nhau (Qwen free, Ling VL, Qwen paid)
+// đều im lặng, đều không có body => im lặng ở tầng transport, không phải
+// do tham số request.
+//
+// Regex PHẢI neo cuối. `^qwen/qwen3\.8-27b` không có `$` sẽ khớp cả
+// "qwen/qwen3.8-27b:free" và đổi deadline của slug free — thứ không được
+// nới, vì free đã trả 429 nhanh (165ms), không cần thêm thời gian.
 const MODEL_TIMEOUT_MS: readonly (readonly [RegExp, number])[] = [
   [/^inclusionai\/ling-3\.0-flash-vl/, 30000],
+  [/^qwen\/qwen3\.8-27b$/, 30000],
 ];
 
 // Deadline cho 1 request tới `model`. Model không khai báo -> default.

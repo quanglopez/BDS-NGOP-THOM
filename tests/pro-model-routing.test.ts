@@ -45,6 +45,10 @@ const LING_VL = "inclusionai/ling-3.0-flash-vl";
 const GEMMA = "google/gemma-4-31b-it:free";
 const NEMO = "nvidia/nemotron-3.5-lightning:free";
 
+// Slug Qwen TRẢ PHÍ (đo 2026-09-30 11:28, check 103a3f9c): provider_timeout
+// tại latency_ms=15002 với timeout_ms=15000. Nới deadline để thử lại.
+const QWEN_PAID = "qwen/qwen3.8-27b";
+
 const SAMPLE_TEXT =
   "Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng, hẻm xe hơi";
 
@@ -337,7 +341,7 @@ async function lingVlTests() {
     assert.ok(qwen!.includes("timeout_ms=15000"), `Qwen phải giữ 15s: ${qwen}`);
   });
 
-  await check("timeoutMsFor: chỉ Ling VL được nới", () => {
+  await check("timeoutMsFor: Ling VL được nới, các model khác giữ mặc định", () => {
     assert.equal(timeoutMsFor(LING_VL), 30000);
     assert.equal(timeoutMsFor(QWEN), 15000);
     assert.equal(timeoutMsFor(GEMMA), 15000);
@@ -362,6 +366,61 @@ async function lingVlTests() {
       "provider_429|provider_timeout|provider_timeout",
       "phải ghi nhận 429 của Qwen + 2 timeout của VL",
     );
+  });
+
+  console.log("\n== 14. Qwen paid: deadline 30s, slug free KHÔNG bị nới ==");
+
+  await check("timeoutMsFor: paid Qwen = 30s, free Qwen giữ 15s", () => {
+    assert.equal(timeoutMsFor(QWEN_PAID), 30000, "slug trả phí được nới deadline");
+    assert.equal(
+      timeoutMsFor(QWEN),
+      15000,
+      "slug :free PHẢI giữ 15s — regex neo cuối, không nuốt cả slug free",
+    );
+  });
+
+  await check("nới deadline không được lan sang slug khác", () => {
+    // Nới cho slug free là sai: free trả 429 trong ~165ms, nới thêm chỉ làm
+    // user chờ lâu hơn vô ích khi quota đã cạn.
+    for (const other of [QWEN, GEMMA, NEMO, LING_RETIRED]) {
+      assert.equal(timeoutMsFor(other), 15000, `${other} không được nới deadline`);
+    }
+  });
+
+  await check("runtime: Qwen free 429 -> Qwen paid gọi với timeout_ms=30000", async () => {
+    const realError = console.error;
+    const lines: string[] = [];
+    console.error = (...a: unknown[]) => {
+      lines.push(a.map(String).join(" "));
+    };
+    let fromFallback: boolean | null = null;
+    let fallbackReason: string | null = null;
+    try {
+      stubFetch((m) => {
+        if (m === QWEN) return rateLimited();
+        throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+      });
+      const out = await withEnv(
+        { ...CHAIN_ENV, PRO_ANALYSIS_FALLBACK_MODELS: QWEN_PAID },
+        () => generateProAnalysis(sampleEvidence()),
+      );
+      fromFallback = out.fromFallback;
+      fallbackReason = out.fallbackReason;
+    } finally {
+      console.error = realError;
+    }
+    // Phải khớp `requested_model=`, không dùng includes(model) trần: line
+    // của slug free chứa "fallback_model=qwen/qwen3.8-27b" nên includes
+    // trần bắt nhầm line free và assert sai deadline. Dấu space cuối chống
+    // khớp lấn sang slug ":free".
+    const paid = lines.find((l) => l.includes(`requested_model=${QWEN_PAID} `));
+    assert.ok(paid, "phải có log lỗi cho Qwen paid");
+    assert.ok(paid!.includes("timeout_ms=30000"), `paid phải log deadline 30s: ${paid}`);
+    assert.ok(paid!.includes("structured_mode=json_schema"), `paid phải giữ json_schema: ${paid}`);
+    const freeLine = lines.find((l) => l.includes(`requested_model=${QWEN} `));
+    assert.ok(freeLine!.includes("timeout_ms=15000"), `free phải giữ 15s: ${freeLine}`);
+    assert.equal(fromFallback, true);
+    assert.equal(fallbackReason, "all_models_failed", "429 + timeout -> all_models_failed");
   });
 }
 
