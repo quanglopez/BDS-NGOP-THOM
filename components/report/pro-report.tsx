@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { trackEvent } from "@/lib/analytics";
 import type { ProAnalysis } from "@/lib/ai/schema";
+import { fmtPpm2, fmtVnd } from "@/lib/price/format";
 
 export interface ReportSeed {
   score: number;
@@ -38,16 +39,9 @@ const LOCKED_MODULES = [
   "Checklist trước khi xuống tiền",
 ];
 
-function fmtVnd(v: number | null): string {
+function fmtPrice(v: number | null): string {
   if (v === null) return "—";
-  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(v % 1_000_000_000 === 0 ? 0 : 2)} tỷ`;
-  if (v >= 1_000_000) return `${Math.round(v / 1_000_000)} triệu`;
-  return String(v);
-}
-
-function fmtM2(v: number | null): string {
-  if (v === null) return "—";
-  return `${v.toLocaleString("vi-VN")} tr/m²`;
+  return fmtVnd(v, v % 1_000_000_000 === 0 ? 0 : 2);
 }
 
 function Skeleton() {
@@ -286,11 +280,11 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
         <div className="mt-3 grid grid-cols-2 gap-3 text-center">
           <div className="rounded-[12px] bg-cream border border-slate-200 p-3">
             <div className="text-[11px] text-slate-500">Giá chào bán</div>
-            <div className="mt-1 text-[15px] font-black text-navy">{fmtVnd(seed.price)}</div>
+            <div className="mt-1 text-[15px] font-black text-navy">{fmtPrice(seed.price)}</div>
           </div>
           <div className="rounded-[12px] bg-cream border border-slate-200 p-3">
             <div className="text-[11px] text-slate-500">Giá/m²</div>
-            <div className="mt-1 text-[15px] font-black text-navy">{fmtM2(seed.pricePerM2)}</div>
+            <div className="mt-1 text-[15px] font-black text-navy">{fmtPpm2(seed.pricePerM2)}</div>
           </div>
         </div>
         <p className="mt-3 text-[13px] text-slate-600 leading-relaxed">{a.price_analysis.explanation}</p>

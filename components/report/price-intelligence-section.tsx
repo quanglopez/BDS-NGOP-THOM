@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { trackEvent } from "@/lib/analytics";
 import { DISTANCE_FALLBACK_LABEL } from "@/lib/price/pipeline";
+import { fmtArea, fmtPpm2, fmtVnd } from "@/lib/price/format";
 import {
   buildPriceViewModel,
   loadPriceIntelligence,
@@ -25,21 +26,6 @@ function PriceSkeleton() {
   );
 }
 
-function fmtVnd(v: number | null): string {
-  if (v === null) return "—";
-  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(1)} tỷ`;
-  if (v >= 1_000_000) return `${Math.round(v / 1_000_000)} triệu`;
-  return v.toLocaleString("vi-VN");
-}
-
-function fmtPpm2(v: number | null): string {
-  if (v === null) return "—";
-  return `${(v / 1_000_000).toFixed(1)} tr/m²`;
-}
-
-function fmtArea(v: number | null): string {
-  return v === null ? "—" : `${v.toLocaleString("vi-VN")} m²`;
-}
 
 /**
  * Section "Phân tích giá tham chiệu" — lazy, độc lập hoàn toàn với AI Pro.
