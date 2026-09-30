@@ -14,7 +14,7 @@ import { parseProAnalysis, type ProAnalysis, type ProNextStep, type ProWarning }
 import { PRO_ANALYSIS_JSON_SCHEMA, PRO_ANALYSIS_JSON_SCHEMA_NAME } from "./json-schema";
 import { guardProAnalysis } from "./guard";
 import { calcPricePerM2 } from "./evidence";
-import { resolveModelChain, structuredModeFor, timeoutMsFor } from "./model-chain";
+import { reasoningConfigFor, resolveModelChain, structuredModeFor, timeoutMsFor } from "./model-chain";
 import { askProRoute, formatJevDecisionReceipt, type ProFailureKind } from "./jev-decision";
 import type { EvidencePack } from "./evidence";
 
@@ -25,9 +25,13 @@ export const PRO_ANALYSIS_VERSION_FALLBACK = "pro-v1";
 // Mỗi model tối đa 2 request: attempt 1 theo capability, attempt 2 là recovery
 // (hạ structured output xuống prompt-only, hoặc ép sửa JSON). Không loop vô hạn.
 const MAX_ATTEMPTS_PER_MODEL = 2;
-
 // Ngân sách output cho 1 lần gọi. 1500 làm Ling bị cắt giữa chừng
 // (finish_reason=length) -> JSON dở -> không validate được.
+//
+// Lưu ý: ngân sách này CHỈ còn ý nghĩa sau khi đã tắt reasoning cho model
+// reasoning-on (xem reasoningConfigFor ở model-chain.ts). Reasoning token
+// tính vào max_tokens, nên nếu để bật, 3000 token bị suy luận ăn hết và
+// content về rỗng — tăng con số này cũng không sửa được, chỉ tăng chi phí.
 const MAX_OUTPUT_TOKENS = 3000;
 
 export interface ProAnalysisMetrics {
@@ -282,6 +286,7 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
             ? { name: PRO_ANALYSIS_JSON_SCHEMA_NAME, strict: false, schema: PRO_ANALYSIS_JSON_SCHEMA }
             : undefined,
         timeoutMs: timeoutMsFor(model),
+        reasoning: reasoningConfigFor(model),
       });
 
       metrics.attempts += 1;

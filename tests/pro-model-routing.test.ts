@@ -9,6 +9,7 @@ import {
   structuredModeFor,
   MAX_CHAIN,
   PRO_ANALYSIS_DEFAULT_MODEL,
+  reasoningConfigFor,
   PRO_ANALYSIS_BENCHMARK_CANDIDATES,
   isRetiredModel,
   timeoutMsFor,
@@ -571,6 +572,98 @@ async function streamingTransportTests() {
     assert.ok(
       logged!.includes("upstream boom"),
       `log phải mang message lỗi từ event: ${logged}`,
+    );
+  });
+}
+
+// Hồi quy reasoning (lỗi production 2026-09-30 14:18). Qwen3.8-27B bật
+// reasoning mặc định với effort=xhigh (~95% max_tokens). OpenRouter tính
+// reasoning token VÀO max_tokens, nên 3000 output token về đủ mà
+// delta.content rỗng -> provider_empty_content + finish_reason=length.
+// Không phải JSON hỏng, không phải streaming hỏng: content chưa từng có.
+async function reasoningBudgetTests() {
+  console.log("\n== 16. Reasoning budget: tắt thinking để content có thật ==");
+
+  await check("model reasoning-on -> gửi reasoning.enabled=false", async () => {
+    const captured = stubFetch((m) => ok(m));
+    await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.deepEqual(
+      captured()[0].body.reasoning,
+      { enabled: false },
+      "Qwen reasoning-on phải tắt, nếu không content về rỗng",
+    );
+  });
+
+  await check("model reasoning-off (Gemma) -> KHÔNG gửi param reasoning", async () => {
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
+    await withEnv(
+      { ...CHAIN_ENV, PRO_ANALYSIS_FALLBACK_MODELS: GEMMA },
+      () => generateProAnalysis(sampleEvidence()),
+    );
+    const gemma = captured().find((c) => c.model === GEMMA);
+    assert.ok(gemma, "phải có request tới Gemma");
+    assert.equal(
+      gemma!.body.reasoning,
+      undefined,
+      "Gemma reasoning mặc định off, gửi param thừa là rủi ro provider từ chối",
+    );
+  });
+
+  await check("reasoningConfigFor: đúng theo model, cả slug :free", () => {
+    assert.deepEqual(reasoningConfigFor(QWEN), { enabled: false });
+    assert.deepEqual(reasoningConfigFor(`${QWEN}:free`), { enabled: false });
+    assert.equal(reasoningConfigFor(GEMMA), undefined);
+    assert.equal(reasoningConfigFor("nvidia/nemotron-3.5-lightning"), undefined);
+  });
+
+  await check("finish_reason=length + content rỗng -> provider_empty_content", async () => {
+    // Mô phỏng đúng ca production: provider báo 3000 output token nhưng
+    // toàn bộ là reasoning nên không có delta.content nào. Phải ra
+    // provider_empty_content (không phải provider_truncated) để log chỉ đúng.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      const encoder = new TextEncoder();
+      const wire =
+        `data: ${JSON.stringify({ model: QWEN, choices: [{ delta: { reasoning: "..." } }] })}\n\n` +
+        `data: ${JSON.stringify({
+          model: QWEN,
+          choices: [{ delta: {}, finish_reason: "length" }],
+          usage: { prompt_tokens: 986, completion_tokens: 3000 },
+        })}\n\n` +
+        "data: [DONE]\n\n";
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(encoder.encode(wire));
+            c.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+    try {
+      const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+      assert.ok(
+        out.metrics.provider_errors.includes("provider_empty_content"),
+        `phải phân loại provider_empty_content, thấy: ${out.metrics.provider_errors.join("|")}`,
+      );
+      assert.equal(out.fromFallback, true, "content rỗng thì phải rơi về deterministic fallback");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  await check("stream đầy đủ + reasoning tắt -> lưu analysis, token có thật", async () => {
+    const captured = stubFetch((m) => ok(m));
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false, "phải ra analysis thật");
+    assert.equal(out.model, QWEN);
+    assert.deepEqual(captured()[0].body.reasoning, { enabled: false });
+    // Schema json_schema vẫn nguyên khi thêm param reasoning.
+    assert.equal(
+      (captured()[0].body.response_format as { type?: string } | undefined)?.type,
+      "json_schema",
+      "phải giữ response_format json_schema",
     );
   });
 }
@@ -1211,6 +1304,7 @@ async function main() {
   await retiredModelTests();
   await lingVlTests();
   await streamingTransportTests();
+  await reasoningBudgetTests();
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
   // process.exit() huy async handle -> libuv assertion tren Windows.

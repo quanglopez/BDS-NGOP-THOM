@@ -84,6 +84,7 @@ export async function callOpenRouter(opts: {
   structuredMode?: StructuredMode;
   jsonSchema?: Record<string, unknown>;
   timeoutMs?: number;
+  reasoning?: { enabled: boolean };
 }): Promise<OpenRouterResult> {
   const {
     apiKey,
@@ -97,6 +98,7 @@ export async function callOpenRouter(opts: {
     structuredMode = "json_object",
     jsonSchema,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    reasoning,
   } = opts;
 
   const base = { ok: false, text: null, requestedModel: model, actualModel: null, usage: EMPTY_USAGE, latencyMs: 0, finishReason: null as string | null };
@@ -149,6 +151,10 @@ export async function callOpenRouter(opts: {
       // include_usage -> metrics log lặng lẽ mất input_tokens/output_tokens.
       stream_options: { include_usage: true },
     };
+    // Model reasoning-on mặc định sẽ ngốn max_tokens và trả content rỗng.
+    // Quyết định thuộc model-chain.ts (capability theo model), không hardcode
+    // ở đây. `reasoning` là param OpenRouter, không liên quan tới streaming.
+    if (reasoning) body.reasoning = reasoning;
     if (structuredMode === "json_schema" && jsonSchema) {
       body.response_format = { type: "json_schema", json_schema: jsonSchema };
     } else if (structuredMode === "json_object") {

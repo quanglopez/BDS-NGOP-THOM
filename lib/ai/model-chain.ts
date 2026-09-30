@@ -123,6 +123,38 @@ export function structuredModeFor(model: string): StructuredMode {
   return "json_object";
 }
 
+// Model BẬT reasoning mặc định -> PHẢI tắt, nếu không reasoning nuốt hết
+// max_tokens và content về rỗng.
+//
+// Audit /api/v1/models ngày 2026-09-30 (reasoning.default_enabled):
+//   qwen/qwen3.8-27b[:free] -> default_enabled=true,  default_effort=xhigh
+//   google/gemma-4-31b-it   -> default_enabled=false (không cần can thiệp)
+//
+// Vì sao đây là lỗi nghiêm trọng: OpenRouter tính reasoning tokens VÀO
+// max_tokens, và effort "xhigh" chiếm ~95% ngân sách. Với max_tokens=3000
+// thì ~2850 token đi vào suy luận, phần content còn lại không đủ phát ra
+// ký tự nào -> provider_empty_content + finish_reason=length, dù provider
+// đã trả 3000 output tokens và vẫn tính tiền. Log production 14:18 chính
+// là ca này (input=986, output=3000, actual_model=qwen/qwen3.8-27b).
+//
+// Dùng `enabled: false` chứ không phải `effort: "none"`: model này khai
+// supported_efforts = [xhigh, medium, low] — KHÔNG có "none", nên gửi
+// effort:none có thể bị provider từ chối. mandatory=false nên tắt được.
+// Tham chiếu: https://openrouter.ai/docs/guides/reasoning-tokens
+const REASONING_DISABLED: readonly string[] = [
+  "qwen/qwen3.8-27b",
+];
+
+// Trả về body param `reasoning` cho request, hoặc undefined để không gửi
+// (model không bật reasoning mặc định -> thêm param là thừa).
+export function reasoningConfigFor(model: string): { enabled: false } | undefined {
+  const id = model.toLowerCase();
+  const isThinking = REASONING_DISABLED.some((slug) =>
+    id === slug || id.startsWith(`${slug}:free`),
+  );
+  return isThinking ? { enabled: false } : undefined;
+}
+
 // Đọc chain từ env, lọc denied + v1-excluded + trùng, cắt MAX_CHAIN.
 // PRO_ANALYSIS_MODEL / PRO_ANALYSIS_FALLBACK_MODELS (phân tách bằng dấu phẩy).
 // Model bị loại VẪN được log để không bị loại im lặng.
