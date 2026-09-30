@@ -9,6 +9,7 @@ import { savePendingReport } from "@/lib/pending-report";
 import { scoreContributions } from "@/lib/score-explain";
 import { trackEvent } from "@/lib/analytics";
 import { ShareImage } from "@/components/site/share-image";
+import { ScoreRing } from "@/components/site/score-ring";
 import { reportUrl } from "@/lib/report/slug";
 
 interface Props {
@@ -70,12 +71,6 @@ export function ResultCard({
 }: Props) {
   const t = result;
   const isAi = source === "ai";
-  const ringClass =
-    t.tagColor === "green"
-      ? "border-ai bg-ai-wash text-ai-ink"
-      : t.tagColor === "yellow"
-        ? "border-risk-medium bg-risk-medium-wash text-risk-medium"
-        : "border-risk-high bg-risk-high-wash text-risk-high";
   const tagClass =
     t.tagColor === "green"
       ? "bg-ai-ink text-white border-ai-ink"
@@ -116,36 +111,7 @@ export function ResultCard({
         <div className="absolute -top-20 right-10 h-[280px] w-[280px] rounded-full bg-gold-base/10 blur-[70px]" />
         <div className="relative flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4 md:gap-5">
-            {/* Vòng điểm 120px: đường kính cố định, cung SVG vẽ theo điểm/100 */}
-            <div
-              className={`relative flex h-[120px] w-[120px] shrink-0 items-center justify-center rounded-full border-[6px] bg-white ${ringClass}`}
-            >
-              <div className="text-center leading-none">
-                <div className="font-display text-[30px] font-extrabold tabular-nums tracking-tight">
-                  {t.overall}
-                </div>
-                <div className="mt-0.5 whitespace-nowrap text-micro font-semibold opacity-70">
-                  /100 ĐIỂM
-                </div>
-              </div>
-              <svg
-                aria-hidden="true"
-                className="absolute inset-0 h-full w-full -rotate-90"
-                viewBox="0 0 120 120"
-              >
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="52"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="6"
-                  strokeLinecap="round"
-                  strokeDasharray={`${(t.overall / 100) * 327} 327`}
-                  className="opacity-30"
-                />
-              </svg>
-            </div>
+            <ScoreRing score={t.overall} tone={t.tagColor} caption="/100 ĐIỂM" />
 
             <div className="min-w-0">
               <div

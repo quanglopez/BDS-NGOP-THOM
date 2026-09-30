@@ -21,8 +21,10 @@ export const metadata: Metadata = {
     "Biết tin nào đáng gọi chủ nhà trước. CheckBDS phân tích giá, vị trí, pháp lý, thanh khoản và dấu hiệu bán gấp từ link Nhà Tốt/Chợ Tốt hoặc nội dung tin rao. Miễn phí 20 tin/ngày.",
 };
 
-// Landing theo thứ tự phễu: Hero -> Demo -> Lợi ích -> 3 bước -> Ví dụ -> Bulk
-// -> Social proof -> Free/Pro -> FAQ -> CTA cuối
+// Landing theo thứ tự phễu: Hero -> Check (sản phẩm thật) -> Báo cáo AI -> Lợi ích
+// -> 3 bước -> Bulk -> Social proof -> Free/Pro -> Video demo -> FAQ -> CTA cuối.
+// Báo cáo AI lên ngay sau ô check vì đó là thứ chứng minh giá trị; video Loom là
+// nội dung thụ động nên hạ xuống dưới pricing thay vì chặn ngay sau sản phẩm.
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-cream text-slate-800 selection:bg-gold/30">
@@ -30,17 +32,17 @@ export default function HomePage() {
       <SiteHeader />
       <Hero />
       <Checker />
-      <ProductDemo />
+      <ExampleAnalysis />
       <section id="tinh-nang" className="scroll-mt-20">
         <Benefits />
       </section>
       <section id="cach-hoat-dong" className="scroll-mt-20">
         <HowItWorks />
       </section>
-      <ExampleAnalysis />
       <BulkSection />
       <SocialProof />
       <FreeVsPro />
+      <ProductDemo />
       <Faq />
       <FinalCta />
       <SiteFooter />
