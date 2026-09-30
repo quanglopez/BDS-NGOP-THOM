@@ -140,9 +140,19 @@ export function structuredModeFor(model: string): StructuredMode {
 // Dùng `enabled: false` chứ không phải `effort: "none"`: model này khai
 // supported_efforts = [xhigh, medium, low] — KHÔNG có "none", nên gửi
 // effort:none có thể bị provider từ chối. mandatory=false nên tắt được.
+//
+// deepseek/deepseek-v4.1-flash: cùng lớp lỗi, effort="high" (thấp hơn
+// xhigh nhưng vẫn nuốt hết). Đo production 2026-09-30 15:09, check
+// 62ab3310: primary DeepSeek trả provider_truncated ở CẢ HAI attempt,
+// finish_reason=length, output đúng 3000 = max_tokens, content bị cắt
+// giữa chừng. Khác Qwen ở chỗ content vẫn có (nên là truncated chứ không
+// phải empty), nhưng vẫn hỏng: Jev phải đổi model rồi Qwen mới ra được
+// report, tốn 2 attempt + ~20s. Không có "none" trong supported_efforts
+// ([max, high, low]) nên cũng phải tắt bằng enabled:false.
 // Tham chiếu: https://openrouter.ai/docs/guides/reasoning-tokens
 const REASONING_DISABLED: readonly string[] = [
   "qwen/qwen3.8-27b",
+  "deepseek/deepseek-v4.1-flash",
 ];
 
 // Trả về body param `reasoning` cho request, hoặc undefined để không gửi

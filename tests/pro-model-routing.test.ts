@@ -52,6 +52,12 @@ const NEMO = "nvidia/nemotron-3.5-lightning:free";
 // tại latency_ms=15002 với timeout_ms=15000. Nới deadline để thử lại.
 const QWEN_PAID = "qwen/qwen3.8-27b";
 
+// Slug DeepSeek đang là PRIMARY production (đổi env 2026-09-30 15:09).
+// Bật reasoning mặc định effort=high: đo production 15:09 (check 62ab3310)
+// cả 2 attempt đều provider_truncated, finish_reason=length, output=3000
+// (đúng max_tokens), content bị cắt giữa chừng -> phải tắt reasoning.
+const DEEPSEEK = "deepseek/deepseek-v4.1-flash";
+
 const SAMPLE_TEXT =
   "Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng, hẻm xe hơi";
 
@@ -612,6 +618,7 @@ async function reasoningBudgetTests() {
   await check("reasoningConfigFor: đúng theo model, cả slug :free", () => {
     assert.deepEqual(reasoningConfigFor(QWEN), { enabled: false });
     assert.deepEqual(reasoningConfigFor(`${QWEN}:free`), { enabled: false });
+    assert.deepEqual(reasoningConfigFor(DEEPSEEK), { enabled: false });
     assert.equal(reasoningConfigFor(GEMMA), undefined);
     assert.equal(reasoningConfigFor("nvidia/nemotron-3.5-lightning"), undefined);
   });
@@ -665,6 +672,116 @@ async function reasoningBudgetTests() {
       "json_schema",
       "phải giữ response_format json_schema",
     );
+  });
+}
+
+// Hồi quy DeepSeek (lỗi production 2026-09-30 15:09, check 62ab3310).
+// deepseek/deepseek-v4.1-flash bật reasoning mặc định với effort=high.
+// Cùng lớp lỗi với Qwen 14:18 nhưng biểu hiện khác: reasoning nuốt max_tokens
+// nên provider cắt content GIỮA CHỪNG -> provider_truncated +
+// finish_reason=length, output=3000 (đúng max_tokens). Cả 2 attempt đều hỏng,
+// phải đổi sang Qwen mới ra được report.
+async function deepseekReasoningTests() {
+  console.log("\n== 17. DeepSeek reasoning: tắt thinking để primary dùng được ==");
+
+  // Phải khai OPENROUTER_API_KEY: thiếu thì callOpenRouter bail sớm, không
+  // gọi fetch -> mọi assert về request đều hỏng dù chain resolve đúng.
+  const DEEPSEEK_ENV = {
+    ...CHAIN_ENV,
+    PRO_ANALYSIS_MODEL: DEEPSEEK,
+    PRO_ANALYSIS_FALLBACK_MODELS: QWEN_PAID,
+  };
+
+  await check("DeepSeek request chứa reasoning.enabled=false", async () => {
+    const captured = stubFetch((m) => ok(m));
+    await withEnv(DEEPSEEK_ENV, () => generateProAnalysis(sampleEvidence()));
+    const ds = captured().find((c) => c.model === DEEPSEEK);
+    assert.ok(ds, "phải có request tới DeepSeek");
+    assert.deepEqual(
+      ds!.body.reasoning,
+      { enabled: false },
+      "DeepSeek reasoning-on phải tắt, nếu không content bị cắt",
+    );
+  });
+
+  await check("DeepSeek reasoning-off -> content đủ, KHÔNG finish_reason=length", async () => {
+    // Mô phỏng ca đã sửa: sau khi tắt reasoning, provider trả content thật
+    // và tự kết thúc bằng "stop" ở dưới max_tokens. Nếu param reasoning
+    // không được gửi, provider trả lại đúng 3000 token + length như
+    // production -> phải bắt được.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      const encoder = new TextEncoder();
+      const wire =
+        `data: ${JSON.stringify({
+          model: DEEPSEEK,
+          choices: [{ delta: { content: JSON.stringify(cleanAnalysis()) } }],
+        })}\n\n` +
+        `data: ${JSON.stringify({
+          model: DEEPSEEK,
+          choices: [{ delta: {}, finish_reason: "stop" }],
+          usage: { prompt_tokens: 1192, completion_tokens: 2091 },
+        })}\n\n` +
+        "data: [DONE]\n\n";
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(encoder.encode(wire));
+            c.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+    try {
+      const out = await withEnv(DEEPSEEK_ENV, () => generateProAnalysis(sampleEvidence()));
+      assert.equal(out.fromFallback, false, "DeepSeek phải tự ra được analysis, không rơi về fallback");
+      assert.equal(out.model, DEEPSEEK, "phải là DeepSeek, không phải Qwen fallback");
+      assert.deepEqual(out.metrics.provider_errors, [], "không được có provider_truncated nào");
+      assert.equal(out.metrics.output_tokens, 2091, "output_tokens phải lấy từ usage thật");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  await check("DeepSeek trả content đủ -> lưu analysis, attempts=1", async () => {
+    const captured = stubFetch((m) => ok(m, cleanAnalysis()));
+    const out = await withEnv(DEEPSEEK_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false, "phải ra analysis thật");
+    assert.equal(out.model, DEEPSEEK);
+    assert.equal(out.metrics.attempts, 1, "DeepSeek phải thành công ở attempt đầu");
+    assert.equal(
+      captured().filter((c) => c.model === QWEN_PAID).length,
+      0,
+      "DeepSeek thành công thì không gọi fallback",
+    );
+    // structuredModeFor KHÔNG gán json_schema cho DeepSeek (chỉ Qwen và
+    // Ling-VL có) -> DeepSeek dùng json_object, hợp lệ vì provider khai
+    // structured_outputs. Test này khoá đúng hành vi đang chạy, không
+    // khoá giả định: điểm cần bảo vệ là param reasoning thêm vào mà
+    // KHÔNG làm hỏng response_format sẵn có.
+    assert.equal(
+      (captured()[0].body.response_format as { type?: string } | undefined)?.type,
+      structuredModeFor(DEEPSEEK),
+      "response_format phải khớp structuredModeFor, không bị reasoning làm hỏng",
+    );
+  });
+
+  await check("DeepSeek fail -> Qwen fallback, hành vi Qwen không đổi", async () => {
+    // Qwen reasoning vẫn phải tắt sau khi thêm DeepSeek vào cùng danh sách:
+    // nếu khớp sai (vd prefix chung) thì Qwen sẽ mất param reasoning.
+    const captured = stubFetch((m) => (m === DEEPSEEK ? rateLimited() : ok(m)));
+    const out = await withEnv(DEEPSEEK_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false, "Qwen phải cứu được chuỗi");
+    assert.equal(out.model, QWEN_PAID);
+    const qw = captured().find((c) => c.model === QWEN_PAID);
+    assert.ok(qw, "phải có request tới Qwen");
+    assert.deepEqual(
+      qw!.body.reasoning,
+      { enabled: false },
+      "Qwen reasoning vẫn phải tắt, DeepSeek không được nuốt mất",
+    );
+    assert.equal(out.metrics.attempts, 2, "1 attempt DeepSeek + 1 attempt Qwen");
   });
 }
 async function main() {
@@ -1305,6 +1422,7 @@ async function main() {
   await lingVlTests();
   await streamingTransportTests();
   await reasoningBudgetTests();
+  await deepseekReasoningTests();
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
   // process.exit() huy async handle -> libuv assertion tren Windows.
