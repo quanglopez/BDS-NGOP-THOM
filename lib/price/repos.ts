@@ -54,13 +54,23 @@ export function supabaseMarketListings(admin: SupabaseClient): MarketListingRepo
   return {
     async upsertMany(listings) {
       if (listings.length === 0) return;
-      // upsert theo (source, external_id), giữ first_seen_at, đẩy last_seen_at
+      // upsert theo (source, external_id), giữ first_seen_at, đẩy last_seen_at.
+      //
+      // KHÔNG được gửi `first_seen_at: undefined` để "giữ" cột này. supabase-js
+      // lấy danh sách cột cho tham số `columns=` từ KEYS của object, nên undefined
+      // vẫn khiến first_seen_at có mặt trong columns=; nhưng JSON.stringify() bỏ
+      // mất value -> PostgREST insert NULL tường minh, mà NULL tường minh KHÔNG
+      // rơi về DEFAULT now(). Cột là NOT NULL nên mọi batch đều chết:
+      //   23502 null value in column "first_seen_at" ... violates not-null constraint
+      // và cả bảng market_listings rỗng (0 dòng) vì không batch nào sống sót.
+      //
+      // Bỏ hẳn khỏi payload: insert thì DB tự lấy DEFAULT now(), còn khi conflict
+      // thì cột này không nằm trong danh sách update nên giữ nguyên giá trị cũ.
       const { error } = await admin
         .from("market_listings")
         .upsert(
           listings.map((l) => ({
             ...l,
-            first_seen_at: undefined,
             last_seen_at: new Date().toISOString(),
           })),
           { onConflict: "source,external_id", ignoreDuplicates: false },
