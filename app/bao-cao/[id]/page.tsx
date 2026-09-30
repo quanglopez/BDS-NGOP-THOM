@@ -1,4 +1,4 @@
-import { redirect, notFound } from "next/navigation";
+import { redirect, permanentRedirect, notFound } from "next/navigation";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
@@ -87,9 +87,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
   // URL cũ -> URL SEO. Đặt SAU kiểm tra ownership: redirect trước sẽ lộ
   // việc report tồn tại (và slug của nó) cho user khác.
+  //
+  // 308 (permanentRedirect) chứ không 307: đây là canonicalization VĨNH
+  // VIỄN — slug của 1 report không bao giờ đổi, và URL slug là bản chuẩn.
+  // 307 nói với crawler "tạm thời", nên URL UUID và URL slug cùng tồn tại
+  // lâu dài (duplicate content). 308 gộp tín hiệu về một URL.
+  // KHÔNG đụng redirect ở dòng trên (login): cái đó là 307 đúng — phụ thuộc
+  // session, vào lại là quay lại URL cũ.
   const seoSlug = (row.seo_slug as string | null) ?? null;
   if (ref.kind === "uuid" && seoSlug && seoSlug.length > 0) {
-    redirect(`/bao-cao/${seoSlug}`);
+    permanentRedirect(`/bao-cao/${seoSlug}`);
   }
 
   const { data: profile } = await supabase
