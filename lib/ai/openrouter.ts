@@ -2,6 +2,13 @@
 // Không log/gửi API key. Trả về model THỰC TẾ provider đã dùng + usage để đo.
 // Capability mỗi model được chọn ở lib/ai/model-chain.ts; wrapper này chỉ nhận
 // chế độ structured output đã quyết định, không tự gửi param vô điều kiện.
+//
+// stream:true — bắt buộc. Non-streaming khiến OpenRouter buffer cả generation
+// rồi mới trả, nên client không nhận byte nào cho tới cuối và deadline đo
+// TỔNG generation time. Với SSE, deadline (xem `arm`) là idle time: chỉ bắn
+// khi provider im lặng quá lâu, nên TTFT nằm trong budget là đủ.
+// KHÔNG validate JSON ở đây — parseProAnalysis (lib/ai/schema.ts) sở hữu
+// việc parse và bóc code fence.
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -45,15 +52,6 @@ export interface OpenRouterResult {
 }
 
 const EMPTY_USAGE: OpenRouterUsage = { promptTokens: null, completionTokens: null };
-
-// Provider có thể trả text trong `error` (NonStreamingChoice.error) khi
-// generation lỗi ở tầng upstream dù HTTP 200.
-function choiceErrorText(raw: unknown): string | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const choice = (raw as { choices?: { error?: { message?: unknown } }[] }).choices?.[0];
-  const msg = choice?.error?.message;
-  return typeof msg === "string" && msg.trim() ? msg.trim() : null;
-}
 
 // Cắt bỏ rủi ro lộ secret/PII nếu provider vô tình echo lại trong message:
 // API key, email, và mọi cụm số 9-11 chữ số (SĐT Việt Nam).
@@ -103,8 +101,28 @@ export async function callOpenRouter(opts: {
 
   const base = { ok: false, text: null, requestedModel: model, actualModel: null, usage: EMPTY_USAGE, latencyMs: 0, finishReason: null as string | null };
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), Math.max(1000, timeoutMs));
   const startedAt = Date.now();
+
+  // Deadline là IDLE TIME, không phải tổng thời gian sinh.
+  //
+  // Trước đây timer hẹn một lần lúc gọi: bất kể provider đã trả header
+  // hay chưa, hết timeout là abort. Với response KHÔNG stream, OpenRouter
+  // buffer toàn bộ generation rồi mới trả, nên client không nhận byte nào
+  // cho tới cuối — deadline đo tổng generation time. Đo production
+  // 2026-09-30: 4 slug khác nhau đều abort đúng ở trần 15s/30s với
+  // http_status=-, trong khi log OpenRouter cho thấy chúng hoàn tất và
+  // vẫn bị tính tiền (TTFT 0.36-4.05s, output 712-2368 tok).
+  //
+  // Nay arm lại mỗi khi stream còn sống: deadline chỉ bắn khi provider im
+  // lặng quá lâu. TTFT nằm trong budget thì phần còn lại có thể stream
+  // bao lâu cũng không bị giết.
+  let timer: NodeJS.Timeout | undefined;
+  let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  const arm = (ms: number) => {
+    clearTimeout(timer); // handle luôn được gán lại ngay sau => clear là cần thiết
+    timer = setTimeout(() => ctrl.abort(), Math.max(1000, ms));
+  };
+  arm(timeoutMs);
 
   try {
     const headers: Record<string, string> = {
@@ -125,6 +143,8 @@ export async function callOpenRouter(opts: {
         { role: "system", content: systemPrompt },
         { role: "user", content: userPayload },
       ],
+      // Bắt buộc để deadline đo time-to-first-token thay vì tổng generation.
+      stream: true,
     };
     if (structuredMode === "json_schema" && jsonSchema) {
       body.response_format = { type: "json_schema", json_schema: jsonSchema };
@@ -140,9 +160,17 @@ export async function callOpenRouter(opts: {
     });
 
     const latencyMs = Date.now() - startedAt;
-    const raw = await res.text();
 
+    // Lỗi HTTP (429, 400 param không hỗ trợ, 5xx): OpenRouter trả JSON
+    // thường, KHÔNG phải SSE. Đọc body ĐÚNG MỘT LẦN — res.text() chỉ dùng
+    // được một lần, gọi lần hai sẽ ném Body-Used.
     if (!res.ok) {
+      let raw = "";
+      try {
+        raw = await res.text();
+      } catch {
+        raw = "";
+      }
       let detail = "";
       try {
         const parsed = JSON.parse(raw) as { error?: { message?: unknown } };
@@ -164,45 +192,99 @@ export async function callOpenRouter(opts: {
       };
     }
 
-    let data: unknown = null;
-    try {
-      data = JSON.parse(raw);
-    } catch {
-      return { ...base, latencyMs, error: "provider_bad_json", errorMessage: sanitize(raw) };
+    // stream:true -> SSE. Đọc từng dòng `data: {...}`, gom delta.content,
+    // dừng ở [DONE] (hoặc khi reader hết/không còn stream).
+    if (!res.body) {
+      return { ...base, latencyMs, error: "provider_empty_content", errorMessage: "no response body" };
     }
 
-    const responseModel =
-      typeof (data as { model?: unknown }).model === "string"
-        ? ((data as { model: string }).model)
-        : null;
-    const choiceFinish = (data as { choices?: { finish_reason?: unknown }[] }).choices?.[0]?.finish_reason;
-    const finishReason = typeof choiceFinish === "string" ? choiceFinish : null;
-    const usageRaw = (data as { usage?: { prompt_tokens?: unknown; completion_tokens?: unknown } }).usage;
-    const usage: OpenRouterUsage = {
-      promptTokens: typeof usageRaw?.prompt_tokens === "number" ? usageRaw.prompt_tokens : null,
-      completionTokens: typeof usageRaw?.completion_tokens === "number" ? usageRaw.completion_tokens : null,
+    reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let content = "";
+    let responseModel: string | null = null;
+    let finishReason: string | null = null;
+    let usage: OpenRouterUsage = EMPTY_USAGE;
+    let sawDone = false;
+    let streamError: string | null = null;
+
+    // Một sự kiện SSE có thể bị cắt giữa các chunk -> giữ phần dư buffer
+    // cho lần đọc sau, CHỈ xử lý dòng đã kết thúc bằng newline.
+    const consumeLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) return;
+      const payload = trimmed.slice(5).trim();
+      if (!payload) return;
+      if (payload === "[DONE]") {
+        sawDone = true;
+        return;
+      }
+      let evt: unknown;
+      try {
+        evt = JSON.parse(payload);
+      } catch {
+        return; // chunk không phải JSON -> bỏ, không làm hỏng cả stream
+      }
+      if (typeof evt !== "object" || evt === null) return;
+      const o = evt as {
+        model?: unknown;
+        usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+        choices?: {
+          finish_reason?: unknown;
+          delta?: { content?: unknown };
+          error?: { message?: unknown };
+        }[];
+      };
+      if (typeof o.model === "string") responseModel = o.model;
+      if (typeof o.choices?.[0]?.finish_reason === "string") finishReason = o.choices[0].finish_reason as string;
+      const c = o.choices?.[0]?.delta?.content;
+      if (typeof c === "string") content += c;
+      const e = o.choices?.[0]?.error?.message;
+      if (!streamError && typeof e === "string" && e.trim()) streamError = e.trim();
+      const u = o.usage;
+      if (u && typeof u === "object") {
+        usage = {
+          promptTokens: typeof u.prompt_tokens === "number" ? u.prompt_tokens : usage.promptTokens,
+          completionTokens: typeof u.completion_tokens === "number" ? u.completion_tokens : usage.completionTokens,
+        };
+      }
     };
 
-    // HTTP 200 nhưng generation lỗi ở choice
-    const choiceError = choiceErrorText(data);
-    if (choiceError) {
-      return { ...base, latencyMs, actualModel: responseModel, usage, finishReason, error: "provider_error", errorMessage: sanitize(choiceError) };
+    while (!sawDone) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      // Stream còn sống -> reset idle deadline.
+      arm(timeoutMs);
+      buffer += decoder.decode(value, { stream: true });
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) >= 0) {
+        consumeLine(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+      }
+    }
+    if (buffer.trim()) consumeLine(buffer);
+
+    // Thời gian thực tế của lần gọi, không phải TTFT.
+    const totalMs = Date.now() - startedAt;
+
+    // Provider trả lỗi trong event (HTTP vẫn 200) -> provider_error,
+    // giữ nguyên ngữ nghĩa như bản non-streaming (choice.error.message).
+    if (streamError) {
+      return { ...base, latencyMs: totalMs, actualModel: responseModel, usage, finishReason, error: "provider_error", errorMessage: sanitize(streamError) };
     }
 
-    const text =
-      typeof data === "object" && data !== null
-        ? (data as { choices?: { message?: { content?: unknown } }[] }).choices?.[0]?.message
-            ?.content ?? null
-        : null;
-
-    if (typeof text !== "string" || !text.trim()) {
-      return { ...base, latencyMs, actualModel: responseModel, usage, finishReason, error: "provider_empty_content", errorMessage: `finish_reason=${finishReason ?? "null"}` };
+    if (!content.trim()) {
+      return { ...base, latencyMs: totalMs, actualModel: responseModel, usage, finishReason, error: "provider_empty_content", errorMessage: `finish_reason=${finishReason ?? "null"}` };
     }
-    // Trả về nhưng bị cắt cụt -> JSON gần như chắc chắn hỏng, đánh dấu để log rõ
+    // Bị cắt cụt -> JSON gần như chắc chắn hỏng, đánh dấu để log rõ
     if (finishReason === "length") {
-      return { ...base, latencyMs, actualModel: responseModel, usage, finishReason, error: "provider_truncated", errorMessage: `finish_reason=length output_truncated=true` };
+      return { ...base, latencyMs: totalMs, actualModel: responseModel, usage, finishReason, error: "provider_truncated", errorMessage: `finish_reason=length output_truncated=true` };
     }
-    return { ok: true, text: text.trim(), requestedModel: model, actualModel: responseModel, usage, latencyMs, finishReason };
+    // KHÔNG validate JSON ở đây. parseProAnalysis (lib/ai/schema.ts) là nơi
+    // duy nhất parse, và nó bóc code fence markdown trước khi parse. Nếu
+    // parse thêm ở tầng transport, output bọc ```json sẽ bị từ chối ở đây
+    // thay vì tới validation_failed như trước.
+    return { ok: true, text: content.trim(), requestedModel: model, actualModel: responseModel, usage, latencyMs: totalMs, finishReason };
   } catch (e) {
     const latencyMs = Date.now() - startedAt;
     const aborted = e instanceof Error && e.name === "AbortError";
@@ -214,5 +296,7 @@ export async function callOpenRouter(opts: {
     };
   } finally {
     clearTimeout(timer);
+    // Stream bị abort giữa chừng sẽ giữ socket mở nếu không cancel.
+    void reader?.cancel().catch(() => undefined);
   }
 }

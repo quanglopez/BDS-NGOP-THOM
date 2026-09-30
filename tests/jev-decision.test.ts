@@ -3,6 +3,7 @@
 // Phan "live" chi chay khi TYPESAFE_API_KEY that, xem README_JEV.md.
 
 import { strict as assert } from "node:assert";
+import { jsonResponse, sseResponse } from "./openrouter-sse.ts";
 import {
   PRO_ROUTE_OPTIONS,
   PRO_ROUTE_MIN_CONFIDENCE,
@@ -319,10 +320,7 @@ async function behaviourTests() {
       n0.set(model, n);
       captured.push({ model, body });
       const r = responder(model, n);
-      return new Response(typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload), {
-        status: r.status,
-        headers: { "Content-Type": "application/json" },
-      });
+      return r.status === 200 ? sseResponse(r.payload, model) : jsonResponse(r.status, r.payload);
     }) as typeof fetch;
     return () => captured;
   }

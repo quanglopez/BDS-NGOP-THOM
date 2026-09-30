@@ -13,6 +13,8 @@ import {
   isRetiredModel,
   timeoutMsFor,
 } from "../lib/ai/model-chain.ts";
+import type { ProAnalysisOutcome } from "../lib/ai/pro-analysis.ts";
+import { jsonResponse, sseResponse } from "./openrouter-sse.ts";
 import { generateProAnalysis, formatProAnalysisMetrics } from "../lib/ai/pro-analysis.ts";
 import { buildSnapshotUpdate, isFreshSnapshot, shouldPersistSnapshot } from "../lib/ai/report-cache.ts";
 import { planAllowsProAnalysis } from "../lib/quota.ts";
@@ -116,7 +118,8 @@ interface Captured {
 
 type Responder = (model: string, attempt: number) => { status: number; payload: unknown };
 
-// Stub fetch, trả về danh sách request đã gửi để assert.
+// Stub fetch, trả về danh sử request đã gửi để assert.
+// 200 -> SSE (client gửi stream:true), lỗi HTTP -> JSON thường như thật.
 function stubFetch(responder: Responder): () => Captured[] {
   const captured: Captured[] = [];
   const attemptByModel = new Map<string, number>();
@@ -128,10 +131,7 @@ function stubFetch(responder: Responder): () => Captured[] {
     attemptByModel.set(model, n);
     captured.push({ model, body });
     const r = responder(model, n);
-    return new Response(typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload), {
-      status: r.status,
-      headers: { "Content-Type": "application/json" },
-    });
+    return r.status === 200 ? sseResponse(r.payload, model) : jsonResponse(r.status, r.payload);
   }) as typeof fetch;
   void realFetch;
   return () => captured;
@@ -161,6 +161,15 @@ function modelUnavailable() {
 
 function badJson() {
   return { status: 200, payload: { model: "", choices: [{ message: { content: "{khong phai json" } }] } };
+}
+
+// Provider từ chối param structured output: HTTP 400 + message nhắc đúng
+// tên param để isUnsupportedParamError khớp.
+function unsupportedParam() {
+  return {
+    status: 400,
+    payload: { error: { message: "response_format json_schema is not supported for this model" } },
+  };
 }
 
 async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
@@ -424,6 +433,139 @@ async function lingVlTests() {
   });
 }
 
+
+// Hồi quy transport: stream:true + SSE. Lỗi production 2026-09-30 là vì
+// non-streaming bị OpenRouter buffer cả generation, deadline đo TỔNG thời
+// gian sinh nên giết đúng mọi lần gọi dù provider hoàn tất và bị tính tiền.
+async function streamingTransportTests() {
+  console.log("\n== 15. Streaming (SSE): ghép delta, deadline idle, phân loại lỗi ==");
+
+  await check("body gửi stream=true", async () => {
+    const captured = stubFetch((m) => ok(m));
+    await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(captured()[0].body.stream, true, "phải bật stream để deadline đo TTFT");
+  });
+
+  await check("stream success -> ghép delta thành JSON hợp lệ, không phải fallback", async () => {
+    stubFetch((m) => ok(m));
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.fromFallback, false, "SSE phải ra analysis thật, không rơi fallback");
+    assert.equal(out.model, QWEN);
+    assert.ok(out.analysis.summary.headline.length > 0);
+  });
+
+  await check("delta nhiều lần -> nối đúng, JSON parse được", async () => {
+    // stubFetch chia content thành 3 delta; nếu client chỉ giữ chunk cuối
+    // hoặc nối sai, JSON sẽ hỏng và rơi validation_failed.
+    stubFetch((m) => ok(m));
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.metrics.validation_failed, false, "JSON ghép từ delta phải parse được");
+    assert.deepEqual(out.analysis.summary, cleanAnalysis().summary);
+  });
+
+  await check("stream bị cắt (không [DONE]) -> dùng nội dung đã nhận", async () => {
+    // Provider ngắt sau 1 delta và không gửi [DONE]. Client thoát vòng lặp
+    // bằng EOF (reader hết) và phải dùng được phần content đã gom.
+    const text = JSON.stringify(cleanAnalysis());
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      const encoder = new TextEncoder();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ model: QWEN, choices: [{ delta: { content: text } }] })}\n\n`),
+            );
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+    try {
+      const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+      assert.equal(out.fromFallback, false, "nội dung đã nhận đủ thì vẫn phải thành công");
+      assert.equal(out.model, QWEN);
+      assert.equal(out.metrics.validation_failed, false);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  await check("HTTP 429 -> provider_429 (không phải SSE)", async () => {
+    stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.equal(out.metrics.provider_errors[0], "provider_429");
+    assert.equal(out.metrics.rate_limited, true);
+    assert.equal(out.model, GEMMA, "429 phải chuyển sang model kế tiếp");
+  });
+
+  await check("HTTP 400 param không hỗ trợ -> provider_unsupported_param", async () => {
+    stubFetch(() => unsupportedParam());
+    const out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    assert.ok(
+      out.metrics.provider_errors.includes("provider_unsupported_param"),
+      `phải phân loại provider_unsupported_param, thấy: ${out.metrics.provider_errors.join("|")}`,
+    );
+  });
+
+  await check("AbortError giữa stream -> provider_timeout (không phải network)", async () => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+    }) as typeof fetch;
+    let out: ProAnalysisOutcome | null = null;
+    try {
+      out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    assert.ok(
+      out!.metrics.provider_errors.every((e) => e === "provider_timeout"),
+      `AbortError phải thành provider_timeout, thấy: ${out!.metrics.provider_errors.join("|")}`,
+    );
+  });
+
+  await check("event lỗi trong stream (HTTP 200) -> provider_error", async () => {
+    const realFetch = globalThis.fetch;
+    const realError = console.error;
+    const lines: string[] = [];
+    console.error = (...a: unknown[]) => {
+      lines.push(a.map(String).join(" "));
+    };
+    globalThis.fetch = (async () => {
+      const encoder = new TextEncoder();
+      const lines_ =
+        `data: ${JSON.stringify({ model: QWEN, choices: [{ error: { message: "upstream boom" } }] })}\n\n` +
+        "data: [DONE]\n\n";
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            c.enqueue(encoder.encode(lines_));
+            c.close();
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      );
+    }) as typeof fetch;
+    let out: ProAnalysisOutcome | null = null;
+    try {
+      out = await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+    } finally {
+      globalThis.fetch = realFetch;
+      console.error = realError;
+    }
+    assert.ok(
+      out!.metrics.provider_errors.includes("provider_error"),
+      `lỗi trong event phải thành provider_error, thấy: ${out!.metrics.provider_errors.join("|")}`,
+    );
+    const logged = lines.find((l) => l.includes("[pro-analysis-error]"));
+    assert.ok(
+      logged!.includes("upstream boom"),
+      `log phải mang message lỗi từ event: ${logged}`,
+    );
+  });
+}
 async function main() {
   console.log("\n== Chain & capability (env-driven) ==");
 
@@ -1060,6 +1202,7 @@ async function main() {
 
   await retiredModelTests();
   await lingVlTests();
+  await streamingTransportTests();
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
   // process.exit() huy async handle -> libuv assertion tren Windows.
