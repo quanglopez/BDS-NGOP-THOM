@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { effectivePlan } from "@/lib/quota";
 import { dealLabel } from "@/lib/format";
+import { fmtVnd } from "@/lib/price/format";
 import { ProReport, type ReportSeed } from "@/components/report/pro-report";
 import { PriceIntelligenceSection } from "@/components/report/price-intelligence-section";
 
@@ -11,13 +12,6 @@ export const metadata: Metadata = {
   title: "Báo cáo phân tích - CheckBDS.online",
   robots: { index: false, follow: false },
 };
-
-function fmtVnd(v: number | null): string {
-  if (v === null || v === undefined) return "Chưa rõ";
-  if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(v % 1_000_000_000 === 0 ? 0 : 2)} tỷ`;
-  if (v >= 1_000_000) return `${Math.round(v / 1_000_000)} triệu`;
-  return String(v);
-}
 
 // Trang báo cáo 1 lần check: auth -> ownership -> plan.
 // Free thấy locked modules (không gọi AI). Pro mở toàn bộ (AI gọi 1 lần, có cache).

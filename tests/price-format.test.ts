@@ -112,6 +112,29 @@ check("dau cham chi xuat hien o phan tach nghin", () => {
   assert.equal(fmtVnd(1_000_000_000), "1 tỷ");
 });
 
+// Chip "💰 {fmtVnd(price)}" ở app/bao-cao/[id]/page.tsx:77. Bản cũ dùng
+// `.toFixed(v % 1e9 === 0 ? 0 : 2)` -> 4300000000 ra "4.30 tỷ" (dấu chấm,
+// dư số 0). Bản cũ nằm ở server component, nên commit c8041f8 sửa hai
+// client component mà bỏ sót file này -> chip vẫn lỗi trên production.
+check("chip hero: 4300000000 -> '4,3 tỷ' khong phai '4,30 tỷ'", () => {
+  assert.equal(fmtVnd(4_300_000_000), "4,3 tỷ");
+  assert.notEqual(fmtVnd(4_300_000_000), "4.30 tỷ");
+  assert.notEqual(fmtVnd(4_300_000_000), "4,30 tỷ");
+});
+
+check("gia tron khong ghi du so 0", () => {
+  assert.equal(fmtVnd(4_000_000_000), "4 tỷ");
+  assert.equal(fmtVnd(7_000_000_000), "7 tỷ");
+});
+
+check("khong con so 0 thua cua toFixed(2) o nhanh tỷ", () => {
+  // Bug goc: toFixed(2) sinh "4.50 tỷ" cho 4.5 tỷ — dấu chấm chứ không
+  // phải dấu phẩy kiểu Việt, và luôn 2 chữ số thập phân.
+  const out = fmtVnd(4_500_000_000);
+  assert.equal(out, "4,5 tỷ");
+  assert.ok(!out.includes("."), `dấu chấm phải chỉ dùng làm dấu tách nghìn: ${out}`);
+});
+
 console.log("\n== Dien tich ==");
 
 check("m2 nhom nghin bang dau cham", () => {
