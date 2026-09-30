@@ -4,8 +4,8 @@
 //
 // AUDIT CAPABILITY (đối chiếu OpenRouter /api/v1/models, supported_parameters):
 // - qwen/qwen3.8-27b:free            -> structured_outputs ✔  => dùng JSON Schema
-// - inclusionai/ling-3.0-flash-fin:free -> KHÔNG structured_outputs/response_format
-//                                          => KHÔNG gửi response_format, prompt strict JSON
+// - google/gemma-4-31b-it:free        -> response_format ✔, KHÔNG structured_outputs
+//                                          => dùng json_object
 // - nvidia/nemotron-3.5-lightning:free   -> KHÔNG structured_outputs/response_format
 //                                          => KHÔNG gửi response_format, prompt strict JSON
 // Vì capability KHÁC NHAU, KHÔNG dùng native `models` array + route:'fallback'
@@ -15,11 +15,20 @@
 import type { StructuredMode } from "./openrouter";
 
 export const PRO_ANALYSIS_DEFAULT_MODEL = "qwen/qwen3.8-27b:free";
-// Chain v1 (production): Qwen -> Ling -> deterministic fallback.
+// Chain v1 (production): Qwen -> Gemma -> deterministic fallback.
 // Nemotron 3.5 Lightning bị loại khỏi v1: timeout 15s làm hỏng UX, Evidence Pack
 // chỉ vài KB nên không cần model 1M context. Xem V1_EXCLUDED_MODELS bên dưới.
 export const PRO_ANALYSIS_DEFAULT_FALLBACK_MODELS: readonly string[] = [
-  "inclusionai/ling-3.0-flash-fin:free",
+  "google/gemma-4-31b-it:free",
+];
+
+// Slug OpenRouter đã RÚT (không còn trong /api/v1/models) -> mọi request trả
+// 404 "This model is unavailable for free" và đốt 2 attempt của chain vô ích.
+// Lọc ở CODE chứ không chỉ sửa default: env production đã có
+// PRO_ANALYSIS_FALLBACK_MODELS, nên nếu chỉ đổi default thì production vẫn
+// chạy slug chết. Muốn mở lại model: xoá khỏi set này.
+const RETIRED_MODELS: RegExp[] = [
+  /^inclusionai\/ling-3\.0-flash-fin/, // OpenRouter đã bỏ, chỉ còn bản -sante (y tế)
 ];
 
 // Loại khỏi chain production v1, kể cả khi env có khai báo.
@@ -51,13 +60,17 @@ export function isV1ExcludedModel(model: string): boolean {
   return V1_EXCLUDED_MODELS.some((re) => re.test(model));
 }
 
+export function isRetiredModel(model: string): boolean {
+  return RETIRED_MODELS.some((re) => re.test(model));
+}
+
 // Chế độ structured output theo model (đã audit ở trên).
 // Model lạ chưa biết -> json_object (mode rộng); nếu provider từ chối, pro-analysis
 // hạ xuống "none" (prompt strict JSON) thay vì sập cả chain.
 export function structuredModeFor(model: string): StructuredMode {
   const id = model.toLowerCase();
   if (id.startsWith("qwen/qwen3.8-27b")) return "json_schema";
-  if (id.startsWith("inclusionai/ling-3.0-flash-fin")) return "none";
+  if (id.startsWith("google/gemma-4-31b")) return "json_object";
   if (id.startsWith("nvidia/nemotron-3.5-lightning")) return "none";
   return "json_object";
 }
@@ -78,6 +91,10 @@ export function resolveModelChain(
   const chain: string[] = [];
   for (const m of [primary, ...fallbacks]) {
     if (!m || isDeniedModel(m)) continue;
+    if (isRetiredModel(m)) {
+      console.warn(`[pro-analysis-model] skipped model=${m} reason=retired_by_provider`);
+      continue;
+    }
     if (isV1ExcludedModel(m)) {
       console.warn(`[pro-analysis-model] skipped model=${m} reason=excluded_in_v1`);
       continue;
