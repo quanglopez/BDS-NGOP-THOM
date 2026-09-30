@@ -8,16 +8,19 @@
 //                                          => dùng json_object
 // - nvidia/nemotron-3.5-lightning:free   -> KHÔNG structured_outputs/response_format
 //                                          => KHÔNG gửi response_format, prompt strict JSON
-// - inclusionai/ling-3.0-flash-vl    -> structured_outputs ✔  => dùng JSON Schema
+// - inclusionai/ling-3.0-flash-vl    -> structured_outputs ✔ + response_format ✔
+//                                          => dùng JSON Schema
+//   (đã đối chiếu GET openrouter.ai/api/v1/models ngày 2026-09-30:
+//    supported_parameters gồm structured_outputs, context_length 262144)
 // Vì capability KHÁC NHAU, KHÔNG dùng native `models` array + route:'fallback'
 // của OpenRouter (một body chung sẽ gửi param không model fallback chấp nhận).
 // Thay bằng application-level chain có kiểm soát, mỗi model 1 body riêng.
 
 import type { StructuredMode } from "./openrouter";
 
-
-// Timeout mặc định của callOpenRouter (lib/ai/openrouter.ts). Không lặp ở
-// đây: đổi DEFAULT_TIMEOUT_MS ở client là đủ, tránh hai nguồn sự thật.
+// Timeout mặc định, PHẢI bằng DEFAULT_TIMEOUT_MS ở lib/ai/openrouter.ts:10.
+// Lặp giá trị thay vì import vì model-chain không được phụ thuộc runtime
+// client; đổi một trong hai thì cả hai phải đổi theo (xem timeoutMsFor).
 const DEFAULT_TIMEOUT_MS = 15000;
 
 // Timeout riêng cho model CHẬM. Số ở đây là deadline của HTTP request

@@ -292,13 +292,17 @@ async function lingVlTests() {
   await check("deadline: Ling VL = 30s, Qwen giữ mặc định 15s", async () => {
     // callOpenRouter đăng ký setTimeout(..., Math.max(1000, timeoutMs)).
     // Ghi lại delay thay vì chờ thật: kiểm chứng giá trị deadline đã truyền
-    // vào client, không phụ thuộc thời gian thực. clearTimeout trong finally
-    // của openrouter.ts nhận handle này nên không cần dọn gì thêm.
+    // vào client, không phụ thuộc thời gian thực.
+    //
+    // Spy KHÔNG hẹn timer thật (trả handle giả). Nếu hẹn 2_000_000ms thì
+    // mọi timer đăng ký qua stub mà không được clearTimeout sẽ giữ event
+    // loop của runner. openrouter.ts clearTimeout trong finally nên handle
+    // giả vô hại; fetch stub trả lời ngay nên không cần timer bắn thật.
     const real = globalThis.setTimeout;
     const delays: number[] = [];
-    globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+    globalThis.setTimeout = ((_fn: () => void, ms?: number) => {
       if (typeof ms === "number") delays.push(ms);
-      return real(fn, 2_000_000, ...rest); // không bao giờ abort trong test
+      return 0 as unknown as NodeJS.Timeout;
     }) as typeof setTimeout;
     try {
       stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
@@ -308,6 +312,29 @@ async function lingVlTests() {
     }
     assert.ok(delays.includes(30000), `phải đăng ký deadline 30s cho VL, thấy: ${delays.join(",")}`);
     assert.ok(delays.includes(15000), "Qwen phải giữ deadline mặc định 15s");
+  });
+
+  await check("log [pro-analysis-error] mang timeout_ms (chẩn đoán sau deploy)", async () => {
+    const realError = console.error;
+    const lines: string[] = [];
+    console.error = (...a: unknown[]) => {
+      lines.push(a.map(String).join(" "));
+    };
+    try {
+      stubFetch((m) => {
+        if (m === QWEN) return rateLimited();
+        throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+      });
+      await withEnv(VL_ENV, () => generateProAnalysis(sampleEvidence()));
+    } finally {
+      console.error = realError;
+    }
+    const vl = lines.find((l) => l.includes("[pro-analysis-error]") && l.includes(`requested_model=${LING_VL}`));
+    assert.ok(vl, "phải có log lỗi cho Ling VL");
+    assert.ok(vl!.includes("timeout_ms=30000"), `log phải nói deadline 30s: ${vl}`);
+    assert.ok(vl!.includes("structured_mode=json_schema"), `log phải nói json_schema: ${vl}`);
+    const qwen = lines.find((l) => l.includes(`requested_model=${QWEN}`));
+    assert.ok(qwen!.includes("timeout_ms=15000"), `Qwen phải giữ 15s: ${qwen}`);
   });
 
   await check("timeoutMsFor: chỉ Ling VL được nới", () => {

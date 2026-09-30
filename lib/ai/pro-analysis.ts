@@ -302,6 +302,7 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
             `requested_model=${model} actual_model=${res.actualModel ?? "-"} ` +
             `fallback_attempt=${attempt + 1} fallback_model=${fallbackModel} ` +
             `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
+            `timeout_ms=${timeoutMsFor(model)} ` +
             `latency_ms=${res.latencyMs} response_body_safe=${res.errorMessage ?? "-"}`,
         );
       }
