@@ -14,6 +14,7 @@ import type { AnalysisResult } from "@/lib/types";
 import { trackEvent } from "@/lib/analytics";
 import { ResultCard } from "@/components/site/result-card";
 import { CategoryScan } from "@/components/dashboard/category-scan";
+import { Search, ShieldCheck, Zap } from "lucide-react";
 
 type Status = {
   kind: "idle" | "loading" | "ok" | "error" | "limit";
@@ -158,16 +159,15 @@ export function Checker() {
   return (
     <>
       <div id="kiem-tra" className="scroll-mt-20 mx-auto max-w-[1120px] px-5 md:px-8 relative z-10 -mt-10 md:-mt-14">
-        <div className="bg-white rounded-[20px] md:rounded-[24px] shadow-[0_24px_90px_-20px_rgba(0,0,0,0.45)] border border-slate-200/70 overflow-hidden max-w-[780px]">
-          <div className="p-4 md:p-7">
-            <div className="flex items-center justify-between mb-3">
-              <label
-                htmlFor="listing"
-                className="text-[12px] font-bold tracking-[0.12em] text-slate-500 uppercase"
-              >
+        <div className="max-w-[780px] overflow-hidden rounded-panel border border-line bg-white shadow-navy">
+          <div className="p-4 md:p-6">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <label htmlFor="listing" className="text-small font-semibold text-ink-700">
                 Dán mô tả tin, link tin hoặc link danh mục
               </label>
-              <span className="text-[11px] tabular-nums text-slate-400">{text.length}/1000</span>
+              <span aria-hidden="true" className="text-micro tabular-nums text-ink-500">
+                {text.length}/1000
+              </span>
             </div>
 
             <Textarea
@@ -182,13 +182,15 @@ export function Checker() {
                 }
               }}
               maxLength={1000}
+              aria-required="true"
+              aria-describedby="check-hint check-status"
               placeholder="Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng, hẻm xe hơi... (hoặc dán link tin / link danh mục)"
-              className="w-full min-h-[132px] md:min-h-[148px] resize-none rounded-[14px] bg-cream border-slate-200 px-4 py-3.5 text-[15px] leading-[1.6] placeholder:text-slate-400 focus-visible:ring-2 focus-visible:ring-navy/15 focus-visible:border-navy/30"
+              className="w-full min-h-[132px] resize-none rounded-md border-line bg-surface-mist px-4 py-3.5 text-body leading-[1.6] text-ink-900 placeholder:text-ink-500 focus-visible:border-line-strong focus-visible:ring-2 focus-visible:ring-focus-light/25 focus-visible:ring-offset-0"
             />
 
             {/* Ví dụ: nút thật, bấm là ra kết quả luôn */}
             <div className="mt-3.5">
-              <div className="text-[11px] font-semibold text-slate-500">
+              <div id="check-hint" className="text-micro font-medium text-ink-600">
                 Chưa có tin? Thử miễn phí với tin mẫu — bấm là có kết quả ngay:
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -198,9 +200,11 @@ export function Checker() {
                     type="button"
                     onClick={() => runExample(i)}
                     disabled={loading}
-                    className="h-11 px-4 rounded-[10px] bg-white border-2 border-navy/20 text-[12px] font-black text-navy hover:border-navy hover:bg-navy hover:text-white transition disabled:opacity-50"
+                    aria-label={`Chạy phân tích bằng tin mẫu ${i + 1}`}
+                    className="inline-flex h-11 items-center gap-1.5 rounded-sm border-2 border-navy-600/25 bg-white px-4 text-small font-bold text-navy transition-colors duration-micro ease-cb hover:border-navy-600 hover:bg-navy-600 hover:text-white disabled:opacity-50"
                   >
-                    ⚡ Thử mẫu {i + 1}
+                    <Zap size={14} strokeWidth={1.75} aria-hidden="true" />
+                    Thử mẫu {i + 1}
                   </button>
                 ))}
               </div>
@@ -211,16 +215,21 @@ export function Checker() {
                 type="button"
                 onClick={() => void handleCheck()}
                 disabled={!text.trim() || loading}
-                className="h-[52px] w-full rounded-[12px] bg-gradient-to-r from-navy to-[#16305f] hover:from-[#0e2547] hover:to-[#1a3868] disabled:opacity-50 text-white text-[15px] font-bold shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)]"
+                aria-busy={loading}
+                className="h-[52px] w-full rounded-md bg-gold-base text-body font-bold text-navy-900 shadow-lift transition-colors duration-micro ease-cb hover:bg-gold-soft disabled:opacity-50"
               >
                 {loading ? (
                   <>
-                    <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span
+                      aria-hidden="true"
+                      className="h-4 w-4 animate-spin rounded-full border-2 border-navy-900/30 border-t-navy-900"
+                    />
                     AI đang phân tích...
                   </>
                 ) : (
                   <>
-                    <span>🔍</span> Check bằng AI
+                    <Search size={18} strokeWidth={1.75} aria-hidden="true" />
+                    Check bằng AI
                   </>
                 )}
               </Button>
@@ -228,12 +237,15 @@ export function Checker() {
 
             {status.text && (
               <div
-                className={`mt-3 text-[12px] leading-snug rounded-[10px] px-3 py-2 ${
+                id="check-status"
+                role="status"
+                aria-live="polite"
+                className={`mt-3 rounded-sm border px-3 py-2 text-small leading-snug ${
                   status.kind === "limit"
-                    ? "bg-amber-50 text-amber-900 border border-amber-200"
+                    ? "border-risk-medium/30 bg-risk-medium-wash text-risk-medium"
                     : status.kind === "error"
-                      ? "bg-amber-50 text-amber-800 border border-amber-200"
-                      : "bg-slate-100 text-slate-600"
+                      ? "border-risk-high/30 bg-risk-high-wash text-risk-high"
+                      : "border-line bg-surface-mist text-ink-600"
                 }`}
               >
                 {status.text}
@@ -242,14 +254,14 @@ export function Checker() {
                     <Link
                       href="/pricing#thanh-toan"
                       onClick={() => trackEvent("upgrade_clicked", { from: "limit_banner" })}
-                      className="inline-flex h-9 px-4 rounded-[10px] bg-navy text-white text-[12px] font-bold items-center"
+                      className="inline-flex h-11 items-center rounded-sm bg-navy-900 px-4 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
                     >
                       Nâng cấp PRO →
                     </Link>
                   </div>
                 ) : (
                   status.kind === "error" && (
-                    <div className="mt-1 text-slate-500">
+                    <div className="mt-1 text-ink-600">
                       Cách thay thế: mở tin rao, copy đoạn mô tả (tiêu đề, giá, diện tích, pháp lý) rồi dán vào ô trên.
                     </div>
                   )
@@ -259,14 +271,12 @@ export function Checker() {
 
             {categoryUrl && (
               <div className="mt-4">
-                <div className="flex items-center justify-between">
-                  <div className="text-[12px] font-bold tracking-[0.12em] text-slate-500 uppercase">
-                    Đang quét danh mục
-                  </div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-small font-semibold text-ink-700">Đang quét danh mục</div>
                   <button
                     type="button"
                     onClick={resetToInput}
-                    className="text-[12px] font-bold text-navy hover:underline underline-offset-2"
+                    className="inline-flex h-11 shrink-0 items-center text-small font-bold text-navy underline-offset-2 transition-colors duration-micro ease-cb hover:underline"
                   >
                     ← Check tin khác
                   </button>
@@ -276,11 +286,15 @@ export function Checker() {
             )}
           </div>
 
-          <div className="px-4 md:px-7 h-[44px] flex items-center justify-between bg-cream border-t border-slate-200 text-[11px]">
-            <div className="flex items-center gap-2 text-slate-500">
-              <span>🛡️ Tin chỉ dùng để chấm điểm, không chia sẻ</span>
+          <div className="flex min-h-[44px] flex-col gap-1 border-t border-line bg-surface-mist px-4 py-2.5 text-micro text-ink-600 sm:flex-row sm:items-center sm:justify-between md:px-6">
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={15} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
+              <span>Tin chỉ dùng để chấm điểm, không chia sẻ</span>
             </div>
-            <a href="/pricing" className="font-semibold text-navy hover:underline">
+            <a
+              href="/pricing"
+              className="inline-flex min-h-[44px] shrink-0 items-center font-semibold text-navy underline-offset-2 transition-colors duration-micro ease-cb hover:underline"
+            >
               Cần check số lượng lớn? Xem gói PRO →
             </a>
           </div>
