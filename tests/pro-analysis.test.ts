@@ -9,6 +9,7 @@ import {
 } from "../lib/ai/schema.ts";
 import { guardProAnalysis } from "../lib/ai/guard.ts";
 import { buildFallbackAnalysis, generateProAnalysis } from "../lib/ai/pro-analysis.ts";
+import { PRO_ANALYSIS_SYSTEM_PROMPT } from "../lib/ai/prompts.ts";
 import { analyzeListing } from "../lib/scoring.ts";
 
 let pass = 0;
@@ -241,6 +242,66 @@ async function main() {
     bad.summary.text = "Bạn nên mua. Chắc chắn sinh lời.";
     const g = guardProAnalysis(sampleEvidence(), bad);
     assert.ok(!g.ok);
+  });
+
+  // Hồi quy prompt (lỗi production 2026-09-30 15:28, check 835926d1).
+  // DeepSeek parse JSON hợp lệ dưới json_schema nhưng bị guard chặn vì
+  // dùng cụm "giá giao dịch thực tế" cho dữ liệu chỉ có giá rao bán.
+  await check("claim 'giá giao dịch thực tế' không có nguồn -> reject", () => {
+    const bad = sampleAnalysis();
+    bad.price_analysis.explanation = "Giá giao dịch thực tế là 5,5 tỷ, dưới mặt bằng.";
+    const g = guardProAnalysis(sampleEvidence(), bad);
+    assert.ok(!g.ok, "giá giao dịch thực tế phải bị chặn");
+    assert.ok(
+      g.reasons.some((r) => r.includes("giá giao dịch thực tế")),
+      `phải nêu đúng cụm bị chặn, thấy: ${g.reasons.join("; ")}`,
+    );
+  });
+
+  await check("claim 'giá giao dịch thực tế' ở headline -> cũng reject", () => {
+    const bad = sampleAnalysis();
+    bad.summary.headline = "Giá giao dịch thực tế tốt";
+    const g = guardProAnalysis(sampleEvidence(), bad);
+    assert.ok(!g.ok, "guard phải quét cả headline, không chỉ price_analysis");
+  });
+
+  await check("dùng 'giá tham chiếu từ tin đăng' -> pass", () => {
+    const good = sampleAnalysis();
+    good.price_analysis.explanation = "Giá rao bán hiện tại 5,5 tỷ, so với mức giá tham chiếu từ tin đăng là hợp lý.";
+    const g = guardProAnalysis(sampleEvidence(), good);
+    assert.ok(g.ok, `cụm được phép phải qua guard, bị chặn vì: ${g.reasons.join("; ")}`);
+  });
+
+  await check("câu nói 'chưa có dữ liệu giá chốt đã xác minh' -> pass", () => {
+    // Prompt bắt model nói rõ khi thiếu dữ liệu giao dịch. Câu đó phải
+    // qua guard, nếu không model sẽ bị chặn ngay khi làm đúng instruction.
+    const good = sampleAnalysis();
+    good.price_analysis.explanation =
+      "Chưa có dữ liệu giá chốt đã xác minh trong hồ sơ; mọi nhận định dựa trên giá rao bán của tin đăng.";
+    const g = guardProAnalysis(sampleEvidence(), good);
+    assert.ok(g.ok, `câu báo thiếu dữ liệu phải qua guard, bị chặn vì: ${g.reasons.join("; ")}`);
+  });
+
+  await check("prompt KHÔNG dạy model dùng cụm mà guard chặn", () => {
+    // Khoá giữa prompt và guard: cụm guard chặn được phép xuất hiện trong
+    // prompt CHỈ dưới dạng "Never say" / "MUST NOT". Nếu ai đó chép cụm cấm
+    // vào thành ví dụ nên dùng, model sẽ học và tự tạo ra lời bị chặn.
+    const prompt = PRO_ANALYSIS_SYSTEM_PROMPT.toLowerCase();
+    const banned = [
+      "giá giao dịch thực tế",
+      "giá thị trường chính xác",
+      "chắc chắn sinh lời",
+      "pháp lý đã được xác minh",
+    ];
+    for (const claim of banned) {
+      const at = prompt.indexOf(claim);
+      if (at === -1) continue; // prompt không nhắc tới -> chắc chắn an toàn
+      const before = prompt.slice(Math.max(0, at - 220), at);
+      assert.ok(
+        before.includes("never") || before.includes("must not") || before.includes("do not"),
+        `prompt dạng model dùng cụm guard chặn: "${claim}"`,
+      );
+    }
   });
 
   console.log("\n== Fallback (không gọi AI) ==");
