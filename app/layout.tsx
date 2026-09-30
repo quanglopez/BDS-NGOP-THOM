@@ -1,6 +1,25 @@
 import type { Metadata, Viewport } from "next";
+import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { Ga4 } from "@/components/site/ga4";
+
+/**
+ * Font tải qua next/font: tự host, không render-blocking, không gọi
+ * fonts.googleapis.com lúc render. `adjustFontFallback` giảm CLS khi font
+ * chưa sẵn sàng. Biến CSS được expose để `app/globals.css` trỏ tới.
+ */
+const inter = Inter({
+  subsets: ["latin", "vietnamese"],
+  display: "swap",
+  variable: "--font-body",
+});
+
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ["latin", "vietnamese"],
+  display: "swap",
+  weight: ["600", "700", "800"],
+  variable: "--font-display",
+});
 
 const siteUrl = (process.env.NEXT_PUBLIC_SITE_URL || "https://checkbds.online").replace(/\/$/, "");
 
@@ -49,7 +68,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="vi">
-      <body className="min-h-screen bg-cream text-slate-800 selection:bg-gold/30 antialiased">
+      <body
+        className={`${inter.variable} ${plusJakarta.variable} min-h-screen bg-cream text-slate-800 selection:bg-gold/30 antialiased`}
+      >
         <Ga4 />
         {children}
       </body>
