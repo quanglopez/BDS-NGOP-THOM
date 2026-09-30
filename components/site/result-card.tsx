@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { Droplets, FileText, Lock, MapPin, Ruler, Scale, TrendingUp, Wallet } from "lucide-react";
 import type { AnalysisResult } from "@/lib/types";
 import type { CheckSource } from "@/lib/client-check";
 import { savePendingReport } from "@/lib/pending-report";
@@ -26,15 +27,16 @@ interface Props {
   onCheckAnother: () => void;
 }
 
-// Một ô chỉ số nhỏ trong bảng kết quả
+// Một ô chỉ số nhỏ trong bảng kết quả.
+// `title` nhận ReactNode để chứa icon + nhãn thay vì emoji nhúng trong chuỗi.
 function ScoreCard({
   title,
   badge,
   label,
   detail,
-  cardClass = "rounded-[16px] border border-slate-200 p-4",
+  cardClass = "rounded-lg border border-line bg-white p-4",
 }: {
-  title: string;
+  title: ReactNode;
   badge: ReactNode;
   label: string;
   detail: string;
@@ -42,12 +44,12 @@ function ScoreCard({
 }) {
   return (
     <div className={cardClass}>
-      <div className="flex items-center justify-between">
-        <div className="text-[12px] font-bold tracking-wide text-slate-500">{title}</div>
-        <div className="text-[13px] font-black px-2 py-0.5 rounded-full whitespace-nowrap">{badge}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 text-micro font-semibold text-ink-600">{title}</div>
+        <div className="whitespace-nowrap rounded-pill px-2 py-0.5 text-small font-bold">{badge}</div>
       </div>
-      <div className="mt-2 text-[14px] font-bold text-slate-800">{label}</div>
-      <div className="mt-1 text-[12px] text-slate-500 leading-snug">{detail}</div>
+      <div className="mt-2 text-small font-bold text-ink-900">{label}</div>
+      <div className="mt-1 text-micro leading-snug text-ink-600">{detail}</div>
     </div>
   );
 }
@@ -70,18 +72,18 @@ export function ResultCard({
   const isAi = source === "ai";
   const ringClass =
     t.tagColor === "green"
-      ? "border-emerald-500 bg-emerald-50 text-emerald-700"
+      ? "border-ai bg-ai-wash text-ai-ink"
       : t.tagColor === "yellow"
-        ? "border-amber-400 bg-amber-50 text-amber-700"
-        : "border-red-400 bg-red-50 text-red-700";
+        ? "border-risk-medium bg-risk-medium-wash text-risk-medium"
+        : "border-risk-high bg-risk-high-wash text-risk-high";
   const tagClass =
     t.tagColor === "green"
-      ? "bg-emerald-600 text-white border-emerald-600"
+      ? "bg-ai-ink text-white border-ai-ink"
       : t.tagColor === "yellow"
-        ? "bg-amber-400 text-amber-950 border-amber-400"
-        : "bg-red-600 text-white border-red-600";
+        ? "bg-risk-medium text-white border-risk-medium"
+        : "bg-risk-high text-white border-risk-high";
   const dotClass =
-    t.tagColor === "green" ? "bg-emerald-500" : t.tagColor === "yellow" ? "bg-amber-400" : "bg-red-500";
+    t.tagColor === "green" ? "bg-ai-ink" : t.tagColor === "yellow" ? "bg-risk-medium" : "bg-risk-high";
 
   const contributions = scoreContributions(t);
   // Khách chưa login: cho thấy vòng điểm + 2 lý do đầu, khóa 4 panel chi tiết
@@ -108,29 +110,38 @@ export function ResultCard({
   };
 
   return (
-    <div className="bg-white rounded-[24px] border border-slate-200 shadow-[0_24px_70px_-24px_rgba(11,29,58,0.4)] overflow-hidden">
+    <div className="overflow-hidden rounded-panel border border-line bg-white shadow-navy">
       {/* Đầu thẻ: nền navy + vòng điểm + tag + thông tin trích xuất */}
-      <div className="relative px-6 md:px-8 py-6 overflow-hidden bg-gradient-to-br from-navy via-[#132A56] to-navy">
-        <div className="absolute -top-20 right-10 w-[280px] h-[280px] bg-gold/15 rounded-full blur-[70px]" />
+      <div className="relative overflow-hidden bg-gradient-to-br from-navy-800 via-navy-700 to-navy-900 px-6 py-6 md:px-8">
+        <div className="absolute -top-20 right-10 h-[280px] w-[280px] rounded-full bg-gold-base/10 blur-[70px]" />
         <div className="relative flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-4 md:gap-5">
+            {/* Vòng điểm 120px: đường kính cố định, cung SVG vẽ theo điểm/100 */}
             <div
-              className={`w-[92px] h-[92px] shrink-0 rounded-full flex items-center justify-center border-[6px] relative bg-white ${ringClass}`}
+              className={`relative flex h-[120px] w-[120px] shrink-0 items-center justify-center rounded-full border-[6px] bg-white ${ringClass}`}
             >
               <div className="text-center leading-none">
-                <div className="text-[30px] font-black tracking-tight">{t.overall}</div>
-                <div className="text-[10px] font-bold tracking-widest mt-0.5 opacity-70">/100 ĐIỂM</div>
+                <div className="font-display text-[30px] font-extrabold tabular-nums tracking-tight">
+                  {t.overall}
+                </div>
+                <div className="mt-0.5 whitespace-nowrap text-micro font-semibold opacity-70">
+                  /100 ĐIỂM
+                </div>
               </div>
-              <svg className="absolute inset-[-6px] w-[92px] h-[92px] -rotate-90" viewBox="0 0 92 92">
+              <svg
+                aria-hidden="true"
+                className="absolute inset-0 h-full w-full -rotate-90"
+                viewBox="0 0 120 120"
+              >
                 <circle
-                  cx="46"
-                  cy="46"
-                  r="40"
+                  cx="60"
+                  cy="60"
+                  r="52"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="6"
                   strokeLinecap="round"
-                  strokeDasharray={`${(t.overall / 100) * 251} 251`}
+                  strokeDasharray={`${(t.overall / 100) * 327} 327`}
                   className="opacity-30"
                 />
               </svg>
@@ -138,62 +149,70 @@ export function ResultCard({
 
             <div className="min-w-0">
               <div
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                className={`inline-flex items-center gap-1.5 rounded-pill border px-2.5 py-1 text-micro font-bold ${
                   isAi
-                    ? "bg-emerald-400/15 text-emerald-300 border-emerald-400/30"
-                    : "bg-white/10 text-slate-200 border-white/20"
+                    ? "border-ai/30 bg-ai/15 text-ai/90"
+                    : "border-white/20 bg-white/10 text-ink-on-navy"
                 }`}
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${isAi ? "bg-emerald-400" : "bg-slate-300"}`} />
+                <span
+                  aria-hidden="true"
+                  className={`h-1.5 w-1.5 rounded-full ${isAi ? "bg-ai" : "bg-ink-on-navy-muted"}`}
+                />
                 {isAi ? "Phân tích bằng AI" : "Phân tích theo mô hình CheckBDS"}
               </div>
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 <div
-                  className={`inline-flex px-3 py-1 rounded-full text-[11px] font-black tracking-[0.12em] border ${tagClass}`}
+                  className={`inline-flex rounded-pill border px-3 py-1 text-micro font-bold tracking-[0.09em] ${tagClass}`}
                 >
                   {t.tag}
                 </div>
-                <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-slate-200 text-[11px] font-semibold">
-                  💰 {t.extracted.price}
+                <span className="inline-flex items-center gap-1.5 rounded-pill border border-white/15 bg-white/10 px-2.5 py-1 text-micro font-semibold text-ink-on-navy">
+                  <Wallet size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
+                  {t.extracted.price}
                 </span>
-                <span className="px-2.5 py-1 rounded-full bg-white/10 border border-white/15 text-slate-200 text-[11px] font-semibold">
-                  📐 {t.extracted.area}
+                <span className="inline-flex items-center gap-1.5 rounded-pill border border-white/15 bg-white/10 px-2.5 py-1 text-micro font-semibold text-ink-on-navy">
+                  <Ruler size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
+                  {t.extracted.area}
                 </span>
-                <span className="px-2.5 py-1 rounded-full bg-gold text-navy text-[11px] font-bold">
-                  📍 {t.extracted.street}
+                <span className="inline-flex items-center gap-1.5 rounded-pill bg-gold-base px-2.5 py-1 text-micro font-bold text-navy-900">
+                  <MapPin size={13} strokeWidth={1.75} aria-hidden="true" className="shrink-0" />
+                  {t.extracted.street}
                 </span>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className="text-right hidden sm:block">
-              <div className="text-[10px] tracking-[0.18em] font-bold text-slate-400">THỜI GIAN</div>
-              <div className="mt-1 text-[13px] font-semibold text-slate-200">
+            <div className="hidden text-right sm:block">
+              <div className="text-micro font-bold tracking-[0.09em] text-ink-on-navy-faint">
+                THỜI GIAN
+              </div>
+              <div className="mt-1 text-small font-semibold text-ink-on-navy">
                 {analyzedAt ? `Phân tích lúc ${new Date(analyzedAt).toLocaleTimeString("vi-VN")}` : "Vừa xong"}
               </div>
             </div>
-            <div className={`w-2.5 h-2.5 rounded-full ${dotClass} animate-pulse`} />
+            <div aria-hidden="true" className={`h-2.5 w-2.5 animate-pulse rounded-full ${dotClass}`} />
           </div>
         </div>
       </div>
 
       {/* Chưa đăng nhập: kết quả là bản xem trước -> CTA mở khóa ngay sau aha moment */}
       {authRequired && (
-        <div className="px-6 md:px-8 py-5 bg-gradient-to-r from-[#FFFBF0] to-white border-b border-slate-100">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="border-b border-line bg-gradient-to-r from-gold-base/10 to-white px-6 py-5 md:px-8">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
             <div className="flex-1">
-              <div className="text-[14px] font-black text-navy">
+              <div className="text-body font-display font-bold text-ink-900">
                 Bạn đang xem bản xem trước. Đăng nhập miễn phí để xem đầy đủ.
               </div>
-              <div className="mt-1 text-[12px] text-slate-500">
+              <div className="mt-1 text-micro text-ink-600">
                 Mở khóa 4 panel chi tiết + 20 tin/ngày • Không cần thẻ • Google trong 10 giây
               </div>
             </div>
             <Link
               href={unlockHref}
               onClick={handleUnlock}
-              className="h-[46px] px-6 rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[13px] font-black flex items-center justify-center whitespace-nowrap hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
+              className="flex h-[46px] shrink-0 items-center justify-center whitespace-nowrap rounded-md bg-gold-base px-6 text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
             >
               Mở khóa báo cáo →
             </Link>
@@ -204,36 +223,38 @@ export function ResultCard({
       {/* Thân thẻ: giải thích điểm + 6 chỉ số + 2 panel */}
       <div className="p-6 md:p-8">
         {/* Tại sao được điểm đó — khách chưa login chỉ thấy 2 lý do đầu */}
-        <div className="relative rounded-[16px] border border-slate-200 bg-[#FFFEFB] p-4 md:p-5 overflow-hidden">
-          <div className="text-[13px] font-black text-navy">Tại sao tin này được {t.overall} điểm?</div>
+        <div className="relative overflow-hidden rounded-lg border border-line bg-surface-mist p-4 md:p-5">
+          <div className="text-small font-display font-bold text-ink-900">
+            Tại sao tin này được {t.overall} điểm?
+          </div>
           <div className="mt-3 space-y-2">
             {visibleContribs.map((c) => (
               <div key={c.label} className="flex items-start gap-3">
                 <span
-                  className={`mt-0.5 w-[52px] shrink-0 text-right text-[13px] font-black tabular-nums ${
-                    c.kind === "plus" ? "text-emerald-600" : c.kind === "minus" ? "text-red-600" : "text-slate-400"
+                  className={`mt-0.5 w-[52px] shrink-0 text-right text-small font-bold tabular-nums ${
+                    c.kind === "plus" ? "text-ai-ink" : c.kind === "minus" ? "text-risk-high" : "text-ink-500"
                   }`}
                 >
                   {c.delta > 0 ? `+${c.delta}` : c.delta < 0 ? `${c.delta}` : "±0"}
                 </span>
                 <div className="min-w-0">
-                  <div className="text-[13px] font-bold text-slate-800">{c.label}</div>
-                  <div className="text-[12px] text-slate-500 leading-snug">{c.note}</div>
+                  <div className="text-small font-bold text-ink-900">{c.label}</div>
+                  <div className="text-micro leading-snug text-ink-600">{c.note}</div>
                 </div>
               </div>
             ))}
           </div>
-          <div className="mt-3 pt-3 border-t border-slate-200 text-[11px] text-slate-400">
+          <div className="mt-3 border-t border-line pt-3 text-micro text-ink-500">
             Điểm khởi đầu 50 • Cộng/trừ theo trọng số của mô hình chấm điểm CheckBDS
           </div>
 
           {/* 4 panel bị khóa: blur + overlay CTA */}
           {authRequired && (
-            <div className="absolute inset-0 flex items-end justify-center bg-gradient-to-t from-white via-white/85 to-transparent pt-24 pb-5 px-4">
+            <div className="absolute inset-0 flex items-end justify-center bg-gradient-to-t from-white via-white/85 to-transparent px-4 pb-5 pt-24">
               <Link
                 href={unlockHref}
                 onClick={handleUnlock}
-                className="h-[46px] px-6 rounded-[12px] bg-navy text-white text-[13px] font-black flex items-center shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)] hover:bg-[#112a5a] transition"
+                className="flex h-[46px] items-center justify-center rounded-md bg-navy-900 px-6 text-small font-bold text-white shadow-lift transition-colors duration-micro ease-cb hover:bg-navy-800"
               >
                 Đăng nhập miễn phí để xem đầy đủ
               </Link>
@@ -241,150 +262,180 @@ export function ResultCard({
           )}
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-3">
           <ScoreCard
-            title="💰 NGỘP BANK"
+            title={
+              <>
+                <Wallet size={14} strokeWidth={1.75} aria-hidden="true" />
+                NGỘP BANK
+              </>
+            }
             badge={
               <span
                 className={
                   authRequired
-                    ? "bg-slate-200 text-slate-500"
+                    ? "bg-surface-mist text-ink-500"
                     : t.breakdown.ngop.score > 70
-                      ? "bg-emerald-600 text-white"
+                      ? "bg-ai-ink text-white"
                       : t.breakdown.ngop.score > 40
-                        ? "bg-amber-400 text-amber-950"
-                        : "bg-slate-200 text-slate-600"
+                        ? "bg-risk-medium text-white"
+                        : "bg-surface-mist text-ink-600"
                 }
               >
-                {authRequired ? "🔒" : `${t.breakdown.ngop.score}%`}
+                {authRequired ? <Lock size={13} strokeWidth={1.75} aria-hidden="true" /> : `${t.breakdown.ngop.score}%`}
               </span>
             }
             label={authRequired ? "Đăng nhập để xem" : t.breakdown.ngop.label}
             detail={authRequired ? "Mở khóa để xem chi tiết dấu hiệu bán gấp." : t.breakdown.ngop.detail}
-            cardClass="rounded-[16px] border border-slate-200 p-4 bg-[#FFFEFB]"
+            cardClass="rounded-lg border border-line bg-surface-mist p-4"
           />
           <ScoreCard
-            title="📈 TIỀM NĂNG TĂNG GIÁ"
+            title={
+              <>
+                <TrendingUp size={14} strokeWidth={1.75} aria-hidden="true" />
+                TIỀM NĂNG TĂNG GIÁ
+              </>
+            }
             badge={
-              <span className={authRequired ? "bg-slate-200 text-slate-500" : "bg-navy text-white"}>
-                {authRequired ? "🔒" : `${t.breakdown.tangGia.score}/100`}
+              <span className={authRequired ? "bg-surface-mist text-ink-500" : "bg-navy-900 text-white"}>
+                {authRequired ? <Lock size={13} strokeWidth={1.75} aria-hidden="true" /> : `${t.breakdown.tangGia.score}/100`}
               </span>
             }
             label={authRequired ? "Đăng nhập để xem" : t.breakdown.tangGia.label}
             detail={authRequired ? "Mở khóa để xem phân tích khu vực." : t.breakdown.tangGia.detail}
           />
           <ScoreCard
-            title="💧 THANH KHOẢN"
+            title={
+              <>
+                <Droplets size={14} strokeWidth={1.75} aria-hidden="true" />
+                THANH KHOẢN
+              </>
+            }
             badge={
-              <span className={authRequired ? "bg-slate-200 text-slate-500" : "bg-slate-800 text-white"}>
-                {authRequired ? "🔒" : `${t.breakdown.thanhKhoan.score}/100`}
+              <span className={authRequired ? "bg-surface-mist text-ink-500" : "bg-ink-900 text-white"}>
+                {authRequired ? <Lock size={13} strokeWidth={1.75} aria-hidden="true" /> : `${t.breakdown.thanhKhoan.score}/100`}
               </span>
             }
             label={authRequired ? "Đăng nhập để xem" : t.breakdown.thanhKhoan.label}
             detail={authRequired ? "Mở khóa để xem đánh giá thanh khoản." : t.breakdown.thanhKhoan.detail}
           />
           <ScoreCard
-            title="📄 PHÁP LÝ"
+            title={
+              <>
+                <FileText size={14} strokeWidth={1.75} aria-hidden="true" />
+                PHÁP LÝ
+              </>
+            }
             badge={
               <span
                 className={
                   authRequired
-                    ? "bg-slate-200 text-slate-500"
+                    ? "bg-surface-mist text-ink-500"
                     : t.breakdown.phapLy.score > 80
-                      ? "bg-emerald-600 text-white"
-                      : "bg-amber-400 text-amber-950"
+                      ? "bg-ai-ink text-white"
+                      : "bg-risk-medium text-white"
                 }
               >
-                {authRequired ? "🔒" : `${t.breakdown.phapLy.score}/100 pháp lý`}
+                {authRequired ? <Lock size={13} strokeWidth={1.75} aria-hidden="true" /> : `${t.breakdown.phapLy.score}/100 pháp lý`}
               </span>
             }
             label={authRequired ? "Đăng nhập để xem" : t.breakdown.phapLy.label}
             detail={authRequired ? "Mở khóa để xem phân tích pháp lý." : t.breakdown.phapLy.detail}
           />
           <ScoreCard
-            title="💵 SO VỚI THỊ TRƯỜNG"
+            title={
+              <>
+                <Scale size={14} strokeWidth={1.75} aria-hidden="true" />
+                SO VỚI THỊ TRƯỜNG
+              </>
+            }
             badge={
               <span
                 className={
                   authRequired
-                    ? "bg-slate-200 text-slate-500"
+                    ? "bg-surface-mist text-ink-500"
                     : t.breakdown.giaThiTruong.diffPercent > 0
-                      ? "bg-emerald-600 text-white"
-                      : "bg-red-600 text-white"
+                      ? "bg-ai-ink text-white"
+                      : "bg-risk-high text-white"
                 }
               >
-                {authRequired ? "🔒" : t.breakdown.giaThiTruong.label}
+                {authRequired ? <Lock size={13} strokeWidth={1.75} aria-hidden="true" /> : t.breakdown.giaThiTruong.label}
               </span>
             }
             label={authRequired ? "Đăng nhập để xem" : `${t.breakdown.giaThiTruong.diffAmount}`}
             detail={authRequired ? "Mở khóa để xem so sánh giá." : t.breakdown.giaThiTruong.detail}
-            cardClass={`rounded-[16px] border p-4 ${
+            cardClass={`rounded-lg border p-4 ${
               authRequired
-                ? "border-slate-200 bg-slate-50"
+                ? "border-line bg-surface-mist"
                 : t.breakdown.giaThiTruong.diffPercent > 0
-                  ? "border-emerald-200 bg-emerald-50/60"
-                  : "border-red-200 bg-red-50/60"
+                  ? "border-ai/30 bg-ai-wash"
+                  : "border-risk-high/30 bg-risk-high-wash"
             }`}
           />
           <ScoreCard
-            title="📍 VỊ TRÍ"
+            title={
+              <>
+                <MapPin size={14} strokeWidth={1.75} aria-hidden="true" />
+                VỊ TRÍ
+              </>
+            }
             badge={
-              <span className={authRequired ? "bg-slate-200 text-slate-500" : "bg-gold text-navy"}>
-                {authRequired ? "🔒" : `${t.breakdown.viTri.score}/100`}
+              <span className={authRequired ? "bg-surface-mist text-ink-500" : "bg-gold-base text-navy-900"}>
+                {authRequired ? <Lock size={13} strokeWidth={1.75} aria-hidden="true" /> : `${t.breakdown.viTri.score}/100`}
               </span>
             }
             label={authRequired ? "Đăng nhập để xem" : t.breakdown.viTri.label}
             detail={authRequired ? "Mở khóa để xem đánh giá vị trí." : t.breakdown.viTri.detail}
-            cardClass="rounded-[16px] border border-slate-200 p-4 bg-cream"
+            cardClass="rounded-lg border border-line bg-surface-mist p-4"
           />
         </div>
 
-        <div className="relative mt-6 grid md:grid-cols-[1.2fr_0.8fr] gap-6">
+        <div className="relative mt-6 grid gap-6 md:grid-cols-[1.2fr_0.8fr]">
           {authRequired && (
             <Link
               href={unlockHref}
               onClick={handleUnlock}
               aria-label="Đăng nhập miễn phí để xem đầy đủ"
-              className="absolute inset-0 z-10 rounded-[16px] bg-white/60 backdrop-blur-[2px] flex items-center justify-center"
+              className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/60 backdrop-blur-[2px]"
             >
-              <span className="h-[46px] px-6 rounded-[12px] bg-navy text-white text-[13px] font-black flex items-center shadow-[0_10px_28px_-8px_rgba(11,29,58,0.7)]">
+              <span className="flex h-[46px] items-center rounded-md bg-navy-900 px-6 text-small font-bold text-white shadow-lift">
                 Mở khóa báo cáo
               </span>
             </Link>
           )}
-          <div className="rounded-[16px] bg-navy text-slate-200 p-5 md:p-6" aria-hidden={authRequired}>
-            <div className="text-[11px] font-bold tracking-[0.14em] text-gold">NHẬN XÉT</div>
-            <p className="mt-3 text-[14px] leading-[1.7] text-slate-100">{t.reasoning}</p>
+          <div className="rounded-lg bg-navy-900 p-5 text-ink-on-navy md:p-6" aria-hidden={authRequired}>
+            <div className="text-micro font-bold tracking-[0.09em] text-gold-base">NHẬN XÉT</div>
+            <p className="mt-3 text-body leading-[1.7] text-ink-on-navy">{t.reasoning}</p>
           </div>
 
           <div
-            className={`rounded-[16px] p-5 md:p-6 border-2 ${
+            className={`rounded-lg border-2 p-5 md:p-6 ${
               t.actionType === "hot"
-                ? "bg-emerald-50 border-emerald-200"
+                ? "border-ai/30 bg-ai-wash"
                 : t.actionType === "ok"
-                  ? "bg-amber-50 border-amber-200"
-                  : "bg-red-50 border-red-200"
+                  ? "border-risk-medium/30 bg-risk-medium-wash"
+                  : "border-risk-high/30 bg-risk-high-wash"
             }`}
             aria-hidden={authRequired}
           >
             <div
-              className={`text-[11px] font-bold tracking-[0.14em] ${
+              className={`text-micro font-bold tracking-[0.09em] ${
                 t.actionType === "hot"
-                  ? "text-emerald-700"
+                  ? "text-ai-ink"
                   : t.actionType === "ok"
-                    ? "text-amber-700"
-                    : "text-red-700"
+                    ? "text-risk-medium"
+                    : "text-risk-high"
               }`}
             >
               HÀNH ĐỘNG ĐỀ XUẤT
             </div>
-            <p className="mt-3 text-[14px] leading-[1.6] font-semibold text-slate-800">{t.action}</p>
+            <p className="mt-3 text-body font-semibold leading-[1.6] text-ink-900">{t.action}</p>
             <div className="mt-4 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={onCheckAnother}
                 tabIndex={authRequired ? -1 : 0}
-                className="h-9 px-4 rounded-full bg-navy text-white text-[12px] font-bold"
+                className="h-11 rounded-pill bg-navy-900 px-4 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
               >
                 Check tin khác
               </button>
@@ -392,7 +443,7 @@ export function ResultCard({
                 type="button"
                 onClick={copyAnalysis}
                 tabIndex={authRequired ? -1 : 0}
-                className="h-9 px-4 rounded-full bg-white border border-slate-200 text-[12px] font-bold text-slate-700"
+                className="h-11 rounded-pill border border-line bg-white px-4 text-small font-bold text-ink-700 transition-colors duration-micro ease-cb hover:bg-surface-mist"
               >
                 Copy phân tích
               </button>
@@ -406,7 +457,7 @@ export function ResultCard({
                 {isPro ? (
                   <Link
                     href={reportUrl(checkId, seoSlug)}
-                    className="h-11 w-full rounded-[12px] bg-navy text-white text-[13px] font-black flex items-center justify-center hover:bg-[#112a5a] transition"
+                    className="flex h-11 w-full items-center justify-center rounded-md bg-navy-900 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
                   >
                     Xem phân tích chuyên sâu →
                   </Link>
@@ -417,10 +468,13 @@ export function ResultCard({
                       trackEvent("pro_unlock_click", { checkId });
                       trackEvent("upgrade_from_report_click", { checkId });
                     }}
-                    className="block rounded-[12px] border-2 border-dashed border-gold/70 bg-[#FFFBF0] px-4 py-3 text-center hover:border-gold transition"
+                    className="block rounded-md border-2 border-dashed border-gold-base/70 bg-gold-base/10 px-4 py-3 text-center transition-colors duration-micro ease-cb hover:border-gold-base"
                   >
-                    <span className="text-[13px] font-black text-navy">🔒 MỞ KHÓA PHÂN TÍCH PRO</span>
-                    <span className="mt-0.5 block text-[11px] text-slate-500">
+                    <span className="flex items-center justify-center gap-1.5 text-small font-bold text-ink-900">
+                      <Lock size={14} strokeWidth={1.75} aria-hidden="true" />
+                      MỞ KHÓA PHÂN TÍCH PRO
+                    </span>
+                    <span className="mt-0.5 block text-micro text-ink-600">
                       Không chỉ xem điểm số — hiểu vì sao bất động sản được chấm như vậy.
                     </span>
                   </Link>
