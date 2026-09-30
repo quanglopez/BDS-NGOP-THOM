@@ -145,6 +145,9 @@ export async function callOpenRouter(opts: {
       ],
       // Bắt buộc để deadline đo time-to-first-token thay vì tổng generation.
       stream: true,
+      // OpenRouter KHÔNG gửi frame usage ở chế độ stream nếu không bật
+      // include_usage -> metrics log lặng lẽ mất input_tokens/output_tokens.
+      stream_options: { include_usage: true },
     };
     if (structuredMode === "json_schema" && jsonSchema) {
       body.response_format = { type: "json_schema", json_schema: jsonSchema };

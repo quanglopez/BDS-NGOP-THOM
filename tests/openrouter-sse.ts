@@ -29,6 +29,11 @@ function encodeSse(events: unknown[]): ReadableStream<Uint8Array> {
 /**
  * Chuyển payload non-streaming ({model, choices:[{message:{content}}], usage})
  * sang Response SSE. `chunks` = số lần chia content.
+ *
+ * Helper LUÔN gửi frame usage, không mô phỏng việc provider chỉ gửi usage
+ * khi `stream_options.include_usage` bật. Nên regression khiến client quên
+ * gửi param đó sẽ KHÔNG bị test này bắt — assertion cho param nằm ở
+ * pro-model-routing.test.ts, đọc `body` của request đã capture.
  */
 export function sseResponse(payload: unknown, fallbackModel: string, chunks = 3): Response {
   const p = payload as {

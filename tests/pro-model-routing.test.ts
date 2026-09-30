@@ -440,10 +440,18 @@ async function lingVlTests() {
 async function streamingTransportTests() {
   console.log("\n== 15. Streaming (SSE): ghép delta, deadline idle, phân loại lỗi ==");
 
-  await check("body gửi stream=true", async () => {
+  await check("body gửi stream=true và stream_options.include_usage=true", async () => {
     const captured = stubFetch((m) => ok(m));
     await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
     assert.equal(captured()[0].body.stream, true, "phải bật stream để deadline đo TTFT");
+    // Không có param này, OpenRouter KHÔNG gửi frame usage ở chế độ
+    // stream -> metrics log mất input_tokens/output_tokens mà không báo lỗi.
+    // Stub SSE luôn gửi usage nên chỉ assertion trên body mới bắt được.
+    assert.deepEqual(
+      captured()[0].body.stream_options,
+      { include_usage: true },
+      "phải yêu cầu usage frame, nếu không metrics log sẽ mất token",
+    );
   });
 
   await check("stream success -> ghép delta thành JSON hợp lệ, không phải fallback", async () => {
