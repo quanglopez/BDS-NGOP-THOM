@@ -1,0 +1,3 @@
+import assert from "node:assert/strict";
+import { signalLabels } from "@/lib/radar/format";
+assert.deepEqual(signalLabels({score:null,comparison:null} as any),[]);assert.deepEqual(signalLabels({score:null,comparison:{medianPpm2:1,differencePercent:-12,confidence:"low",scopeDescription:"x"}} as any),["Giá thấp hơn tham chiếu 12%","Độ tin cậy tham chiếu: Thấp"]);assert.equal((({score:0} as any).score),0);
