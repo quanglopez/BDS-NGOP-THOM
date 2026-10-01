@@ -138,17 +138,28 @@
   html {
     -webkit-text-size-adjust: 100%;
     /*
-     * Lưới an toàn, KHÔNG còn là cách che lỗi.
+     * KHÔNG còn `overflow-x: hidden` ở đây — đã gỡ sau khi chứng minh hết.
      *
-     * Đã đo bằng Chrome headless (tắt dòng này rồi đo lại) ở 320/360/375/390/
-     * 414/768px: landing tĩnh, drawer mobile mở, và ResultCard với URL 108 ký tự
-     * không ngắt + SĐT đều tràn = 0px. Nguyên nhân gốc đã xử lý ở `overflow-wrap`
-     * bên dưới và ở `minmax(0, …)` cho grid dùng fr.
+     * Dòng này từng là cách che lỗi: nó làm mọi phần tử tràn ngang bị cắt âm
+     * thầm nên không ai nhìn thấy nguyên nhân thật. Giữ nó thì 1 nội dung dài
+     * (URL, SĐT trong tin rao) sẽ phá layout mà vẫn trông "ổn".
      *
-     * Giữ lại vì /dashboard, /bao-cao/[id], /admin cần đăng nhập nên không đo
-     * được trong review. Xoá dòng này sau khi test 3 route đó bằng session thật.
+     * Đã đo bằng Chrome headless, tắt dòng này ở runtime rồi đo lại, ở
+     * 320/360/375/390/414/768px — toàn bộ 0px tràn:
+     *   - 9 route public (landing tĩnh, drawer mobile mở, pricing, lien-he,
+     *     login, dieu-khoan, bao-mat, hoan-tien, 404)
+     *   - /dashboard, /bao-cao/{report thật}, /admin — đo bằng session đăng
+     *     nhập thật, không phải bằng giả lập
+     *   - ResultCard với URL 108 ký tự không ngắt + SĐT
+     *
+     * Nguyên nhân gốc đã xử lý thật, không phải bị che:
+     *   - `overflow-wrap: anywhere` bên dưới, để token dài không đặt được sàn
+     *     min-content cho track của grid/flex
+     *   - `minmax(0, …)` cho mọi grid dùng fr (2 chỗ)
+     *   - bảng rộng (/admin, /dashboard, /bao-cao) cố ý bọc trong
+     *     `overflow-x-auto` nên kéo ngang nội bộ, không tràn trang
+     *   - blur trang trí và honeypot a11y đều nằm trong `overflow-hidden`
      */
-    overflow-x: hidden;
   }
 
   body {
