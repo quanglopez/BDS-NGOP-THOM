@@ -50,7 +50,7 @@ export function Faq() {
             key={item.q}
             className="group rounded-lg border border-line bg-white p-5 transition-colors duration-micro ease-cb hover:border-navy-600/25 hover:shadow-lift open:border-navy-600/25 open:shadow-lift"
           >
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-small font-bold text-ink-900">
+            <summary className="-my-2 flex cursor-pointer list-none items-center justify-between gap-4 py-2 text-small font-bold text-ink-900">
               {item.q}
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line bg-surface-mist text-[16px] leading-none text-ink-600 transition-colors duration-micro ease-cb group-open:rotate-45 group-open:border-navy-900 group-open:bg-navy-900 group-open:text-white">
                 +
