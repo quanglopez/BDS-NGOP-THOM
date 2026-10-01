@@ -4,8 +4,11 @@
 import type { EvidencePack } from "./evidence";
 import type { ProAnalysis } from "./schema";
 
-// Cụm từ cấm: tuyệt đối không được xuất hiện dưới dạng khẳng định đã xác minh
-const BANNED_VERIFIED_CLAIMS = [
+// Cụm từ cấm: tuyệt đối không được xuất hiện dưới dạng khẳng định đã xác minh.
+// EXPORT để test kiểm tra invariant: system prompt (lib/ai/prompts.ts) KHÔNG
+// được chứa nguyên văn bất kỳ cụm nào ở đây. Prompt học chính cụm phải tránh
+// là tự tạo "mồi" cho guard — guard so khớp substring, model echo lại là reject.
+export const BANNED_VERIFIED_CLAIMS = [
   "pháp lý đã được xác minh",
   "pháp lý an toàn tuyệt đối",
   "khu vực này bị ngập",
@@ -18,7 +21,7 @@ const BANNED_VERIFIED_CLAIMS = [
 
 // Lời khuyên đầu tư / hành động chắc nịch — kể cả model fallback tài chính.
 // Giữ ở dạng khẳng định chủ quan, KHÔNG bắt các cụm phủ định như "không nên mua".
-const BANNED_ADVICE = [
+export const BANNED_ADVICE = [
   "bạn nên mua",
   "chắc chắn sinh lời",
   "chắc chắn tăng giá",

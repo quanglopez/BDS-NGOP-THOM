@@ -12,8 +12,9 @@
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-// Mỗi lần gọi tối đa 15s: chain 3 model x 2 attempt vẫn nằm trong budget
-// serverless. Toàn chain có deadline riêng (xem pro-analysis.ts).
+// Idle deadline cho 1 lần gọi: không arm lại thêm được (xem `arm`). Đây KHÔNG
+// phải trần tổng thời gian — deadline tổng do caller truyền `totalTimeoutMs`.
+// Trần tổng của cả chain do pro-analysis.ts quản lý (chainBudgetMs).
 const DEFAULT_TIMEOUT_MS = 15000;
 
 export type StructuredMode = "json_schema" | "json_object" | "none";
@@ -84,6 +85,17 @@ export async function callOpenRouter(opts: {
   structuredMode?: StructuredMode;
   jsonSchema?: Record<string, unknown>;
   timeoutMs?: number;
+  /**
+   * Deadline TỔNG cho request này (wall-clock từ lúc bắt đầu), tính bằng ms.
+   *
+   * `timeoutMs` là IDLE deadline: được arm lại mỗi chunk nên provider nhỏ
+   * giọt liên tục vẫn có thể giữ request sống vô hạn. `totalTimeoutMs` chặn
+   * đúng trường hợp đó. caller nào có budget chung (chain Pro) thì truyền
+   * phần còn lại của budget xuống đây.
+   *
+   * Không truyền -> hành vi cũ (chỉ idle deadline), giữ nguyên cho mọi caller.
+   */
+  totalTimeoutMs?: number;
   reasoning?: { enabled: boolean };
 }): Promise<OpenRouterResult> {
   const {
@@ -98,6 +110,7 @@ export async function callOpenRouter(opts: {
     structuredMode = "json_object",
     jsonSchema,
     timeoutMs = DEFAULT_TIMEOUT_MS,
+    totalTimeoutMs,
     reasoning,
   } = opts;
 
@@ -125,6 +138,17 @@ export async function callOpenRouter(opts: {
     timer = setTimeout(() => ctrl.abort(), Math.max(1000, ms));
   };
   arm(timeoutMs);
+
+  // Deadline TỔNG: không được re-arm. Tách cờ để log phân biệt "provider im
+  // lặng" với "cả request đã hết budget".
+  let totalTimer: NodeJS.Timeout | undefined;
+  let totalExpired = false;
+  if (totalTimeoutMs !== undefined) {
+    totalTimer = setTimeout(() => {
+      totalExpired = true;
+      ctrl.abort();
+    }, Math.max(1000, totalTimeoutMs));
+  }
 
   try {
     const headers: Record<string, string> = {
@@ -301,10 +325,15 @@ export async function callOpenRouter(opts: {
       ...base,
       latencyMs,
       error: aborted ? "provider_timeout" : "provider_network",
-      errorMessage: aborted ? undefined : sanitize(e instanceof Error ? e.message : "unknown"),
+      errorMessage: aborted
+        ? totalExpired
+          ? "total_deadline_exceeded"
+          : "idle_deadline_exceeded"
+        : sanitize(e instanceof Error ? e.message : "unknown"),
     };
   } finally {
     clearTimeout(timer);
+    if (totalTimer) clearTimeout(totalTimer);
     // Stream bị abort giữa chừng sẽ giữ socket mở nếu không cancel.
     void reader?.cancel().catch(() => undefined);
   }

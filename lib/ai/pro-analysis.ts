@@ -20,7 +20,7 @@ import { PRO_ANALYSIS_JSON_SCHEMA, PRO_ANALYSIS_JSON_SCHEMA_NAME } from "./json-
 import { guardProAnalysis } from "./guard";
 import { calcPricePerM2 } from "./evidence";
 import { reasoningConfigFor, resolveModelChain, structuredModeFor, timeoutMsFor } from "./model-chain";
-import { askProRoute, formatJevDecisionReceipt, type ProFailureKind } from "./jev-decision";
+import { askProRoute, defaultRoute, formatJevDecisionReceipt, type ProFailureKind } from "./jev-decision";
 import type { EvidencePack } from "./evidence";
 
 export const PRO_ANALYSIS_VERSION_FALLBACK = "pro-v1";
@@ -37,7 +37,42 @@ const MAX_ATTEMPTS_PER_MODEL = 2;
 // reasoning-on (xem reasoningConfigFor ở model-chain.ts). Reasoning token
 // tính vào max_tokens, nên nếu để bật, 3000 token bị suy luận ăn hết và
 // content về rỗng — tăng con số này cũng không sửa được, chỉ tăng chi phí.
-const MAX_OUTPUT_TOKENS = 3000;
+export const MAX_OUTPUT_TOKENS = 3000;
+
+// Attempt SAU một lần bị CẮT (finish_reason=length) thì cấp thêm ngân sách
+// thay vì lặp lại y hệt. Đây là fix cho lỗi production
+// provider_truncated: nguyên nhân là "hết max_tokens", nên gửi lại đúng
+// max_tokens cũ + đúng prompt cũ chắc chắn cắt lại — attempt 2 luôn lãng phí
+// ~8-17s rồi vẫn fail. Evidence 2026-09-30 (11 provider_truncated / 5 user):
+// DeepSeek trả cắt ở CẢ HAI attempt với output đúng 3000 = max_tokens.
+//
+// Tăng có trần, không phải lặp vô hạn: MAX_ATTEMPTS_PER_MODEL vẫn = 2, và
+// chainBudgetMs vẫn chặn tổng thời gian nên attempt 2 không thể kéo dài quá
+// budget. Nếu vẫn cắt, Jev đổi model — chain luôn kết thúc.
+export const MAX_OUTPUT_TOKENS_RETRY = 6000;
+
+// Ngân sách TỔNG cho cả chain (mọi model, mọi attempt, mọi lần hỏi Jev).
+//
+// Route khai `maxDuration = 60`. Trước đây KHÔNG có budget nào ở đây:
+// mỗi attempt dùng timeout riêng của model (15s mặc định, 30s cho Ling VL và
+// Qwen trả phí), 3 model x 2 attempt cộng lại có thể 120s provider + 15s Jev
+// = 135s > 60s -> Vercel Runtime Timeout, user mất trắng cả request.
+// Đây là lỗi production đã ghi nhận (5 occurrence / 2 user).
+//
+// Số này là TỔNG cho tới khi hết, không phải trần mỗi lần gọi. Phần còn lại
+// (60 - 42 = 18s) dành cho auth + đọc DB + save snapshot sau khi chain xong.
+export const DEFAULT_CHAIN_BUDGET_MS = 42000;
+
+// Không mở lần gọi mới nếu phần còn lại nhỏ hơn ngưỡng này: một request cần
+// thời gian tối thiểu để trả kết quả, mở ra chỉ để bị cắt giữa chừng thì
+// tệ hơn là dừng luôn và trả fallback deterministic.
+export const MIN_CALL_BUDGET_MS = 3000;
+
+/** Đọc budget từ env; thiếu/sai thì dùng mặc định. Cho phép override để test. */
+export function chainBudgetMs(env: Record<string, string | undefined> = process.env): number {
+  const raw = Number(env.PRO_ANALYSIS_CHAIN_BUDGET_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CHAIN_BUDGET_MS;
+}
 
 export interface ProAnalysisMetrics {
   requested_model: string;
@@ -51,6 +86,10 @@ export interface ProAnalysisMetrics {
   rate_limited: boolean;
   validation_failed: boolean;
   guard_failed: boolean;
+  // Chain dừng vì hết budget trước khi thử hết model. true = còn model trong
+  // chain chưa thử, nhưng đã hết thời gian -> báo cáo deterministic là kết quả
+  // bị giới hạn bởi deadline, KHÔNG phải vì model hỏng hẳn.
+  budget_exhausted: boolean;
 }
 
 export interface ProAnalysisOutcome {
@@ -187,6 +226,7 @@ export function formatProAnalysisMetrics(m: ProAnalysisMetrics): string {
     `success=${!m.fallback_used}`,
     `validation_failed=${m.validation_failed}`,
     `guard_failed=${m.guard_failed}`,
+    `budget_exhausted=${m.budget_exhausted}`,
     `rate_limited=${m.rate_limited}`,
     `provider_error=${m.provider_errors.length > 0 ? m.provider_errors.join("|") : "-"}`,
     `input_tokens=${m.input_tokens ?? "-"}`,
@@ -215,6 +255,7 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
     rate_limited: false,
     validation_failed: false,
     guard_failed: false,
+    budget_exhausted: false,
   };
 
   const finishFallback = (reason: string): ProAnalysisOutcome => {
@@ -235,6 +276,10 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
 
   const userPayload = JSON.stringify(evidence);
   const startedAt = Date.now();
+  const budgetMs = chainBudgetMs();
+  // Đã gặp provider_truncated ở attempt trước của model này -> attempt sau
+  // cấp thêm token. Chỉ bật trong chain, mỗi model tự reset khi đổi model.
+  let escalateTokens = false;
 
   // Lich su fail cua chain - input cho quyet dinh Jev. KHONG chua PII.
   const priorModels: string[] = [];
@@ -253,6 +298,30 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
     failure: ProFailureKind,
     guardReasons: string[],
   ): Promise<"continue" | "next_model" | "fallback"> => {
+    // Hết budget -> KHÔNG hỏi Jev. Một lượt hỏi tốn tới 2,5s, và ngay sau đó
+    // vòng loop sẽ chạm ngưỡng budget rồi dừng, nên hỏi chỉ tốn thêm thời gian
+    // cho một quyết định không ai dùng. Đi đường cố định — giống hệt hành vi
+    // khi JEV_DECISION=off, để rollout không đổi thứ tự quyết định.
+    if (budgetMs - (Date.now() - startedAt) < MIN_CALL_BUDGET_MS) {
+      const decision = defaultRoute({
+        attempt,
+        modelIndex,
+        model,
+        failure,
+        priorModels: [...priorModels],
+        priorFailures: [...priorFailures],
+        guardReasons,
+        modelsRemaining: chain.length - modelIndex - 1,
+      });
+      console.log(
+        `[pro-analysis-jev] contract=pro-analysis-route mode=skipped route=${decision} ` +
+          `used_jev=false confidence=- model=- latency_ms=0 input_tokens=- output_tokens=- reason=budget_exhausted`,
+      );
+      if (decision === "deterministic_fallback") return "fallback";
+      if (decision === "switch_model") return "next_model";
+      return "continue";
+    }
+
     const receipt = await askProRoute({
       attempt,
       modelIndex,
@@ -273,15 +342,30 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
     const model = chain[mi];
     let mode = structuredModeFor(model);
     const fallbackModel = chain[mi + 1] ?? "-";
+    // Mỗi model tự quyết định ngân sách riêng: model mới không kế thừa việc
+    // tăng token của model trước.
+    escalateTokens = false;
 
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_MODEL; attempt++) {
       const isRetry = attempt > 0;
+
+      // Chặn TRƯỚC khi mở request mới: không đủ budget thì dừng luôn và trả
+      // fallback deterministic, thay vì mở thêm một call chắc chắn bị cắt.
+      const remainingMs = budgetMs - (Date.now() - startedAt);
+      if (remainingMs < MIN_CALL_BUDGET_MS) {
+        metrics.provider_errors.push("chain_budget_exhausted");
+        metrics.budget_exhausted = true;
+        return finishFallback("chain_budget_exhausted");
+      }
+      // Clamp deadline của call này vào phần còn lại của budget chung.
+      const callTimeoutMs = Math.min(timeoutMsFor(model), remainingMs);
+
       const res = await callOpenRouter({
         apiKey,
         model,
         systemPrompt: baseSystemPrompt(mode, isRetry),
         userPayload,
-        maxTokens: MAX_OUTPUT_TOKENS,
+        maxTokens: escalateTokens ? MAX_OUTPUT_TOKENS_RETRY : MAX_OUTPUT_TOKENS,
         temperature: 0.2,
         siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
         siteName: "CheckBDS",
@@ -290,7 +374,10 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
           mode === "json_schema"
             ? { name: PRO_ANALYSIS_JSON_SCHEMA_NAME, strict: false, schema: PRO_ANALYSIS_JSON_SCHEMA }
             : undefined,
-        timeoutMs: timeoutMsFor(model),
+        timeoutMs: callTimeoutMs,
+        // Trần TỔNG của call: idle deadline có thể bị re-arm vô hạn khi provider
+        // nhỏ giọt, nên phải có thời điểm tuyệt đối để chặn.
+        totalTimeoutMs: remainingMs,
         reasoning: reasoningConfigFor(model),
       });
 
@@ -312,7 +399,9 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
             `requested_model=${model} actual_model=${res.actualModel ?? "-"} ` +
             `fallback_attempt=${attempt + 1} fallback_model=${fallbackModel} ` +
             `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
-            `timeout_ms=${timeoutMsFor(model)} ` +
+            `timeout_ms=${callTimeoutMs} model_timeout_ms=${timeoutMsFor(model)} ` +
+            `chain_budget_ms=${budgetMs} chain_elapsed_ms=${Date.now() - startedAt} ` +
+            `max_tokens=${escalateTokens ? MAX_OUTPUT_TOKENS_RETRY : MAX_OUTPUT_TOKENS} ` +
             `latency_ms=${res.latencyMs} response_body_safe=${res.errorMessage ?? "-"}`,
         );
       }
@@ -340,6 +429,10 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
       }
 
       if (!res.ok || !res.text) {
+        // Đã cắt vì hết max_tokens -> attempt sau của CÙNG model cấp thêm ngân
+        // sách. Không làm thế cho lỗi khác: 429/timeout/network hết token cũng
+        // vô ích, và tăng budget chỉ làm latency nặng thêm.
+        if (res.error === "provider_truncated") escalateTokens = true;
         const go = await routeAfterFailure(model, mi, attempt + 1, (res.error ?? "provider_error") as ProFailureKind, []);
         priorModels.push(model);
         priorFailures.push((res.error ?? "provider_error") as ProFailureKind);

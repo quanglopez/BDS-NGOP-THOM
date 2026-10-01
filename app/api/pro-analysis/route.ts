@@ -13,7 +13,10 @@ import { analyzeListing, SCORING_CODE_VERSION } from "@/lib/scoring";
 import { parseScoringSnapshot, resultFromSnapshot } from "@/lib/score-snapshot";
 
 export const runtime = "nodejs";
-// Tách budget riêng khỏi /api/check: OpenRouter timeout 25s, còn dư cho DB + validate
+// maxDuration = 60 là trần cứng của Vercel, KHÔNG phải trần AI.
+// Chain AI tự chặn trong DEFAULT_CHAIN_BUDGET_MS (lib/ai/pro-analysis.ts) để
+// luôn kịp quay lại: phần còn lại dành cho auth + đọc DB + save snapshot.
+// Trước đó chain không có budget nào và có thể vượt 60s -> Vercel kill function.
 export const maxDuration = 60;
 
 const ALLOWED_ORIGINS = new Set([
