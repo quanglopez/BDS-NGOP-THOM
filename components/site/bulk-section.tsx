@@ -94,14 +94,14 @@ export function BulkSection() {
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     <span
                       className={`px-2 py-0.5 rounded-pill text-[10px] font-bold ${
-                        r.s >= 80 ? "bg-emerald-600 text-white" : "bg-amber-400 text-amber-950"
+                        r.s >= 80 ? "bg-ai-ink text-white" : "bg-amber-400 text-amber-950"
                       }`}
                     >
                       {r.s}/100
                     </span>
                     <span
                       className={`px-2 py-0.5 rounded-pill text-[10px] font-bold ${
-                        r.tag === "KÈO NGỘP NGON" ? "bg-emerald-600 text-white" : "bg-navy text-white"
+                        r.tag === "KÈO NGỘP NGON" ? "bg-ai-ink text-white" : "bg-navy text-white"
                       }`}
                     >
                       {r.tag}
