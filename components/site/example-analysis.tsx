@@ -76,7 +76,7 @@ export function ExampleAnalysis() {
           >
             Dán tin của bạn — xem báo cáo thật
           </Link>
-          <p className="mt-2 text-micro text-ink-500">
+          <p className="mt-2 text-micro text-ink-600">
             Dùng miễn phí – 20 tin/ngày • Không cần thẻ
           </p>
         </div>
