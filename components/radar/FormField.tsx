@@ -1,0 +1,3 @@
+import type { ReactNode } from "react";
+import { FieldError } from "./FieldError";
+export function FormField({id,label,error,hint,children}:{id:string;label:string;error?:string;hint?:string;children:ReactNode}){return <div><label htmlFor={id} className="mb-1.5 block text-small font-semibold text-navy">{label}</label>{children}{hint&&<p id={id+"-hint"} className="mt-1 text-micro text-ink-600">{hint}</p>}{error&&<FieldError id={id+"-error"}>{error}</FieldError>}</div>;}
