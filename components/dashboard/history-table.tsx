@@ -127,24 +127,24 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
       <div className="mt-3 overflow-hidden rounded-[18px] border border-slate-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-[13px]">
-            <thead className="bg-cream border-b border-slate-200 text-[11px] tracking-widest font-bold text-slate-500">
+            <thead className="bg-cream border-b border-slate-200 text-[11px] tracking-widest font-bold text-slate-500 whitespace-nowrap">
               <tr>
-                <th className="px-4 py-3">TIN</th>
-                <th className="px-4 py-3">KHU VỰC</th>
-                <th className="px-4 py-3">GIÁ</th>
-                <th className="px-4 py-3">DIỆN TÍCH</th>
-                <th className="px-4 py-3">PHÒNG</th>
-                <th className="px-4 py-3">ĐIỂM</th>
-                <th className="px-4 py-3">LOẠI KÈO</th>
-                <th className="px-4 py-3">NGỘP</th>
-                <th className="px-4 py-3">THỜI GIAN</th>
-                <th className="px-4 py-3">PHÂN TÍCH</th>
+                <th className="px-3 py-3">TIN</th>
+                <th className="px-3 py-3">KHU VỰC</th>
+                <th className="px-3 py-3">GIÁ</th>
+                <th className="px-3 py-3">DIỆN TÍCH</th>
+                <th className="px-3 py-3">PHÒNG</th>
+                <th className="px-3 py-3">ĐIỂM</th>
+                <th className="px-3 py-3">LOẠI KÈO</th>
+                <th className="px-3 py-3">NGỘP</th>
+                <th className="px-3 py-3">THỜI GIAN</th>
+                <th className="px-3 py-3">PHÂN TÍCH</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={10} className="px-3 py-8 text-center text-slate-400">
                     {rows.length === 0
                       ? "Chưa có tin nào. Dán tin vào ô trên để check."
                       : "Không có tin khớp bộ lọc hiện tại."}
@@ -155,7 +155,7 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                   const host = hostOf(r.listing_url);
                   return (
                     <tr key={r.id} className="border-b border-slate-100 last:border-0 hover:bg-[#FFFEFB]">
-                      <td className="px-4 py-3.5 max-w-[340px]">
+                      <td className="px-3 py-3.5 max-w-[340px]">
                         <div className="truncate text-slate-700">{r.original_text}</div>
                         {r.listing_url ? (
                           <a
@@ -170,37 +170,37 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                           <div className="mt-0.5 text-[11px] text-slate-400">Không có link gốc</div>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 whitespace-nowrap">
+                      <td className="px-3 py-3.5 whitespace-nowrap">
                         {r.province ? (
                           <span className="text-[12px] font-semibold text-navy">{r.province}</span>
                         ) : (
                           <span className="text-[12px] text-slate-400">-</span>
                         )}
                       </td>
-                      <td className="px-4 py-3.5 whitespace-nowrap font-mono text-[12px]">
+                      <td className="px-3 py-3.5 whitespace-nowrap font-mono text-[12px]">
                         {r.price_billion != null ? `${r.price_billion} tỷ` : <span className="text-slate-400">-</span>}
                       </td>
-                      <td className="px-4 py-3.5 whitespace-nowrap font-mono text-[12px]">
+                      <td className="px-3 py-3.5 whitespace-nowrap font-mono text-[12px]">
                         {r.area_m2 != null ? `${r.area_m2} m²` : <span className="text-slate-400">-</span>}
                       </td>
-                      <td className="px-4 py-3.5 whitespace-nowrap font-mono text-[12px]">
+                      <td className="px-3 py-3.5 whitespace-nowrap font-mono text-[12px]">
                         {r.bedrooms != null ? r.bedrooms : <span className="text-slate-400">-</span>}
                       </td>
-                      <td className="px-4 py-3.5">
+                      <td className="px-3 py-3.5 whitespace-nowrap">
                         <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${scoreBadgeClass(r.score)}`}>
                           {r.score ?? 0}/100
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 whitespace-nowrap">
+                      <td className="px-3 py-3.5 whitespace-nowrap">
                         <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${dealBadgeClass(r.deal_type)}`}>
                           {dealLabel(r.deal_type)}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 font-mono">{r.is_ngop ?? 0}%</td>
-                      <td className="px-4 py-3.5 text-slate-500 whitespace-nowrap">
+                      <td className="px-3 py-3.5 font-mono whitespace-nowrap">{r.is_ngop ?? 0}%</td>
+                      <td className="px-3 py-3.5 text-slate-500 whitespace-nowrap">
                         {new Date(r.created_at).toLocaleString("vi-VN")}
                       </td>
-                      <td className="px-4 py-3.5 whitespace-nowrap">
+                      <td className="px-3 py-3.5 whitespace-nowrap">
                         <a
                           href={reportUrl(r.id, r.seo_slug)}
                           className="inline-flex h-8 px-3 rounded-[10px] bg-navy text-white text-[11px] font-bold items-center hover:bg-[#112a5a] transition"
