@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { X } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 
 // Popup nâng cấp — CHỈ hiện khi khách đã chạm giới hạn lượt trong ngày,
@@ -20,37 +21,37 @@ export function UpgradeModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center"
       role="dialog"
       aria-modal="true"
     >
-      <div className="absolute inset-0 bg-navy/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-[420px] rounded-[20px] bg-white shadow-[0_30px_90px_-20px_rgba(0,0,0,0.6)] overflow-hidden">
-        <div className="relative px-6 pt-6 pb-5 bg-gradient-to-br from-navy via-[#132A56] to-navy overflow-hidden">
-          <div className="absolute -top-16 right-[-40px] w-[200px] h-[200px] bg-gold/20 rounded-full blur-[60px]" />
+      <div className="absolute inset-0 bg-navy-900/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-[420px] overflow-hidden rounded-panel bg-white shadow-navy">
+        <div className="relative overflow-hidden bg-gradient-to-br from-navy-800 via-navy-700 to-navy-900 px-6 pb-5 pt-6">
+          <div className="absolute -right-10 -top-16 h-[200px] w-[200px] rounded-full bg-gold-base/20 blur-[60px]" />
           <button
             type="button"
             onClick={onClose}
             aria-label="Đóng"
-            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-white/10 text-white text-[16px] leading-none hover:bg-white/20 transition"
+            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 leading-none text-white transition-colors duration-micro ease-cb hover:bg-white/20"
           >
-            ×
+            <X size={16} strokeWidth={1.75} aria-hidden="true" />
           </button>
-          <div className="relative text-[18px] font-black text-white leading-tight">
+          <div className="relative font-display text-h3 font-extrabold leading-tight text-white">
             {dailyLimit > 0
               ? `Bạn đã dùng hết ${dailyLimit} lượt hôm nay`
               : "Bạn đã dùng hết lượt hôm nay"}
           </div>
-          <p className="relative mt-2 text-[13px] text-slate-300">
+          <p className="relative mt-2 text-small text-ink-on-navy-muted">
             Nâng cấp PRO để tiếp tục check nhiều hơn mỗi ngày.
           </p>
         </div>
 
         <div className="p-5">
-          <ul className="space-y-1.5 text-[13px] text-slate-600">
+          <ul className="space-y-1.5 text-small text-ink-600">
             {["500 tin/ngày", "Bulk Check 100 tin/lần", "Quét cả trang danh mục", "Phân tích nâng cao"].map((f) => (
               <li key={f} className="flex gap-2">
-                <span className="text-emerald-600 font-bold">✓</span>
+                <span className="font-bold text-ai-ink">✓</span>
                 {f}
               </li>
             ))}
@@ -59,19 +60,19 @@ export function UpgradeModal({
           <Link
             href="/pricing#thanh-toan"
             onClick={() => trackEvent("upgrade_clicked", { from: "limit_modal", plan })}
-            className="mt-5 h-[50px] w-full rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[14px] font-black flex items-center justify-center hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
+            className="mt-5 flex h-[50px] w-full items-center justify-center rounded-md bg-gold-base text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
           >
             Nâng cấp PRO – 299.000đ/tháng
           </Link>
 
-          <p className="mt-3 text-center text-[12px] text-slate-500">
+          <p className="mt-3 text-center text-micro text-ink-500">
             Hoàn tiền 100% trong 3 ngày nếu không phù hợp
           </p>
 
           <button
             type="button"
             onClick={onClose}
-            className="mt-2 w-full text-[12px] text-slate-400 hover:text-slate-600"
+            className="mt-2 w-full text-micro text-ink-500 transition-colors duration-micro ease-cb hover:text-ink-700"
           >
             Để sau
           </button>
