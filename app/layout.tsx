@@ -7,6 +7,15 @@ import { Ga4 } from "@/components/site/ga4";
  * Font tải qua next/font: tự host, không render-blocking, không gọi
  * fonts.googleapis.com lúc render. `adjustFontFallback` giảm CLS khi font
  * chưa sẵn sàng. Biến CSS được expose để `app/globals.css` trỏ tới.
+ *
+ * Class variable PHẢI nằm trên `<html>`, không phải `<body>`: `app/globals.css`
+ * khai `--cb-font-display` / `--cb-font-body` ở `:root` (= `<html>`), mà
+ * chúng gọi `var(--font-display)` / `var(--font-body)`. `var()` chỉ nhìn thấy
+ * biến ở chính element khai báo và các descendant — nếu `--font-*` chỉ có trên
+ * `<body>` thì ở `<html>` không tồn tại, `--cb-font-*` thành guaranteed-invalid
+ * và toàn bộ site rơi về font serif của trình duyệt. Preflight của Tailwind
+ * cũng đặt `font-family: var(--cb-font-body)` ngay trên `html`, nên scope
+ * phải khớp từ gốc.
  */
 const inter = Inter({
   subsets: ["latin", "vietnamese"],
@@ -67,10 +76,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="vi">
-      <body
-        className={`${inter.variable} ${plusJakarta.variable} min-h-screen bg-cream text-slate-800 selection:bg-gold/30 antialiased`}
-      >
+    <html lang="vi" className={`${inter.variable} ${plusJakarta.variable}`}>
+      <body className="min-h-screen bg-cream text-slate-800 selection:bg-gold/30 antialiased">
         <Ga4 />
         {children}
       </body>
