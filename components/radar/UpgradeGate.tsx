@@ -1,0 +1,3 @@
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+export function UpgradeGate(){return <div className="rounded-lg border border-line bg-surface-mist p-4"><p className="text-small font-semibold text-navy">Kèo Radar đang mở thử nghiệm.</p><p className="mt-1 text-small text-ink-600">Hạn mức Radar sẽ được chốt riêng, không thay đổi quota check hiện tại.</p><Link href="/pricing#thanh-toan" className="mt-3 inline-flex"><Button size="lg" variant="outline">Xem gói Pro</Button></Link></div>;}
