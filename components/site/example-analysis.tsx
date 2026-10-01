@@ -1,6 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import { Check, TriangleAlert } from "lucide-react";
 import { ScoreRing } from "@/components/site/score-ring";
+import { trackEvent } from "@/lib/analytics";
 
 // Ví dụ phân tích 1 tin — số liệu mẫu để minh hoạ cách chấm điểm, không phải dữ liệu thật.
 // Giữ nguyên đúng bộ số liệu cũ. Phần "bị trừ điểm" suy ra trực tiếp từ các
@@ -68,6 +71,7 @@ export function ExampleAnalysis() {
 
           <Link
             href="#kiem-tra"
+            onClick={() => trackEvent("cta_clicked", { cta: "report_preview" })}
             className="mt-6 inline-flex h-[52px] w-full items-center justify-center rounded-md bg-gold-base px-7 text-body font-bold text-navy-900 shadow-lift transition-colors duration-micro ease-cb hover:bg-gold-soft sm:w-auto"
           >
             Dán tin của bạn — xem báo cáo thật
