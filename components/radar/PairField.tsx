@@ -1,0 +1,3 @@
+import type { ReactNode } from "react";
+import { FieldError } from "./FieldError";
+export function PairField({legend,error,children}:{legend:string;error?:string;children:ReactNode}){return <fieldset className="min-w-0"><legend className="text-small font-semibold text-navy">{legend}</legend>{error&&<FieldError id={legend}>{error}</FieldError>}<div className="mt-2 grid min-w-0 grid-cols-2 gap-2">{children}</div></fieldset>;}
