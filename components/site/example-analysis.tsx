@@ -30,7 +30,7 @@ export function ExampleAnalysis() {
       <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)] lg:gap-10">
         {/* Nhận định chính + cảnh báo + CTA */}
         <div className="lg:sticky lg:top-24">
-          <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-deep">
+          <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-ink">
             Báo cáo AI
           </div>
           <h2 className="mt-3 font-display text-h2 text-ink-900">

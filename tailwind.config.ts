@@ -74,6 +74,11 @@ const config: Config = {
           base: "#D8B46A",
           soft: "#E8CE96",
           deep: "#A9853C",
+          // `ink` là gold dành cho TEXT accent nhỏ trên nền cream (eyebrow/section-label).
+          // #A9853C (`deep`) chỉ đạt 3.21:1 trên cream #F8F7F4 → FAIL WCAG AA.
+          // #856C42 đạt 4.65:1 → đạt AA, vẫn giữ nhận diện Gold.
+          // `deep` giữ nguyên cho decorative / accent / visual lớn — không thay thế toàn cục.
+          ink: "#856C42",
         },
 
         // --- Brand: cream (nền ấm cũ) ---

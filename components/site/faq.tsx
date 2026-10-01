@@ -38,7 +38,7 @@ export function Faq() {
   return (
     <section id="faq" className="mx-auto max-w-[760px] scroll-mt-20 px-5 py-12 md:px-8 md:py-16">
       <div className="text-center">
-        <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-deep">
+        <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-ink">
           Giải đáp
         </div>
         <h2 className="mt-3 font-display text-h2 text-ink-900">Câu hỏi thường gặp</h2>

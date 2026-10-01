@@ -30,7 +30,7 @@ export function HowItWorks() {
   return (
     <section className="mx-auto max-w-[1120px] px-5 py-12 md:px-8 md:py-16">
       <div className="mx-auto max-w-[640px] text-center">
-        <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-deep">
+        <div className="text-micro font-semibold uppercase tracking-[0.09em] text-gold-ink">
           Cách hoạt động
         </div>
         <h2 className="mt-3 font-display text-h2 text-ink-900">3 bước, 1 phút</h2>
