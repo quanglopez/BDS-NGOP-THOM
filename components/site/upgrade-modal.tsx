@@ -33,9 +33,11 @@ export function UpgradeModal({
             type="button"
             onClick={onClose}
             aria-label="Đóng"
-            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 leading-none text-white transition-colors duration-micro ease-cb hover:bg-white/20"
+            className="group absolute right-1.5 top-1.5 z-10 flex h-11 w-11 items-center justify-center rounded-full text-white"
           >
-            <X size={16} strokeWidth={1.75} aria-hidden="true" />
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/10 leading-none transition-colors duration-micro ease-cb group-hover:bg-white/20">
+              <X size={16} strokeWidth={1.75} aria-hidden="true" />
+            </span>
           </button>
           <div className="relative font-display text-h3 font-extrabold leading-tight text-white">
             {dailyLimit > 0
