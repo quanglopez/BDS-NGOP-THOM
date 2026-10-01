@@ -4,6 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Điều khoản sử dụng – CheckBDS.online",
   robots: { index: true, follow: true },
+  alternates: { canonical: "/dieu-khoan" },
 };
 
 export default function TermsPage() {

@@ -4,6 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Chính sách hoàn tiền – CheckBDS.online",
   robots: { index: true, follow: true },
+  alternates: { canonical: "/hoan-tien" },
 };
 
 export default function RefundPage() {

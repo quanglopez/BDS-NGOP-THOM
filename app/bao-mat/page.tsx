@@ -4,6 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Chính sách bảo mật – CheckBDS.online",
   robots: { index: true, follow: true },
+  alternates: { canonical: "/bao-mat" },
 };
 
 export default function PrivacyPage() {

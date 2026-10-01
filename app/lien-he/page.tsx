@@ -7,6 +7,7 @@ import { LeadForm } from "@/components/leads/lead-form";
 export const metadata: Metadata = {
   title: "Liên hệ – CheckBDS.online",
   description: "Liên hệ hỗ trợ CheckBDS: nâng cấp, hoàn tiền, lỗi khi dùng.",
+  alternates: { canonical: "/lien-he" },
 };
 
 const TOPICS = [

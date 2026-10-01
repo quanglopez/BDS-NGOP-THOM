@@ -7,6 +7,7 @@ import { Logo } from "@/components/site/logo";
 export const metadata: Metadata = {
   title: "Đăng nhập - Check BĐS Ngộp Toàn Quốc",
   description: "Đăng nhập bằng Google để dùng tool check kèo BĐS.",
+  alternates: { canonical: "/login" },
 };
 
 const PERKS = [

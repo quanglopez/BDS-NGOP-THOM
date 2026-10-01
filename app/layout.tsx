@@ -51,7 +51,16 @@ export const metadata: Metadata = {
     "BĐS Cần Thơ",
     "BĐS Nha Trang",
   ],
-  alternates: { canonical: "/" },
+  // KHÔNG đặt `alternates.canonical` ở đây.
+  //
+  // `canonical` là metadata kế thừa được: đặt ở root layout thì MỌI route con
+  // đều nhận, kể cả route có trang riêng. Kết quả `/pricing`, `/lien-he`,
+  // `/dieu-khoan`, `/hoan-tien`, `/bao-mat`, `/login` đều tự khai canonical
+  // trỏ về trang chủ — bảy trang indexable tranh nhau một URL.
+  //
+  // Mỗi route public tự khai canonical của chính nó (xem `app/page.tsx` và
+  // từng `*/page.tsx`). Route private/noindex (`/dashboard`, `/admin`,
+  // `/bao-cao/*`) cố ý không có canonical.
   openGraph: {
     title: "Check BĐS Ngộp Toàn Quốc - AI lọc kèo thơm 1 phút",
     description: "Môi giới cả nước lọc 100 tin hàng loạt - không bỏ lỡ kèo ngộp",
