@@ -28,14 +28,14 @@ export function StickyCta() {
 
   return (
     <div
-      className={`md:hidden fixed inset-x-0 bottom-0 z-40 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 bg-white/95 backdrop-blur border-t border-slate-200 transition-transform duration-300 ${
+      className={`md:hidden fixed inset-x-0 bottom-0 z-40 px-4 pb-[max(12px,env(safe-area-inset-bottom))] pt-3 bg-white/95 backdrop-blur border-t border-line transition-transform duration-300 ${
         visible ? "translate-y-0" : "translate-y-[120%]"
       }`}
     >
       <Link
         href="#kiem-tra"
         onClick={() => trackEvent("demo_started", { from: "sticky_cta" })}
-        className="h-[48px] w-full rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[14px] font-black flex items-center justify-center"
+        className="flex h-[48px] w-full items-center justify-center rounded-md bg-gold-base text-body font-bold text-navy-900 shadow-lift transition-colors duration-micro ease-cb hover:bg-gold-soft"
       >
         Dùng miễn phí – 20 tin/ngày
       </Link>

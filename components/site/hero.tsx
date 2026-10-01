@@ -52,14 +52,14 @@ export function Hero() {
             <a
               href="#kiem-tra"
               onClick={() => trackEvent("cta_clicked", { cta: "hero_primary" })}
-              className="flex h-[52px] items-center justify-center rounded-md bg-gold-base px-8 text-[15px] font-bold text-navy-900 shadow-[inset_0_1px_0_rgba(255,255,255,0.28),0_10px_30px_-8px_rgba(216,180,106,0.5)] transition-colors duration-micro ease-cb hover:bg-gold-soft"
+              className="flex h-[52px] items-center justify-center rounded-md bg-gold-base px-8 text-body font-bold text-navy-900 shadow-lift transition-colors duration-micro ease-cb hover:bg-gold-soft"
             >
               Dùng miễn phí – 20 tin/ngày
             </a>
             <a
               href="#demo"
               onClick={() => trackEvent("demo_started", { from: "hero_cta" })}
-              className="flex h-[52px] items-center justify-center rounded-md border border-line-navy-strong px-7 text-[15px] font-semibold text-white transition-colors duration-micro ease-cb hover:bg-white/10"
+              className="flex h-[52px] items-center justify-center rounded-md border border-line-navy-strong px-7 text-body font-semibold text-white transition-colors duration-micro ease-cb hover:bg-white/10"
             >
               Xem demo
             </a>

@@ -96,7 +96,7 @@ export function MobileNav({ links }: { links: NavLink[] }) {
                   key={l.label}
                   href={l.href}
                   onClick={close}
-                  className="flex h-11 items-center text-[14px] font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
+                  className="flex h-11 items-center text-small font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
                 >
                   {l.label}
                 </Link>
@@ -104,7 +104,7 @@ export function MobileNav({ links }: { links: NavLink[] }) {
               <Link
                 href="/login"
                 onClick={close}
-                className="flex h-11 items-center text-[14px] font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
+                className="flex h-11 items-center text-small font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
               >
                 Đăng nhập
               </Link>
@@ -116,7 +116,7 @@ export function MobileNav({ links }: { links: NavLink[] }) {
                 trackEvent("cta_clicked", { cta: "mobile_nav_primary" });
                 close();
               }}
-              className="mt-5 flex h-12 w-full items-center justify-center rounded-md bg-gold-base text-[15px] font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
+              className="mt-5 flex h-12 w-full items-center justify-center rounded-md bg-gold-base text-body font-bold text-navy-900 shadow-lift transition-colors duration-micro ease-cb hover:bg-gold-soft"
             >
               Dùng miễn phí – 20 tin/ngày
             </Link>
