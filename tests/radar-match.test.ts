@@ -54,15 +54,17 @@ interface UpsertCall {
   onConflict?: string;
 }
 
-/** Supabase client tối thiểu cho `scanRadar`/`getRadarMatches`: đúng 6 lời gọi
- *  mà hai hàm đó dùng (select/eq/gte/lte/not/in/order/limit + upsert/update). */
+/** Supabase client tối thiểu cho `scanRadar`/`getRadarMatches`: 10 method mà
+ *  hai hàm đó dùng (select/eq/gte/lte/not/in/order/limit/upsert/update).
+ *  `gte`/`lte` chưa fixture nào chạm tới nhưng giữ lại để fake không phụ thuộc
+ *  việc Radar hiện có đặt khoảng giá/diện tích hay không. */
 function fakeDb(tables: Record<string, Row[]>) {
   const upserts: UpsertCall[] = [];
   const updates: { table: string; patch: Row }[] = [];
   const store = (t: string): Row[] => (tables[t] ??= []);
 
   function from(table: string) {
-    let filters: Filter[] = [];
+    const filters: Filter[] = [];
     let orderCol: string | null = null;
     let orderAsc = true;
     let take = Infinity;
@@ -137,6 +139,8 @@ function fakeDb(tables: Record<string, Row[]>) {
         upserts.push({ table, rows: payload, onConflict: opts?.onConflict });
         const cur = store(table);
         for (const row of payload) {
+          // Khoá so khớp hardcode (radar_id, external_id) khớp `onConflict` mà
+          // production truyền vào; test khẳng định giá trị đó ở trên.
           const i = cur.findIndex(
             (x) => String(x.external_id) === String(row.external_id) && String(x.radar_id ?? "") === String(row.radar_id ?? ""),
           );
@@ -292,28 +296,110 @@ const byId = (rows: Row[], id: string) => {
   await scanRadar(db, RADAR);
   const got = await getRadarMatches(db, RADAR);
 
+  // Một lần quét gán CÙNG một `scanAt` cho mọi dòng, nên thứ tự ở đây không
+  // chứng minh gì về `.order(...)` — chuyện đó ở khối seed bên dưới.
   assert.equal(got.length, 3, "phải trả về cả tin chưa chấm");
   assert.deepEqual(
-    got.map((m: RadarMatch) => m.externalId),
+    [...got].map((m: RadarMatch) => m.externalId).sort(),
     ["111", "222", "333"],
-    "phải sắp xếp last_matched_at giảm dần",
   );
 
-  const scored = got[0]!;
+  const scored = got.find((m: RadarMatch) => m.externalId === "111")!;
   assert.equal(scored.score, 82);
   assert.equal(scored.dealType, "ngop_ngon");
   assert.equal(scored.isNgoP, 88);
   assert.equal(scored.scoringAvailable, true);
 
-  assert.equal(got[1]!.score, 0, "điểm 0 phải đọc lại được từ DB");
-  assert.equal(got[1]!.scoringAvailable, true);
+  const zero = got.find((m: RadarMatch) => m.externalId === "222")!;
+  assert.equal(zero.score, 0, "điểm 0 phải đọc lại được từ DB");
+  assert.equal(zero.scoringAvailable, true);
 
-  const unscored = got[2]!;
+  const unscored = got.find((m: RadarMatch) => m.externalId === "333")!;
   assert.equal(unscored.score, null);
   assert.equal(unscored.dealType, null);
   assert.equal(unscored.isNgoP, null);
   assert.equal(unscored.scoringAvailable, false);
-  assert.deepEqual(signalLabels(unscored), [], "tin chưa chấm không được hiện nhãn điểm/loại");
+
+  // 0 điểm KHÁC hoàn toàn với chưa chấm. Đây là chỗ bảo vệ bẫy falsy:
+  // nếu ai đó gộp `score ?? 0` hoặc `Boolean(score)` thì hai dòng này trùng nhau.
+  assert.notEqual(zero.score, unscored.score, "score 0 không được rơi về null như tin chưa chấm");
+  assert.notEqual(
+    zero.scoringAvailable,
+    unscored.scoringAvailable,
+    "0 điểm là ĐÃ chấm (true), chưa chấm là false",
+  );
+
+  // `signalLabels` chỉ đọc `comparison`. Nên "không có nhãn" phải được bảo vệ
+  // bằng cả hai vế: không có comparison, VÀ không được tự chế nhãn từ điểm.
+  assert.equal(unscored.comparison, null, "không có thống kê tham chiếu thì comparison phải null");
+  assert.deepEqual(signalLabels(unscored), [], "tin chưa chấm: không được tạo nhãn giả");
+  assert.equal(zero.comparison, null, "0 điểm cũng không có thống kê tham chiếu");
+  assert.deepEqual(
+    signalLabels(zero),
+    [],
+    "0 điểm không phải tín hiệu để hiện; KHÔNG được sinh nhãn từ score",
+  );
+
+  // Có thống kê thì nhãn vẫn phải hiện — chứng minh [] ở trên là do thiếu dữ
+  // liệu chứ không phải do signalLabels bị chết.
+  assert.deepEqual(
+    signalLabels({
+      ...unscored,
+      score: 82,
+      scoringAvailable: true,
+      comparison: { medianPpm2: 1, differencePercent: -12, confidence: "low", scopeDescription: "x" },
+    }),
+    ["Giá thấp hơn tham chiếu 12%", "Độ tin cậy tham chiếu: Thấp"],
+  );
+}
+
+/** Dòng `radar_matches` đã lưu, dùng để kiểm thứ tự đọc lại từ DB. */
+const storedMatch = (id: string, lastMatchedAt: string): Row => ({
+  radar_id: "radar-1",
+  external_id: id,
+  url: `/tin/${id}.htm`,
+  title: `Tin ${id}`,
+  area_name: "Quận 6",
+  region_name: "Tp Hồ Chí Minh",
+  category_code: 1000,
+  price_vnd: 5_000_000_000,
+  size_m2: 50,
+  price_per_m2: 100_000_000,
+  listed_at: "2026-10-01T00:00:00Z",
+  last_seen_at: "2026-10-02T09:00:00Z",
+  score: null,
+  deal_type: null,
+  is_ngop: null,
+  scoring_available: false,
+  median_ppm2: null,
+  difference_percent: null,
+  confidence: null,
+  scope_description: null,
+  first_matched_at: "2026-10-01T00:00:00Z",
+  last_matched_at: lastMatchedAt,
+});
+
+// Thứ tự đọc: `last_matched_at` GIẢM DẦN (mới nhất trước).
+// Seed cố ý nhét theo thứ tự TĂNG DẦN, nên assertion này chết nếu production
+// đổi `.order("last_matched_at", { ascending: false })` sang `true`, hoặc bỏ hẳn.
+{
+  const { db } = fakeDb({
+    radar_matches: [
+      storedMatch("a", "2026-10-02T09:00:00Z"),
+      storedMatch("b", "2026-10-02T10:00:00Z"),
+      storedMatch("c", "2026-10-02T11:00:00Z"),
+    ],
+  });
+  const got = await getRadarMatches(db, RADAR);
+  assert.deepEqual(
+    got.map((m: RadarMatch) => m.externalId),
+    ["c", "b", "a"],
+    "getRadarMatches phải trả tin vừa quét gần nhất trước",
+  );
+  assert.deepEqual(
+    got.map((m: RadarMatch) => m.lastMatchedAt),
+    ["2026-10-02T11:00:00Z", "2026-10-02T10:00:00Z", "2026-10-02T09:00:00Z"],
+  );
 }
 
 // Quét lại: first_matched_at giữ nguyên, last_matched_at cập nhật.
