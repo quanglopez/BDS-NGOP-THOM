@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { signalLabels } from "@/lib/radar/format";
-import type { RadarMatch } from "@/lib/radar/types";
+import { getRadarMatches, scanRadar } from "@/lib/radar/data";
+import type { RadarMatch, RadarSummary } from "@/lib/radar/types";
 
 const base: RadarMatch = {
   externalId: "radar-test",
@@ -40,3 +42,294 @@ assert.deepEqual(
 
 const zeroScore: RadarMatch = { ...base, score: 0 };
 assert.equal(zeroScore.score, 0);
+
+// ---------------------------------------------------------------- fake DB
+
+type Row = Record<string, unknown>;
+type Filter = [op: string, col: string, val: unknown];
+
+interface UpsertCall {
+  table: string;
+  rows: Row[];
+  onConflict?: string;
+}
+
+/** Supabase client tối thiểu cho `scanRadar`/`getRadarMatches`: đúng 6 lời gọi
+ *  mà hai hàm đó dùng (select/eq/gte/lte/not/in/order/limit + upsert/update). */
+function fakeDb(tables: Record<string, Row[]>) {
+  const upserts: UpsertCall[] = [];
+  const updates: { table: string; patch: Row }[] = [];
+  const store = (t: string): Row[] => (tables[t] ??= []);
+
+  function from(table: string) {
+    let filters: Filter[] = [];
+    let orderCol: string | null = null;
+    let orderAsc = true;
+    let take = Infinity;
+    let wantsCount = false;
+    let pending: Row | null = null;
+    const match = (r: Row) =>
+      filters.every(([op, c, v]) => {
+        if (op === "eq") return r[c] === v;
+        if (op === "gte") return Number(r[c]) >= Number(v);
+        if (op === "lte") return Number(r[c]) <= Number(v);
+        if (op === "not") return r[c] !== null && r[c] !== undefined;
+        if (op === "in") return Array.isArray(v) && v.includes(r[c]);
+        return true;
+      });
+    const rows = () => {
+      let out = store(table).filter(match);
+      if (orderCol) {
+        const dir = orderAsc ? 1 : -1;
+        const col = orderCol;
+        out = [...out].sort((a, b) =>
+          String(a[col]) === String(b[col]) ? 0 : String(a[col]) < String(b[col]) ? -dir : dir,
+        );
+      }
+      return out.slice(0, take);
+    };
+    const api = {
+      select(_cols?: string, opts?: { count?: string }) {
+        wantsCount = opts?.count === "exact";
+        return api;
+      },
+      eq(col: string, val: unknown) {
+        filters.push(["eq", col, val]);
+        return api;
+      },
+      gte(col: string, val: unknown) {
+        filters.push(["gte", col, val]);
+        return api;
+      },
+      lte(col: string, val: unknown) {
+        filters.push(["lte", col, val]);
+        return api;
+      },
+      not(col: string, _op: string, val: unknown) {
+        filters.push(["not", col, val]);
+        return api;
+      },
+      in(col: string, val: unknown) {
+        filters.push(["in", col, val]);
+        return api;
+      },
+      order(col: string, opts?: { ascending?: boolean }) {
+        orderCol = col;
+        orderAsc = opts?.ascending ?? true;
+        return api;
+      },
+      limit(n?: number) {
+        take = n ?? Infinity;
+        return api;
+      },
+      then(resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) {
+        if (pending) {
+          for (const r of store(table)) if (match(r)) Object.assign(r, pending);
+          pending = null;
+        }
+        const out = rows();
+        return Promise.resolve({ data: out, error: null, count: wantsCount ? out.length : null }).then(
+          resolve,
+          reject,
+        );
+      },
+      async upsert(payload: Row[], opts?: { onConflict?: string }) {
+        upserts.push({ table, rows: payload, onConflict: opts?.onConflict });
+        const cur = store(table);
+        for (const row of payload) {
+          const i = cur.findIndex(
+            (x) => String(x.external_id) === String(row.external_id) && String(x.radar_id ?? "") === String(row.radar_id ?? ""),
+          );
+          if (i >= 0) cur[i] = { ...cur[i], ...row };
+          else cur.push({ ...row });
+        }
+        return { data: null, error: null };
+      },
+      update(patch: Row) {
+        updates.push({ table, patch });
+        pending = patch;
+        return api;
+      },
+    };
+    return api;
+  }
+
+  return { db: { from } as unknown as SupabaseClient, upserts, updates, tables };
+}
+
+const listing = (id: string, lastSeen: string): Row => ({
+  external_id: id,
+  url: `/tin/${id}.htm`,
+  title: `Tin ${id}`,
+  area_name: "Quận 6",
+  region_name: "Tp Hồ Chí Minh",
+  category_code: 1000,
+  price_vnd: 5_000_000_000,
+  size_m2: 50,
+  price_per_m2: 100_000_000,
+  listed_at: "2026-10-01T00:00:00Z",
+  last_seen_at: lastSeen,
+  rooms: 3,
+  area_v2: 13006,
+  is_rent: false,
+  is_promoted: false,
+  is_price_valid: true,
+});
+
+const check_ = (id: string, over: Row): Row => ({
+  listing_url: `https://checkbds.vn/check/cho-thue-nha-dat-${id}.htm`,
+  score: null,
+  deal_type: null,
+  is_ngop: null,
+  created_at: "2026-10-01T00:00:00Z",
+  ...over,
+});
+
+/** 111 chấm điểm cao, 222 chấm 0 điểm (bẫy falsy), 333 chưa từng chấm. */
+function seed() {
+  return fakeDb({
+    market_listings: [
+      listing("111", "2026-10-02T09:00:00Z"),
+      listing("222", "2026-10-02T08:00:00Z"),
+      listing("333", "2026-10-02T07:00:00Z"),
+    ],
+    checks: [
+      check_("111", { score: 82, deal_type: "ngop_ngon", is_ngop: 88 }),
+      check_("222", { score: 0, deal_type: null, is_ngop: 12 }),
+      // Check cũ của 111 bị đè bởi Check mới hơn -> phải lấy 82, không lấy 40.
+      check_("111", { score: 40, deal_type: "binh_thuong", is_ngop: 10, created_at: "2026-09-01T00:00:00Z" }),
+    ],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+  });
+}
+
+const RADAR: RadarSummary = {
+  id: "radar-1",
+  name: "Radar Quận 6",
+  areaV2: 13006,
+  areaName: "Quận 6",
+  regionName: "Tp Hồ Chí Minh",
+  categoryCode: null,
+  priceMinVnd: null,
+  priceMaxVnd: null,
+  areaMinM2: null,
+  areaMaxM2: null,
+  minScore: null,
+  dealTypes: [],
+  ngoPOnly: false,
+  status: "ACTIVE",
+  createdAt: "2026-10-01T00:00:00Z",
+  updatedAt: "2026-10-01T00:00:00Z",
+  coverage: {
+    status: "unknown",
+    lastSeenAt: null,
+    freshness: null,
+    staleness: "unknown",
+    listingCount: null,
+    checkedAt: null,
+    source: "chotot_gateway",
+    description: null,
+    excludedCount: null,
+  },
+  newMatchCount: 0,
+  lastScanCount: null,
+  lastScanError: null,
+};
+
+const byId = (rows: Row[], id: string) => {
+  const hit = rows.find((r) => r.external_id === id);
+  assert.ok(hit, `thiếu dòng ${id}`);
+  return hit!;
+};
+
+// ---------------------------------------------------------------- scanRadar
+
+// Tin chưa chấm phải được ghi xuống y hệt tin đã chấm: null + scoring_available=false.
+{
+  const { db, upserts, updates, tables } = seed();
+  const res = await scanRadar(db, RADAR);
+
+  const call = upserts.find((u) => u.table === "radar_matches");
+  assert.ok(call, "phải upsert vào radar_matches");
+  assert.equal(call.onConflict, "radar_id,external_id", "phải khoá theo (radar_id, external_id)");
+  assert.equal(call.rows.length, 3, "cả 3 tin đều phải được ghi, kể cả tin chưa chấm");
+
+  const scored = byId(call.rows, "111");
+  assert.equal(scored.score, 82, "phải lấy Check MỚI NHẤT (82), không phải Check cũ (40)");
+  assert.equal(scored.deal_type, "ngop_ngon");
+  assert.equal(scored.is_ngop, 88);
+  assert.equal(scored.scoring_available, true);
+
+  // Bẫy falsy: score = 0 là điểm thật, không phải "chưa chấm".
+  const zero = byId(call.rows, "222");
+  assert.equal(zero.score, 0, "score 0 phải giữ nguyên 0, không được đổi thành null");
+  assert.equal(zero.scoring_available, true, "có Check dù 0 điểm thì scoring_available = true");
+  assert.equal(zero.deal_type, null);
+  assert.equal(zero.is_ngop, 12);
+
+  const unscored = byId(call.rows, "333");
+  assert.equal(unscored.score, null, "tin chưa chấm: score phải null, tuyệt đối không phải 0");
+  assert.equal(unscored.deal_type, null);
+  assert.equal(unscored.is_ngop, null);
+  assert.equal(unscored.scoring_available, false);
+
+  assert.equal(res.newMatchCount, 3, "lần quét đầu: cả 3 tin đều là tin mới");
+  assert.equal(res.matches.length, 3);
+
+  const radarUpdate = updates.find((u) => u.table === "radars");
+  assert.ok(radarUpdate, "phải cập nhật bảng radars");
+  assert.equal(radarUpdate.patch.last_scan_count, 3, "tin chưa chấm vẫn phải được đếm");
+  assert.equal(radarUpdate.patch.last_scan_error, null);
+
+  assert.equal(tables.radar_matches.length, 3, "3 dòng phải nằm trong radar_matches");
+}
+
+// ------------------------------------------------------------ getRadarMatches
+
+{
+  const { db } = seed();
+  await scanRadar(db, RADAR);
+  const got = await getRadarMatches(db, RADAR);
+
+  assert.equal(got.length, 3, "phải trả về cả tin chưa chấm");
+  assert.deepEqual(
+    got.map((m: RadarMatch) => m.externalId),
+    ["111", "222", "333"],
+    "phải sắp xếp last_matched_at giảm dần",
+  );
+
+  const scored = got[0]!;
+  assert.equal(scored.score, 82);
+  assert.equal(scored.dealType, "ngop_ngon");
+  assert.equal(scored.isNgoP, 88);
+  assert.equal(scored.scoringAvailable, true);
+
+  assert.equal(got[1]!.score, 0, "điểm 0 phải đọc lại được từ DB");
+  assert.equal(got[1]!.scoringAvailable, true);
+
+  const unscored = got[2]!;
+  assert.equal(unscored.score, null);
+  assert.equal(unscored.dealType, null);
+  assert.equal(unscored.isNgoP, null);
+  assert.equal(unscored.scoringAvailable, false);
+  assert.deepEqual(signalLabels(unscored), [], "tin chưa chấm không được hiện nhãn điểm/loại");
+}
+
+// Quét lại: first_matched_at giữ nguyên, last_matched_at cập nhật.
+{
+  const { db } = seed();
+  const first = await scanRadar(db, RADAR);
+  const firstAt = first.matches.map((m: RadarMatch) => `${m.externalId}|${m.firstMatchedAt}`).join(",");
+  const second = await scanRadar(db, RADAR);
+
+  assert.deepEqual(
+    second.matches.map((m: RadarMatch) => `${m.externalId}|${m.firstMatchedAt}`).join(","),
+    firstAt,
+    "quét lại không được đổi first_matched_at",
+  );
+  assert.equal(second.newMatchCount, 0, "quét lại không có tin mới nào");
+
+  const stored = await getRadarMatches(db, RADAR);
+  assert.equal(stored.length, 3, "upsert phải ghi đè, không nhân bản dòng");
+}
