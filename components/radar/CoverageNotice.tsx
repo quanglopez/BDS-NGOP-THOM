@@ -1,0 +1,4 @@
+import { AlertTriangle,Info } from "lucide-react";
+import { coverageCopy } from "@/lib/radar/states";
+import type { RadarCoverage } from "@/lib/radar/types";
+export function CoverageNotice({coverage,size="full"}:{coverage:RadarCoverage;size?:"full"|"inline"|"card"}){const copy=coverageCopy(coverage);if(!copy)return null;const Icon=coverage.status==="unknown"?Info:AlertTriangle;return <div className={"rounded-lg border p-4 "+(size==="inline"?"p-3 ":"")+(coverage.staleness==="stale"?"border-risk-medium/30 bg-risk-medium-wash":"border-line bg-surface-mist")} role="status"><div className="flex gap-3"><Icon aria-hidden className="mt-0.5 h-5 w-5 shrink-0 text-risk-medium"/><div className="min-w-0"><p className="text-small font-semibold text-navy">{copy.title}</p><p className="mt-1 text-small text-ink-600">{copy.body}</p>{coverage.listingCount!=null&&<p className="mt-2 text-micro text-ink-600">{coverage.listingCount} tin trong dữ liệu tham chiếu</p>}</div></div></div>;}

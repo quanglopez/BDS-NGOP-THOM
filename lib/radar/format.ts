@@ -1,0 +1,8 @@
+import { CATEGORY_LABEL } from "@/lib/price/scope";
+import { fmtArea,fmtPpm2,fmtVnd } from "@/lib/price/format";
+import type { RadarCriteria,RadarMatch } from "./types";
+function range(min:number|null,max:number|null,f:(n:number)=>string){if(min!=null&&max!=null)return f(min)+" – "+f(max);if(min!=null)return "≥ "+f(min);if(max!=null)return "≤ "+f(max);return null;}
+export function criteriaSummary(c:Pick<RadarCriteria,"areaName"|"regionName"|"categoryCode"|"priceMinVnd"|"priceMaxVnd"|"areaMinM2"|"areaMaxM2">){const b=[c.categoryCode!=null?(CATEGORY_LABEL[c.categoryCode]??"Bất động sản"):"Mọi loại BĐS"];if(c.areaName)b.push(c.areaName+(c.regionName?", "+c.regionName:""));const p=range(c.priceMinVnd,c.priceMaxVnd,n=>fmtVnd(n));if(p)b.push(p);const a=range(c.areaMinM2,c.areaMaxM2,n=>fmtArea(n));if(a)b.push(a);return b.join(" · ");}
+export function matchPriceText(m:RadarMatch){return fmtVnd(m.priceVnd)+" · "+fmtPpm2(m.pricePerM2);}
+export function signalLabels(m:RadarMatch){const d=m.comparison?.differencePercent;const out:string[]=[];if(typeof d==="number"&&d<=-5)out.push("Giá thấp hơn tham chiếu "+Math.abs(Math.round(d))+"%");else if(typeof d==="number"&&d>-5&&d<5)out.push("Gần tham chiếu");if(m.comparison?.confidence==="low")out.push("Độ tin cậy tham chiếu: Thấp");return out.slice(0,3);}
+export function listingTextForCheck(m:RadarMatch){return[m.title??"Tin bất động sản",[m.areaName,m.regionName].filter(Boolean).join(", "),m.priceVnd!=null?fmtVnd(m.priceVnd):"",m.sizeM2!=null?fmtArea(m.sizeM2):""].filter(Boolean).join(" · ");}

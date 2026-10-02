@@ -1,0 +1,2 @@
+import { freshnessStamp } from "@/lib/radar/states";
+export function FreshnessStamp({freshness}:{freshness:string|null}){const v=freshnessStamp(freshness);return v?<span className="text-micro text-ink-600">Cập nhật gần nhất: {v}</span>:null;}

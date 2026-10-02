@@ -47,6 +47,36 @@ npm run dev                  # http://localhost:3000
 | `NEXT_PUBLIC_SEPAY_BANK` | public | Mã ngân hàng nhận tiền, ví dụ `MBB` |
 | `NEXT_PUBLIC_SEPAY_ACCOUNT` | public | Số tài khoản nhận tiền |
 | `NEXT_PUBLIC_SEPAY_BANK_NAME` | public | Tên ngân hàng hiển thị |
+| `CRON_SECRET` | server | Chuỗi bất kỳ, Vercel Cron gửi `Authorization: Bearer <CRON_SECRET>` |
+
+## Radar — quét định kỳ
+
+Radar có hai đường quét: nút "Quét ngay" của người dùng (`POST /api/radars/[id]/scan`) và
+lịch tự động cho **mọi Radar đang chạy** (`GET /api/cron/radar-scan`, khai báo trong `vercel.json`).
+
+- Lịch: `7 3 * * *` — 03:07 mỗi ngày (giờ UTC). Chọn giờ lệch phút để không trùng giờ đông của các job khác.
+- Xác thực: bắt buộc `Authorization: Bearer <CRON_SECRET>`; so sánh thời gian cố định.
+  Không có `CRON_SECRET` thì route trả **500 và quét đại** — cố ý fail-closed.
+- Thứ tự: Radar `status = ACTIVE`, quét lâu nhất trước (`checked_at` tăng dần, chưa quét lên đầu).
+- Giới hạn mỗi lượt: tối đa **50** Radar, nghỉ **30 phút** giữa hai lượt của cùng một Radar,
+  nghỉ 250ms giữa các Radar. Nếu vượt số Radar, lượt sau tự động xử lý tiếp (không có cron phụ).
+- Cô lập lỗi: một Radar lỗi không dừng cả lượt; Radar đó bị ghi `last_scan_error = "scan_failed"`.
+- Response (để kiểm tra trong Vercel → Cron → Logs):
+
+  ```json
+  { "ok": true, "total": 12, "scanned": 12, "skipped": 0, "failed": 0,
+    "newMatches": 34, "errors": [] }
+  ```
+
+- Quét cần service role (đọc `market_listings`/`checks`, ghi `radar_matches`) nên chạy bằng
+  `adminClient()`; người dùng vẫn chỉ đọc `radars`/`radar_matches` của chính mình qua session client + RLS.
+- Kiểm tra thủ công (chỉ local hoặc preview có secret):
+
+  ```bash
+  curl -H "Authorization: Bearer $CRON_SECRET" https://<domain>/api/cron/radar-scan
+  ```
+
+  Không có header → 401. Có header sai → 401. Có header đúng → JSON tổng kết ở trên.
 
 ## Deploy Vercel
 
