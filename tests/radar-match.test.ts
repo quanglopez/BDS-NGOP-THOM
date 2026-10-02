@@ -57,13 +57,24 @@ interface UpsertCall {
 /** Supabase client tối thiểu cho `scanRadar`/`getRadarMatches`: 10 method mà
  *  hai hàm đó dùng (select/eq/gte/lte/not/in/order/limit/upsert/update).
  *  `gte`/`lte` chưa fixture nào chạm tới nhưng giữ lại để fake không phụ thuộc
- *  việc Radar hiện có đặt khoảng giá/diện tích hay không. */
-function fakeDb(tables: Record<string, Row[]>) {
+ *  việc Radar hiện có đặt khoảng giá/diện tích hay không.
+ *  `failures` ép lỗi từng bảng/từng op để test failure path; `fromCalls` đếm
+ *  số query mỗi bảng để chứng minh batch lookup (không N+1). */
+function fakeDb(
+  tables: Record<string, Row[]>,
+  failures: { table: string; op: "select" | "upsert" }[] = [],
+) {
   const upserts: UpsertCall[] = [];
   const updates: { table: string; patch: Row }[] = [];
+  const fromCalls: Record<string, number> = {};
   const store = (t: string): Row[] => (tables[t] ??= []);
+  const forced = (table: string, op: "select" | "upsert") =>
+    failures.some((f) => f.table === table && f.op === op)
+      ? { code: "XX000", message: `forced_${op}_failure` }
+      : null;
 
   function from(table: string) {
+    fromCalls[table] = (fromCalls[table] ?? 0) + 1;
     const filters: Filter[] = [];
     let orderCol: string | null = null;
     let orderAsc = true;
@@ -125,6 +136,8 @@ function fakeDb(tables: Record<string, Row[]>) {
         return api;
       },
       then(resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) {
+        const forcedError = forced(table, "select");
+        if (forcedError) return Promise.resolve({ data: null, error: forcedError }).then(resolve, reject);
         if (pending) {
           for (const r of store(table)) if (match(r)) Object.assign(r, pending);
           pending = null;
@@ -136,6 +149,8 @@ function fakeDb(tables: Record<string, Row[]>) {
         );
       },
       async upsert(payload: Row[], opts?: { onConflict?: string }) {
+        const forcedError = forced(table, "upsert");
+        if (forcedError) return { data: null, error: forcedError };
         upserts.push({ table, rows: payload, onConflict: opts?.onConflict });
         const cur = store(table);
         for (const row of payload) {
@@ -158,7 +173,7 @@ function fakeDb(tables: Record<string, Row[]>) {
     return api;
   }
 
-  return { db: { from } as unknown as SupabaseClient, upserts, updates, tables };
+  return { db: { from } as unknown as SupabaseClient, upserts, updates, tables, fromCalls };
 }
 
 const listing = (id: string, lastSeen: string): Row => ({
@@ -418,4 +433,125 @@ const storedMatch = (id: string, lastMatchedAt: string): Row => ({
 
   const stored = await getRadarMatches(db, RADAR);
   assert.equal(stored.length, 3, "upsert phải ghi đè, không nhân bản dòng");
+}
+
+// ---------------------------------------------- RESCAN: newest Check + clear stale
+// Các block trên chỉ kiểm "Check mới nhất thắng trong MỘT lần quét". Ở đây mô
+// phỏng vòng đời thật qua nhiều lần quét: Check cũ -> Check mới xuất hiện ->
+// Check biến mất. Không được giữ signal cũ khi không còn Check hợp lệ.
+{
+  const { db, tables } = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [check_("111", { score: 40, deal_type: "binh_thuong", is_ngop: 10, created_at: "2026-09-01T00:00:00Z" })],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+  });
+
+  const first = await scanRadar(db, RADAR);
+  assert.equal(first.matches[0]!.score, 40, "lần 1: dùng Check cũ");
+  const firstAt = first.matches[0]!.firstMatchedAt;
+
+  // Check mới hơn xuất hiện giữa hai lần quét.
+  tables.checks.push(check_("111", { score: 90, deal_type: "ngop_ngon", is_ngop: 95, created_at: "2026-10-03T00:00:00Z" }));
+  const second = await scanRadar(db, RADAR);
+  assert.equal(second.matches[0]!.score, 90, "rescan: Check mới hơn phải thắng");
+  assert.equal(second.matches[0]!.dealType, "ngop_ngon");
+  assert.equal(second.matches[0]!.isNgoP, 95);
+  assert.equal(second.matches[0]!.scoringAvailable, true);
+  assert.equal(second.matches[0]!.firstMatchedAt, firstAt, "signal đổi không được reset first_matched_at");
+
+  const afterSecond = await getRadarMatches(db, RADAR);
+  assert.equal(afterSecond[0]!.score, 90, "DB phải bị ghi đè bởi signal mới, không giữ 40");
+
+  // Không còn Check nào cho tin này (bị xoá / ngoài window).
+  tables.checks = tables.checks.filter((c) => !String(c.listing_url).includes("111"));
+  const third = await scanRadar(db, RADAR);
+  assert.equal(third.matches[0]!.score, null, "mất Check -> score về null, KHÔNG giữ 90");
+  assert.equal(third.matches[0]!.dealType, null);
+  assert.equal(third.matches[0]!.isNgoP, null);
+  assert.equal(third.matches[0]!.scoringAvailable, false);
+  assert.equal(third.newMatchCount, 0, "mất signal không biến tin cũ thành tin mới");
+
+  const afterThird = await getRadarMatches(db, RADAR);
+  assert.equal(afterThird.length, 1, "tin KHÔNG bị mất khỏi radar_matches khi mất signal");
+  assert.equal(afterThird[0]!.score, null, "stale score trong DB phải bị xoá");
+  assert.equal(afterThird[0]!.dealType, null, "stale deal_type trong DB phải bị xoá");
+  assert.equal(afterThird[0]!.isNgoP, null, "stale is_ngop trong DB phải bị xoá");
+  assert.equal(afterThird[0]!.scoringAvailable, false);
+}
+
+// Batch signal lookup: 3 tin nhưng CHỈ 1 query bảng checks (không N+1).
+{
+  const { db, fromCalls } = seed();
+  await scanRadar(db, RADAR);
+  assert.equal(fromCalls.checks ?? 0, 1, "3 tin phải dùng 1 query checks duy nhất");
+}
+
+// ---------------------------------------------------------------- failure paths
+// Lookup signal lỗi -> scanRadar ném lỗi, KHÔNG ghi radar_matches/radars.
+{
+  const f = fakeDb(
+    {
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [check_("111", { score: 82 })],
+      radar_matches: [],
+      radars: [{ id: "radar-1" }],
+    },
+    [{ table: "checks", op: "select" }],
+  );
+  await assert.rejects(
+    scanRadar(f.db, RADAR),
+    (e: unknown) => (e as { code?: string }).code === "XX000",
+  );
+  assert.equal(f.tables.radar_matches.length, 0, "lookup lỗi -> không ghi dòng nào");
+  assert.equal(f.updates.length, 0, "lookup lỗi -> radars không bị đụng");
+}
+
+// Ghi radar_matches lỗi -> dừng TRƯỚC khi update radars, không để half-state.
+// Route gọi scanRadar sẽ catch và tự ghi `last_scan_error` (không bump updated_at).
+{
+  const f = fakeDb(
+    {
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [check_("111", { score: 82 })],
+      radar_matches: [],
+      radars: [{ id: "radar-1" }],
+    },
+    [{ table: "radar_matches", op: "upsert" }],
+  );
+  await assert.rejects(
+    scanRadar(f.db, RADAR),
+    (e: unknown) => (e as { code?: string }).code === "XX000",
+  );
+  assert.equal(f.tables.radar_matches.length, 0, "upsert lỗi -> radar_matches không đổi");
+  assert.equal(f.updates.length, 0, "upsert lỗi -> radars không bị cập nhật nửa vời");
+}
+
+// AI chấm lỗi: Check tồn tại nhưng CHƯA có score -> coi như chưa chấm,
+// tin vẫn persist unscored thay vì biến mất.
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [check_("111", { score: null, deal_type: null, is_ngop: null })],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+  });
+  const res = await scanRadar(f.db, RADAR);
+  assert.equal(res.matches.length, 1, "chấm lỗi không được làm mất tin");
+  assert.equal(res.matches[0]!.score, null);
+  assert.equal(res.matches[0]!.scoringAvailable, false);
+  assert.equal(f.tables.radar_matches.length, 1, "tin vẫn được persist");
+}
+
+// ---------------------------------------------------------------- input mutation
+// scanRadar không được sửa input: rows đọc từ DB, checks, và config Radar.
+{
+  const f = seed();
+  const listingsBefore = JSON.parse(JSON.stringify(f.tables.market_listings));
+  const checksBefore = JSON.parse(JSON.stringify(f.tables.checks));
+  const radarBefore = JSON.parse(JSON.stringify(RADAR));
+  await scanRadar(f.db, RADAR);
+  assert.deepEqual(JSON.parse(JSON.stringify(f.tables.market_listings)), listingsBefore, "input market_listings bị mutate");
+  assert.deepEqual(JSON.parse(JSON.stringify(f.tables.checks)), checksBefore, "input checks bị mutate");
+  assert.deepEqual(JSON.parse(JSON.stringify(RADAR)), radarBefore, "Radar config bị mutate");
 }
