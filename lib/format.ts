@@ -9,7 +9,8 @@ export const DEAL_LABELS: Record<string, string> = {
 };
 
 export function dealLabel(deal: string | null | undefined): string {
-  return DEAL_LABELS[deal ?? "binh_thuong"] ?? "BÌNH THƯỜNG";
+  if (deal === null || deal === undefined) return "CHƯA CHẤM";
+  return DEAL_LABELS[deal] ?? "BÌNH THƯỜNG";
 }
 
 // Màu badge theo loại kèo
@@ -27,8 +28,8 @@ export function dealBadgeClass(deal: string | null | undefined): string {
 }
 
 export function scoreBadgeClass(score: number | null | undefined): string {
-  const s = score ?? 0;
-  if (s >= 80) return "bg-emerald-600 text-white";
-  if (s >= 50) return "bg-amber-400 text-amber-950";
+  if (score === null || score === undefined) return "bg-slate-200 text-slate-500";
+  if (score >= 80) return "bg-emerald-600 text-white";
+  if (score >= 50) return "bg-amber-400 text-amber-950";
   return "bg-red-500 text-white";
 }

@@ -57,10 +57,13 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
       if (q && !(r.original_text ?? "").toLowerCase().includes(q)) return false;
       if (deal !== "all" && r.deal_type !== deal) return false;
       if (province !== "all" && r.province !== province) return false;
-      const s = r.score ?? 0;
-      if (band === "hot" && s < 80) return false;
-      if (band === "mid" && (s < 50 || s >= 80)) return false;
-      if (band === "low" && s >= 50) return false;
+      // Tin chưa chấm điểm (score null) không thuộc băng nào — lọc băng để chúng lọt qua.
+      if (r.score !== null) {
+        const s = r.score;
+        if (band === "hot" && s < 80) return false;
+        if (band === "mid" && (s < 50 || s >= 80)) return false;
+        if (band === "low" && s >= 50) return false;
+      }
       return true;
     });
   }, [rows, search, deal, band, province]);
@@ -187,16 +190,20 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                         {r.bedrooms != null ? r.bedrooms : <span className="text-slate-400">-</span>}
                       </td>
                       <td className="px-3 py-3.5 whitespace-nowrap">
-                        <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${scoreBadgeClass(r.score)}`}>
-                          {r.score ?? 0}/100
-                        </span>
+                        {r.score !== null ? (
+                          <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${scoreBadgeClass(r.score)}`}>
+                            {r.score}/100
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
                       </td>
                       <td className="px-3 py-3.5 whitespace-nowrap">
                         <span className={`px-2 py-1 rounded-full text-[11px] font-bold ${dealBadgeClass(r.deal_type)}`}>
                           {dealLabel(r.deal_type)}
                         </span>
                       </td>
-                      <td className="px-3 py-3.5 font-mono whitespace-nowrap">{r.is_ngop ?? 0}%</td>
+                      <td className="px-3 py-3.5 font-mono whitespace-nowrap">{r.is_ngop !== null ? `${r.is_ngop}%` : <span className="text-slate-400">-</span>}</td>
                       <td className="px-3 py-3.5 text-slate-500 whitespace-nowrap">
                         {new Date(r.created_at).toLocaleString("vi-VN")}
                       </td>
