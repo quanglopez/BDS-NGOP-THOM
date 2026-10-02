@@ -28,7 +28,11 @@ Task 3b: final code-review trên diff chưa commit (user chọn scope = git diff
 - Finding per-request area lookup 5000 rows — defer V1 (xem Known limitations).
 - Xác minh lại sau các fix trên: npm test EXIT=0, npm run build EXIT=0.
 
-Task 4: commit — pending
+Task 4: commit — committed locally — 5d38032 (2026-10-02)
+- Commit 5d38032025f28341ce8f50277a0950dca620326b "feat(radar): integrate signals, cron scan, and safety fixes" — 17 files, 730 insertions(+), 51 deletions(-).
+- Final verification: npm test EXIT=0, npm run build EXIT=0, code review PASS (Tasks 3/3b), git diff HEAD --check EXIT=0, git diff HEAD trống (không còn tracked change).
+- NOT PUSHED. Untracked còn lại (pre-existing, cố ý không commit): .agents/, .workbuddy-ai/, AGENTS.md, README_JEV.md, scripts/test-price-intelligence-e2e.ts, skills-lock.json.
+- Production validation BLOCKED — cần explicit user approval; production radars rỗng, CRON_SECRET chưa set (route cố ý trả 500).
 
 Known limitations (không sửa trong V1):
 - checks không có listing_id; SQL scope theo candidate IDs không khả thi, cần migration ngoài phạm vi.
