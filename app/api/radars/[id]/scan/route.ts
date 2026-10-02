@@ -1,0 +1,8 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { adminClient } from "@/lib/admin";
+import { getRadar,scanRadar } from "@/lib/radar/data";
+export const runtime="nodejs";export const maxDuration=30;
+export async function POST(_req:Request,{params}:{params:Promise<{id:string}>}){const s=await createClient();const {data:{user}}=await s.auth.getUser();if(!user)return NextResponse.json({error:"Cần đăng nhập"},{status:401});const admin=adminClient();// Quyền sở hữu kiểm bằng session client (RLS); quét mới dùng service role.
+const radar=await getRadar(s,user.id,(await params).id);if(!radar)return NextResponse.json({error:"Không tìm thấy Radar."},{status:404});try{return NextResponse.json({ok:true,...await scanRadar(admin,radar)});}catch(e){console.error("[radar:scan]",e instanceof Error?e.name:"unknown");/* Ghi lỗi cũng có thể hỏng — không được để nó thay JSON 500 của route. Không bump updated_at: nội dung Radar không đổi, bump chỉ xáo trộn danh sách (listRadars sort updated_at desc). */
+try{const mark=await admin.from("radars").update({last_scan_error:"scan_failed"}).eq("id",radar.id).eq("user_id",user.id);if(mark.error)console.error("[radar:scan:mark-failed]",mark.error.code);}catch(markError){console.error("[radar:scan:mark-failed]",markError);}return NextResponse.json({error:"Không quét được dữ liệu Radar. Thử lại sau."},{status:500});}}

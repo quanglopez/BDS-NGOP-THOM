@@ -1,0 +1,4 @@
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { COPY } from "@/lib/radar/states";
+export function RadarStateBlock({kind}:{kind:"empty"|"error"}){const c=kind==="empty"?COPY.empty:COPY.loadError;return <div className="rounded-panel border border-line bg-surface p-8 text-center shadow-light"><h2 className="text-h3 text-navy">{c.title}</h2><p className="mx-auto mt-2 max-w-[60ch] text-small text-ink-600">{c.body}</p>{kind==="empty"?<Link href="/radar/new" className="mt-5 inline-flex"><Button size="lg" className="bg-gold-base text-navy">+ Tạo Radar</Button></Link>:<Button size="lg" className="mt-5" onClick={()=>window.location.reload()}>Thử lại</Button>}</div>;}

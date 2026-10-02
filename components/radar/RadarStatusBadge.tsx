@@ -1,0 +1,4 @@
+import { CirclePause,CirclePlay } from "lucide-react";
+import type { RadarStatus } from "@/lib/radar/types";
+import { radarStatusLabel } from "@/lib/radar/states";
+export function RadarStatusBadge({status}:{status:RadarStatus}){const paused=status==="PAUSED",Icon=paused?CirclePause:CirclePlay;return <span className={paused?"inline-flex items-center gap-1 rounded-pill bg-surface-mist px-2 py-1 text-micro text-ink-600":"inline-flex items-center gap-1 rounded-pill bg-ai-wash px-2 py-1 text-micro font-semibold text-ai-ink"}><Icon aria-hidden className="h-3.5 w-3.5"/>{radarStatusLabel(status)}</span>;}

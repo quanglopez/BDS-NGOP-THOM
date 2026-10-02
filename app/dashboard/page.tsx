@@ -84,9 +84,10 @@ export default async function DashboardPage() {
             <Logo height={24} />
           </Link>
           <div className="flex items-center gap-3">
-            <span className="hidden sm:inline text-[10px] tracking-[0.18em] font-bold text-gold">
-              DASHBOARD
-            </span>
+            <nav aria-label="Điều hướng tài khoản" className="flex items-center gap-3 text-small">
+              <Link href="/dashboard" className="text-gold-soft hover:text-white">Dashboard</Link>
+              <Link href="/radar" className="text-gold-soft hover:text-white">Kèo Radar</Link>
+            </nav>
             <SignOutButton />
           </div>
         </div>

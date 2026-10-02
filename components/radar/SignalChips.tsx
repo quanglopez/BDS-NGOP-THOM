@@ -1,0 +1,4 @@
+import { BadgeDollarSign,ShieldCheck } from "lucide-react";
+import { signalLabels } from "@/lib/radar/format";
+import type { RadarMatch } from "@/lib/radar/types";
+export function SignalChips({match}:{match:RadarMatch}){const labels=signalLabels(match);if(!labels.length)return null;return <ul className="flex flex-wrap gap-2" aria-label="Tín hiệu Radar">{labels.map((x,i)=><li key={x} className="inline-flex items-center gap-1 rounded-pill bg-surface-mist px-2.5 py-1 text-micro text-ink-700">{i===0?<BadgeDollarSign aria-hidden className="h-3.5 w-3.5"/>:<ShieldCheck aria-hidden className="h-3.5 w-3.5"/>}{x}</li>)}</ul>;}

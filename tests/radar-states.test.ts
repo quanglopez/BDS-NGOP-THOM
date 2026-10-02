@@ -1,0 +1,3 @@
+import assert from "node:assert/strict";
+import { COPY,coverageCopy,freshnessStamp } from "@/lib/radar/states";
+const c={status:"thin" as const,lastSeenAt:null,freshness:null,staleness:"fresh" as const,listingCount:3,checkedAt:null,source:"chotot_gateway",description:"Quận Hải Châu, Đà Nẵng",excludedCount:2};assert.match(coverageCopy(c)?.title??"",/Dữ liệu khu vực này còn ít/);assert.match(COPY.thin(3).body,/3/);assert.equal(freshnessStamp(null),null);assert.equal(freshnessStamp("18 phút trước"),"18 phút trước");
