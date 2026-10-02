@@ -114,8 +114,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const title = (row.original_text ?? "").split("\n")[0]?.slice(0, 200) || "Tin bất động sản";
 
   const seed: ReportSeed = {
-    score: row.score ?? 0,
-    dealType: row.deal_type ?? "binh_thuong",
+    score: row.score,
+    dealType: row.deal_type,
     title,
     price,
     area,
@@ -167,9 +167,9 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         {/* 2. CheckBDS Score — render server */}
         <section className="mt-4 rounded-[20px] bg-navy text-white p-5 md:p-6 flex items-center gap-5 relative overflow-hidden">
           <div className="absolute -top-16 right-0 w-[220px] h-[220px] bg-gold/15 rounded-full blur-[60px]" />
-          <div className="w-[84px] h-[84px] shrink-0 rounded-full bg-white border-[6px] border-emerald-500 text-emerald-700 flex items-center justify-center relative">
+          <div className={`w-[84px] h-[84px] shrink-0 rounded-full bg-white border-[6px] flex items-center justify-center relative ${seed.score !== null ? "border-emerald-500 text-emerald-700" : "border-slate-300 text-slate-500"}`}>
             <div className="text-center leading-none">
-              <div className="text-[26px] font-black tracking-tight">{seed.score}</div>
+              <div className="text-[26px] font-black tracking-tight">{seed.score !== null ? seed.score : "—"}</div>
               <div className="text-[10px] font-bold tracking-widest mt-0.5 opacity-70">/100</div>
             </div>
           </div>

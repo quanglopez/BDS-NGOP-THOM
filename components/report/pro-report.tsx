@@ -7,8 +7,8 @@ import type { ProAnalysis } from "@/lib/ai/schema";
 import { fmtPpm2, fmtVnd } from "@/lib/price/format";
 
 export interface ReportSeed {
-  score: number;
-  dealType: string;
+  score: number | null;
+  dealType: string | null;
   title: string | null;
   price: number | null;
   area: number | null;
@@ -214,7 +214,7 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
 
       {/* 5. Vì sao được điểm */}
       <section className="rounded-[18px] border border-slate-200 bg-white p-5 md:p-6">
-        <SectionTitle>Vì sao BĐS này được {seed.score}/100?</SectionTitle>
+        <SectionTitle>{seed.score !== null ? `Vì sao BĐS này được ${seed.score}/100?` : "Vì sao BĐS này chưa được chấm điểm?"}</SectionTitle>
         <p className="mt-1 text-[12px] text-slate-500">{a.score_explanation.summary}</p>
         <div className="mt-4 grid gap-5 md:grid-cols-2">
           <div>
