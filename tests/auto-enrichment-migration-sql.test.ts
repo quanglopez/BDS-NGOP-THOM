@@ -299,10 +299,41 @@ function body0022(name: string): string {
   return flat(SQL_0022.slice(open + 2, close));
 }
 
+/** Cắt TỪNG câu `update public.auto_enrichment_jobs` trong thân hàm 0022.
+ *  Bắt buộc vì `body` đã flatten: token `processing_started_at < now() - ...`
+ *  tồn tại ở nhánh failed vẫn làm assert "coi chung" xanh, nên phải khoá theo
+ *  từng statement mới kill được mutation bỏ guard ở nhánh requeue. */
+function updateStatements0022(name: string): string[] {
+  const body = body0022(name);
+  const out: string[] = [];
+  let idx = 0;
+  for (;;) {
+    const at = body.indexOf("update public.auto_enrichment_jobs", idx);
+    if (at < 0) break;
+    const end = body.indexOf(";", at);
+    assert.ok(end > at, `update trong ${name} thiếu dấu ;`);
+    out.push(body.slice(at, end + 1));
+    idx = end + 1;
+  }
+  return out;
+}
+
 const SQL_0022_CODE = SQL_0022.replace(/--[^\n]*/g, "");
 
 test("I1. reclaim so now() - interval, không nhận timestamp client làm đồng hồ", () => {
   const body = body0022("reclaim_stale_auto_enrichment_jobs");
+  // TỪNG nhánh phải tự mang đủ guard lease. Chỉ assert token "tồn tại trong body"
+  // là không đủ: bỏ lease ở nhánh requeue vẫn xanh vì nhánh failed còn giữ.
+  const updates = updateStatements0022("reclaim_stale_auto_enrichment_jobs");
+  assert.equal(updates.length, 2, "reclaim phải có 2 nhánh: requeue + failed");
+  updates.forEach((u, i) => {
+    assert.match(u, /where status = 'processing'/, `nhánh ${i + 1}: phải lọc status = 'processing'`);
+    assert.match(
+      u,
+      /processing_started_at < now\(\) - make_interval\(secs => v_lease\)/,
+      `nhánh ${i + 1}: phải lọc lease hết hạn theo giờ DB`,
+    );
+  });
   assert.match(body, /processing_started_at < now\(\) - make_interval\(secs => v_lease\)/);
   assert.match(body, /next_attempt_at = now\(\) \+ make_interval\(secs => v_backoff\)/);
   assert.match(body, /v_backoff := greatest\(coalesce\(p_backoff_seconds, 30\), 30\)/);
@@ -314,6 +345,22 @@ test("I1. reclaim so now() - interval, không nhận timestamp client làm đồ
 
 test("I2. begin_auto_enrichment_dispatch_at trả mốc DB, charge-once, không đè hàm 0020", () => {
   const body = body0022("begin_auto_enrichment_dispatch_at");
+  // Khoá ownership phải nằm TRONG câu lock. `claim_token = p_claim_token` xuất
+  // hiện ở câu update phía dưới nên assert chung "có token" là xanh giả: bỏ
+  // claim_token khỏi `select ... for update` vẫn pass, worker hết claim vẫn charge.
+  const lock = body.match(
+    /select user_id, dispatch_started_at into v_user, v_dispatch from public\.auto_enrichment_jobs where .*?for update;/i,
+  );
+  assert.ok(lock, "phải có select ... for update khoá job");
+  assert.match(lock[0], /where id = p_job_id/, "lock phải khoá theo id");
+  assert.match(lock[0], /and claim_token = p_claim_token/, "lock phải khoá theo claim_token");
+  assert.match(lock[0], /and status = 'processing'/, "lock phải khoá theo status = 'processing'");
+  // Mọi câu update trong hàm cũng phải giữ claim_token (trừ câu đã khớp lock).
+  updateStatements0022("begin_auto_enrichment_dispatch_at").forEach((u, i) => {
+    if (/set dispatch_started_at = now\(\)/.test(u) || /set attempts = attempts \+ 1/.test(u)) {
+      assert.match(u, /where id = p_job_id and claim_token = p_claim_token/, `update ${i + 1}: phải khoá claim_token`);
+    }
+  });
   assert.match(body, /select user_id, dispatch_started_at into v_user, v_dispatch/);
   assert.match(body, /if v_dispatch is null then/);
   assert.match(body, /set dispatch_started_at = now\(\), allowance_consumed = true/);

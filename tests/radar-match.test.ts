@@ -1159,6 +1159,10 @@ for (const activeStatus of ["pending", "processing"] as const) {
     const guards = recycled.pending!.map(([op, col, val]) => `${op}:${col}=${String(val)}`).sort();
     assert.ok(guards.includes("in:status=completed,insufficient_data,low_confidence,failed"), `P1-2: phải lọc terminal, có: ${guards.join(" | ")}`);
     assert.ok(guards.some((g) => g === "is:claim_token=null"), `P1-2: phải lọc claim_token null, có: ${guards.join(" | ")}`);
+    // Phải khoá ĐÚNG job scan vừa quan sát. Chỉ lọc terminal + claim_token mà
+    // không khoá id thì 1 lần scan của radar A reset luôn job terminal của
+    // radar B/user khác -> mutation bỏ `.eq("id")` sẽ sống nếu thiếu assert này.
+    assert.ok(guards.includes("eq:id=job-old"), `P1-2: recycle phải khoá theo id job, có: ${guards.join(" | ")}`);
     // Và mặc định `dispatch_started_at: null` (tái sử dụng không charge) vẫn giữ.
     assert.equal(recycled.patch.dispatch_started_at, null, "tái sử dụng không được charge");
   }
