@@ -102,6 +102,7 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
     // Dòng mới -> insert. Gom insert 1 lần để không N+1.
     const resetCols = { claim_token: null, processing_started_at: null, next_attempt_at: null, error_kind: null };
     const fresh: Record<string, unknown>[] = [];
+    const queuedIds: string[] = [];
     for (const item of toCreate) {
       const existSame = (byExternal[String(item.row.external_id)] ?? []).find((j) => j.material_input_hash === item.hash);
       const isStaleTerminal =
@@ -124,6 +125,7 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
+      queuedIds.push(String(item.row.external_id));
       if (existSame && isStaleTerminal) {
         const u = await db.from("auto_enrichment_jobs").update(payload).eq("id", existSame.id);
         if (u.error) console.error("[auto-enrollment:update]", u.error.code);
@@ -135,6 +137,20 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
       const ins = await db.from("auto_enrichment_jobs").insert(fresh);
       // 23505 = scan khác đã tạo job active cùng fingerprint -> bỏ qua, không phải lỗi.
       if (ins.error && ins.error.code !== "23505") console.error("[auto-enrollment:insert]", ins.error.code);
+    }
+    // Trạng thái hiển thị phải theo job: vừa enqueue -> pending (UI "Chờ phân tích").
+    // Chỉ ghi cột enrichment_*; score/deal_type/is_ngop của tín hiệu thủ công không bị đụng.
+    // Job đang processing giữ nguyên trạng thái để không giật UI về "chờ".
+    const visibleIds = [...new Set(queuedIds)].filter(
+      (id) => !(byExternal[id] ?? []).some((j) => String(j.status) === "processing"),
+    );
+    if (visibleIds.length) {
+      const mark = await db
+        .from("radar_matches")
+        .update({ enrichment_status: "pending", enrichment_source: "auto_enrichment" })
+        .eq("radar_id", radar.id)
+        .in("external_id", visibleIds);
+      if (mark.error) console.error("[auto-enrollment:mark-pending]", mark.error.code);
     }
   } catch (e) {
     console.error("[auto-enrollment:scan]", e);

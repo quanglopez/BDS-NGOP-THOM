@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { signalLabels } from "@/lib/radar/format";
 import { getRadarMatches, scanRadar } from "@/lib/radar/data";
+import { materialFingerprint, materialInputFromRow } from "@/lib/radar/auto-enrollment";
 import type { RadarMatch, RadarSummary } from "@/lib/radar/types";
 
 const base: RadarMatch = {
@@ -66,7 +67,7 @@ function fakeDb(
 ) {
   const upserts: UpsertCall[] = [];
   const inserts: UpsertCall[] = [];
-  const updates: { table: string; patch: Row }[] = [];
+  const updates: { table: string; patch: Row; pending?: unknown }[] = [];
   const fromCalls: Record<string, number> = {};
   const store = (t: string): Row[] => (tables[t] ??= []);
   const forced = (table: string, op: "select" | "upsert" | "insert") =>
@@ -81,6 +82,7 @@ function fakeDb(
     let orderAsc = true;
     let take = Infinity;
     let wantsCount = false;
+    let wanted: string[] = [];
     let pending: Row | null = null;
     const match = (r: Row) =>
       filters.every(([op, c, v]) => {
@@ -100,6 +102,15 @@ function fakeDb(
       });
     const rows = () => {
       let out = store(table).filter(match);
+      // select() chỉ trả về cột được yêu cầu — quan trọng cho fingerprint:
+      // area_v2/is_rent/... KHÔNG nằm trong select của scanRadar.
+      if (wanted.length) {
+        out = out.map((r) => {
+          const projected: Row = {};
+          for (const c of wanted) projected[c] = r[c];
+          return projected;
+        });
+      }
       if (orderCol) {
         const dir = orderAsc ? 1 : -1;
         const col = orderCol;
@@ -110,8 +121,9 @@ function fakeDb(
       return out.slice(0, take);
     };
     const api = {
-      select(_cols?: string, opts?: { count?: string }) {
+      select(cols?: string, opts?: { count?: string }) {
         wantsCount = opts?.count === "exact";
+        if (cols && cols !== "*") wanted = cols.split(",").map((c) => c.trim()).filter(Boolean);
         return api;
       },
       eq(col: string, val: unknown) {
@@ -145,6 +157,10 @@ function fakeDb(
       },
       then(resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) {
         const forcedError = forced(table, "select");
+        const lastUpdate = updates[updates.length - 1];
+        if (lastUpdate && lastUpdate.table === table && lastUpdate.pending === null) {
+          lastUpdate.pending = filters.map((f) => [...f] as Filter);
+        }
         if (forcedError) return Promise.resolve({ data: null, error: forcedError }).then(resolve, reject);
         if (pending) {
           for (const r of store(table)) if (match(r)) Object.assign(r, pending);
@@ -190,7 +206,10 @@ function fakeDb(
         return { data: rows()[0] ?? null, error: null };
       },
       update(patch: Row) {
-        updates.push({ table, patch });
+        // `filters` là mảng dùng chung của chuỗi builder và còn được .push sau
+        // .update() (ví dụ .eq().in()) nên phải chụp lại ở thời điểm await, không
+        // lưu tham chiếu — nếu không, đọc lại sẽ thấy filter của chuỗi khác.
+        updates.push({ table, patch, pending: null });
         pending = patch;
         return api;
       },
@@ -615,9 +634,56 @@ const PRO_USER = { id: "user-1", plan: "pro", plan_expires_at: "2099-01-01T00:00
 
   const matchUpsert = f.upserts.find((u) => u.table === "radar_matches")!;
   for (const row of matchUpsert.rows) {
-    assert.equal("enrichment_status" in row, false, "scan không ghi enrichment fields (worker lo)");
+    assert.equal("enrichment_status" in row, false, "scan khong ghi enrichment fields o payload upsert (worker lo)");
     assert.equal("enrichment_score" in row, false);
   }
+  // FIX 2: enqueue phai lam enrichment_status = pending REACHABLE (UI "Cho phan tich").
+  const mark = f.updates.find((u) => u.table === "radar_matches")!;
+  assert.ok(mark, "phai ghi trang thai pending vao radar_matches");
+  assert.equal(mark.patch.enrichment_status, "pending");
+  assert.equal(mark.patch.enrichment_source, "auto_enrichment");
+  assert.deepEqual(mark.patch.enrichment_score, undefined, "khong duoc fabricate score");
+  assert.deepEqual(mark.patch.enrichment_deal_type, undefined);
+  assert.deepEqual(mark.patch.enrichment_is_ngop, undefined);
+  const markFilter = mark.pending as unknown as Filter[] | undefined;
+  assert.ok(markFilter?.some(([op, col]) => op === "eq" && col === "radar_id"));
+  assert.ok(markFilter?.some(([op, col]) => op === "in" && col === "external_id"), "loc dung danh sach vua enqueue");
+}
+
+// FIX 2: job ACTIVE (pending/processing) cùng fingerprint không bị scan ghi đè
+// trạng thái hiển thị (không giật UI về "chờ" khi AI đang chạy).
+for (const activeStatus of ["pending", "processing"] as const) {
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [
+      {
+        id: "job-1",
+        radar_id: "radar-1",
+        external_id: "111",
+        status: activeStatus,
+        // Fingerprint tính từ ĐÚNG shape row scanRadar trả về (9 cột allowlist).
+        material_input_hash: materialFingerprint(
+          materialInputFromRow({
+            external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+            region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+            size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+            last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+          }),
+        ),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  const mark = f.updates.find((u) => u.table === "radar_matches");
+  const ids = mark
+    ? ((((mark.pending as unknown as Filter[]) ?? []).find(([op]) => op === "in") ?? [, , undefined])[2] as string[] | undefined)
+    : undefined;
+  assert.equal((ids ?? []).includes("111"), false, `job ${activeStatus}: khong duoc ghi de trang thai hien thi`);
 }
 
 // Enqueue lỗi (select jobs lỗi) -> scan vẫn chạy xong, radar_matches + radars ghi bình thường.

@@ -45,6 +45,7 @@ export interface EnrichmentWorkerStore {
   claimPending(limit: number): Promise<EnrichmentJobRow[]>;
   isPlanPro(userId: string): Promise<boolean>;
   beginDispatch(job: EnrichmentJobRow): Promise<boolean>;
+  markMatchProcessing(job: EnrichmentJobRow): Promise<void>;
   releaseToPending(
     job: EnrichmentJobRow,
     patch: { nextAttemptAt: string; updatedAt: string; errorKind: string; lastError: string },
@@ -79,6 +80,10 @@ export const ENRICHMENT_WORKER_LIMITS = {
   leaseMs: 10 * 60 * 1000,
   capRetryMs: 60 * 60 * 1000,
 };
+
+/** Config mà cron route chạy (1 lần/ngày). Tách riêng để test khoá được giá
+ *  trị production mà không phải export thêm từ route (Next chỉ cho export handler). */
+export const ENRICHMENT_ROUTE_LIMITS = ENRICHMENT_WORKER_LIMITS;
 
 /** Cờ dừng trước khi claim/charge. kill switch dừng hẳn; cost guard chặn dispatch. */
 export function workerSkipReason(env: Record<string, string | undefined>): "kill_switch" | "cost_guard" | null {
@@ -163,6 +168,15 @@ export async function runEnrichmentWorker(args: {
         continue;
       }
       const attempts = job.attempts + 1;
+
+      // Đã dispatch -> AI đang chạy: đưa radar_matches sang processing để UI báo
+      // "Đang phân tích". Lỗi ghi ở đây KHÔNG được bỏ job (job vẫn chạy, lần quét
+      // sau hiển thị lại terminal state).
+      try {
+        await args.store.markMatchProcessing(job);
+      } catch (e) {
+        result.errors.push(job.id + ":mark_processing:" + errName(e));
+      }
 
       let outcome: AutoProviderOutcome;
       try {

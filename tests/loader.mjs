@@ -23,6 +23,11 @@ export async function resolve(specifier, context, next) {
     const hit = withExt(path.join(ROOT, specifier.slice(2)));
     if (hit) return next(hit, context);
   }
+  if (specifier === "next/server") {
+    // next/server là export map của Next, Node không tự resolve được khi chạy
+    // test ngoài Next. Chỉ dùng cho test, không ảnh hưởng build.
+    return next("next/server.js", context);
+  }
   if (
     (specifier.startsWith("./") || specifier.startsWith("../")) &&
     context.parentURL &&

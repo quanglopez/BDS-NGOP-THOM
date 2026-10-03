@@ -48,10 +48,13 @@ export const CHECK_QUESTIONS = {
   },
 } as const;
 
-/** Chuẩn hoá score type của Jev về thang 100. Trả null khi giá trị không phải số. */
+/** Chuẩn hoá score type của Jev về thang 100. Trả null khi giá trị không phải số.
+ *  Chuỗi số ("3") được coerce để giữ đúng behavior trước khi tách hàm:
+ *  JS tự ép khi so sánh nên "3" từng ra 75, không phải 0. */
 export function investmentScore100(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null;
-  return value <= 4 ? Math.round((value / 4) * 100) : Math.round(value);
+  const n = typeof value === "number" ? value : typeof value === "string" && value.trim() !== "" ? Number(value) : NaN;
+  if (!Number.isFinite(n)) return null;
+  return n <= 4 ? Math.round((n / 4) * 100) : Math.round(n);
 }
 
 // Gọi Jev 1 lần với timeout riêng (tránh treo hết maxDuration mà không rõ lý do)

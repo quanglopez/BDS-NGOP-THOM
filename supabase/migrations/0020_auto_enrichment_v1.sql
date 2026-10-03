@@ -53,8 +53,15 @@ alter table public.auto_enrichment_jobs enable row level security;
 drop policy if exists "auto_enrichment_jobs_select_own" on public.auto_enrichment_jobs;
 create policy "auto_enrichment_jobs_select_own" on public.auto_enrichment_jobs
   for select to authenticated using (auth.uid() = user_id);
+-- Privilege tối thiểu: anon không có gì; authenticated CHỈ SELECT (theo RLS).
+-- revoke all TRƯỚC để bỏ cả TRUNCATE/REFERENCES/TRIGGER mà `revoke insert,update,delete`
+-- không chạm tới (RLS không bảo vệ TRUNCATE).
 revoke all on public.auto_enrichment_jobs from anon;
-revoke insert, update, delete on public.auto_enrichment_jobs from authenticated;
+revoke all on public.auto_enrichment_jobs from authenticated;
+grant select on public.auto_enrichment_jobs to authenticated;
+-- service_role (bypass RLS) giữ toàn quyền để worker/cron đi qua đúng 1 đường.
+grant all on public.auto_enrichment_jobs to service_role;
+grant all on public.auto_enrichment_allowance to service_role;
 
 -- Claim atomic: lấy tối đa p_limit job pending đến hạn, khoá SKIP LOCKED để
 -- worker đồng thời không bao giờ claim trùng. Trả luôn dòng đã claim.

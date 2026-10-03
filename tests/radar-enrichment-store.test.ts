@@ -211,6 +211,22 @@ await test("markTerminal: CAS id + claim_token + status, ghi error_kind/last_err
   assert.equal(bad.payload!.error_kind, "retryable_error");
 });
 
+await test("FIX 2: markMatchProcessing ghi processing, KHÔNG đụng score/deal_type/is_ngop", async () => {
+  const h = recordingDb();
+  const store = createSupabaseEnrichmentStore(h.db);
+  await store.markMatchProcessing(JOB);
+  const u = h.last("update")!;
+  assert.equal(u.table, "radar_matches");
+  assert.equal(u.payload!.enrichment_status, "processing");
+  assert.equal(u.payload!.enrichment_source, "auto_enrichment");
+  assert.equal(u.payload!.enrichment_job_id, "job-1");
+  assert.equal(u.payload!.enrichment_fingerprint, "hash-111");
+  for (const c of ["enrichment_score", "enrichment_deal_type", "enrichment_is_ngop", "enrichment_checked_at", "enrichment_confidence"]) {
+    assert.equal(c in u.payload!, false, `không được ghi ${c} khi chỉ đổi trạng thái`);
+  }
+  assert.deepEqual(u.filters.map(([op, col]) => `${op}:${col}`).sort(), ["eq:external_id", "eq:radar_id"]);
+});
+
 await test("MANDATORY 31. persistMatchEnrichment CHỈ ghi cột enrichment_*, đúng radar_id+external_id", async () => {
   const h = recordingDb();
   const store = createSupabaseEnrichmentStore(h.db);

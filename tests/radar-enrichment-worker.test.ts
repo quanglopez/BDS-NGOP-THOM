@@ -3,7 +3,6 @@
 // (claim SKIP LOCKED, charge atomic theo cap, claim token) + provider stub.
 // MANDATORY tags theo danh sách Factory review.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import {
   runEnrichmentWorker,
   workerSkipReason,
@@ -47,6 +46,7 @@ class MemStore implements EnrichmentWorkerStore {
   charges: string[] = [];
   dispatches = 0;
   persistCalls: { jobId: string; patch: MatchEnrichmentPatch }[] = [];
+  processingCalls: EnrichmentJobRow[] = [];
   providerInputs: Record<string, unknown>[] = [];
 
   private iso() {
@@ -169,6 +169,12 @@ class MemStore implements EnrichmentWorkerStore {
     return list[0]?.created_at ?? null;
   }
 
+  async markMatchProcessing(job: EnrichmentJobRow) {
+    this.processingCalls.push(job);
+    const m = this.matches.get(job.external_id);
+    if (m) m.enrichment = { ...m.enrichment, status: "processing" };
+  }
+
   async persistMatchEnrichment(job: EnrichmentJobRow, patch: MatchEnrichmentPatch) {
     this.persistCalls.push({ jobId: job.id, patch });
     const m = this.matches.get(job.external_id);
@@ -246,6 +252,71 @@ await test("MANDATORY 1/2/3/12. claim pending -> processing -> completed; charge
   assert.equal(patch.confidence, "high");
   assert.equal(store.matches.get("111")!.enrichment.status, "completed");
   assert.equal(res.errors.length, 0);
+});
+
+await test("MANDATORY 30b. FIX 2: đã dispatch thì radar_matches = processing TRƯỚC khi persist terminal", async () => {
+  const store = setup();
+  store.seedJob();
+  const order: string[] = [];
+  const provider: EnrichmentProvider = async () => {
+    order.push("provider");
+    return PUBLISHED;
+  };
+  const origMark = store.markMatchProcessing.bind(store);
+  const origPersist = store.persistMatchEnrichment.bind(store);
+  store.markMatchProcessing = async (j) => {
+    order.push("mark_processing");
+    return origMark(j);
+  };
+  store.persistMatchEnrichment = async (j, p) => {
+    order.push("persist:" + p.status);
+    return origPersist(j, p);
+  };
+  await runWorker(store, provider);
+  assert.deepEqual(order, ["mark_processing", "provider", "persist:completed"], "thứ tự phải là processing -> gọi AI -> terminal");
+  assert.deepEqual(store.processingCalls.map((j) => j.id), [store.jobs[0]!.id]);
+});
+
+await test("FIX 2: đánh dấu processing KHÔNG fabricate score (giữ null của lần trước)", async () => {
+  const store = setup();
+  store.seedMatch("111", { score: null, deal_type: null, is_ngop: null });
+  store.matches.get("111")!.enrichment = { score: null, dealType: null, isNgoP: null };
+  store.seedJob();
+  await runWorker(store, providerFrom(store, { kind: "retryable_error" }));
+  const m = store.matches.get("111")!;
+  assert.equal(m.enrichment.status, "processing");
+  assert.equal(m.enrichment.score, null);
+  assert.equal(m.enrichment.dealType, null);
+  assert.equal(m.enrichment.isNgoP, null);
+  assert.notEqual(m.enrichment.score, 0);
+  assert.equal(m.score, null, "không chạm cột manual");
+});
+
+await test("FIX 2: lỗi ghi processing KHÔNG làm mất job (vẫn dispatch + terminal)", async () => {
+  const store = setup();
+  store.seedJob();
+  const job = store.jobs[0]!;
+  store.markMatchProcessing = async () => {
+    throw new Error("db write failed");
+  };
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+  assert.equal(res.published, 1, "job vẫn phải chạy tới terminal");
+  assert.equal(job.status, "completed");
+  assert.equal(res.errors.length, 1);
+  assert.match(res.errors[0]!, /mark_processing/);
+});
+
+await test("FIX 2: cap/plan blocked KHÔNG ghi processing (AI chưa chạy)", async () => {
+  const blocked = setup({ consumed: 200 });
+  blocked.seedJob();
+  const resBlocked = await runWorker(blocked, providerFrom(blocked, PUBLISHED));
+  assert.equal(resBlocked.capBlocked, 1);
+  assert.deepEqual(blocked.processingCalls, [], "chưa dispatch thì không được hiện 'Đang phân tích'");
+
+  const noPlan = setup({ plan: false });
+  noPlan.seedJob();
+  await runWorker(noPlan, providerFrom(noPlan, PUBLISHED));
+  assert.deepEqual(noPlan.processingCalls, []);
 });
 
 // ---------------------------------------------------------------- terminal outcomes
@@ -613,22 +684,8 @@ await test("buildEnrichmentState: chỉ material allowlist, không URL/PII", () 
 
 // ---------------------------------------------------------------- migration static (RLS)
 
-await test("MANDATORY 36 + RLS/unique. Migration: RLS jobs+allowance, revoke, RPC service_role, unique active, cap SQL", () => {
-  const sql = readFileSync(new URL("../supabase/migrations/0020_auto_enrichment_v1.sql", import.meta.url), "utf8");
-  assert.ok(/alter table public\.auto_enrichment_jobs enable row level security/.test(sql), "thiếu RLS jobs");
-  assert.ok(/alter table public\.auto_enrichment_allowance enable row level security/.test(sql), "thiếu RLS allowance");
-  assert.ok(/create policy "auto_enrichment_jobs_select_own"[\s\S]*?auth\.uid\(\) = user_id/.test(sql), "thiếu policy select own");
-  assert.ok(/revoke insert, update, delete on public\.auto_enrichment_jobs from authenticated/.test(sql), "thiếu revoke mutate");
-  assert.ok(/revoke all on public\.auto_enrichment_jobs from anon/.test(sql), "thiếu revoke anon");
-  assert.ok(/revoke all on public\.auto_enrichment_allowance from anon, authenticated/.test(sql));
-  assert.ok(/for update skip locked/.test(sql), "claim phải SKIP LOCKED");
-  assert.ok(/grant execute on function public\.claim_auto_enrichment_jobs\(integer\) to service_role/.test(sql));
-  assert.ok(/grant execute on function public\.begin_auto_enrichment_dispatch\(uuid, uuid, integer\) to service_role/.test(sql));
-  assert.ok(/revoke all on function public\.begin_auto_enrichment_dispatch\(uuid, uuid, integer\) from public, anon, authenticated/.test(sql));
-  assert.ok(/unique index if not exists auto_enrichment_jobs_unique_active[\s\S]*?where status in \('pending','processing'\)/.test(sql), "thiếu unique active index");
-  assert.ok(/consumed < p_daily_limit/.test(sql), "cap ngày phải enforce trong SQL");
-  assert.ok(/primary key \(user_id, day\)/.test(sql), "allowance phải PK user+day");
-});
+// Privileges/RLS/RPC/index của migration được assert chuyên sâu hơn (theo vùng
+// statement + function body) trong tests/auto-enrichment-migration-sql.test.ts.
 
 console.log(`\nradar-enrichment-worker: ${failures} fail`);
 process.exitCode = failures ? 1 : 0;

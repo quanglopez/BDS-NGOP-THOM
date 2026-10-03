@@ -114,6 +114,22 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
       if (updateError) throw updateError;
     },
 
+    async markMatchProcessing(job: EnrichmentJobRow): Promise<void> {
+      // Chỉ đổi trạng thái hiển thị; KHÔNG đụng enrichment_score/deal_type/is_ngop
+      // (giữ nguyên null của lần chạy trước) và không chạm cột manual.
+      const { error } = await db
+        .from("radar_matches")
+        .update({
+          enrichment_status: "processing",
+          enrichment_source: "auto_enrichment",
+          enrichment_job_id: job.id,
+          enrichment_fingerprint: job.material_input_hash,
+        })
+        .eq("radar_id", job.radar_id)
+        .eq("external_id", job.external_id);
+      if (error) throw error;
+    },
+
     // Check thủ công mới nhất của 1 listing: chỉ lấy Check ĐÃ chấm, lọc chính xác
     // external_id để tránh trùng hậu tố số (123456 vs 23456).
     async latestManualCheckAt(externalId) {
