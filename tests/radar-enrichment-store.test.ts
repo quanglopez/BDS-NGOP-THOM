@@ -56,7 +56,9 @@ function recordingDb(rpcResults: Record<string, unknown> = {}) {
       lt(col: string, val: unknown) { filters.push(["lt", col, val]); return api; },
       gte2() { return api; },
       not(col: string, _o: string, val: unknown) { filters.push(["not", col, val]); return api; },
+      is(col: string, val: unknown) { filters.push(["is", col, val]); return api; },
       in(col: string, val: unknown) { filters.push(["in", col, val]); return api; },
+      inList(col: string, val: unknown) { filters.push(["in", col, val]); return api; },
       like(col: string, val: unknown) { filters.push(["like", col, val]); return api; },
       order(col: string, opts?: { ascending?: boolean }) { orderCol = col; orderAsc = opts?.ascending ?? true; return api; },
       limit(n?: number) { limit = n; return api; },
@@ -211,20 +213,60 @@ await test("markTerminal: CAS id + claim_token + status, ghi error_kind/last_err
   assert.equal(bad.payload!.error_kind, "retryable_error");
 });
 
-await test("FIX 2: markMatchProcessing ghi processing, KHÔNG đụng score/deal_type/is_ngop", async () => {
+await test("FIX 3. markMatchProcessing ghi ĐÚNG 'processing' + job id + fingerprint, không đụng signal", async () => {
   const h = recordingDb();
+  h.setRows([{ id: "m1" }]);
   const store = createSupabaseEnrichmentStore(h.db);
-  await store.markMatchProcessing(JOB);
+  const ok = await store.markMatchProcessing(JOB);
   const u = h.last("update")!;
   assert.equal(u.table, "radar_matches");
+  // FIX 3: phải là "processing", KHÔNG phải "pending" (mutation đổi 2 chữ này
+  // phải làm test đỏ).
   assert.equal(u.payload!.enrichment_status, "processing");
+  assert.notEqual(u.payload!.enrichment_status, "pending");
   assert.equal(u.payload!.enrichment_source, "auto_enrichment");
   assert.equal(u.payload!.enrichment_job_id, "job-1");
   assert.equal(u.payload!.enrichment_fingerprint, "hash-111");
   for (const c of ["enrichment_score", "enrichment_deal_type", "enrichment_is_ngop", "enrichment_checked_at", "enrichment_confidence"]) {
     assert.equal(c in u.payload!, false, `không được ghi ${c} khi chỉ đổi trạng thái`);
   }
-  assert.deepEqual(u.filters.map(([op, col]) => `${op}:${col}`).sort(), ["eq:external_id", "eq:radar_id"]);
+  // FIX 2: CAS theo enrichment_job_id — không được lật row của job khác.
+  const filters = u.filters.map(([op, col, val]) => `${op}:${col}=${String(val)}`);
+  assert.ok(filters.includes("eq:enrichment_job_id=job-1"), `CAS phải khoá theo enrichment_job_id, có: ${filters.join(" | ")}`);
+  assert.ok(filters.includes("eq:radar_id=radar-1"));
+  assert.ok(filters.includes("eq:external_id=111"));
+  assert.equal(ok, true);
+});
+
+await test("FIX 2. markMatchProcessing: row của job khác -> false (không overwrite)", async () => {
+  const h = recordingDb();
+  h.setRows([]);
+  const store = createSupabaseEnrichmentStore(h.db);
+  const ok = await store.markMatchProcessing(JOB);
+  assert.equal(ok, false, "CAS miss phải trả false, không được coi là thành công");
+  const second = h.all("update")[1]!;
+  assert.ok(
+    second.filters.some(([op, col]) => op === "is" && col === "enrichment_job_id"),
+    "nhánh claim row chưa ai sở hữu phải lọc enrichment_job_id is null",
+  );
+  assert.ok(
+    second.filters.some(([op, col]) => op === "in" && col === "enrichment_status"),
+    "chỉ được claim row chưa có kết quả (not_started/pending)",
+  );
+  const statusList = second.filters.find(([op, col]) => op === "in" && col === "enrichment_status")?.[2] as string[] | undefined;
+  assert.deepEqual(statusList, ["not_started", "pending"], "KHÔNG được claim row processing/completed của job khác");
+});
+
+await test("FIX 2. persistMatchEnrichment khoá theo enrichment_job_id", async () => {
+  const h = recordingDb();
+  h.setRows([{ id: "m1" }]);
+  const store = createSupabaseEnrichmentStore(h.db);
+  const ok = await store.persistMatchEnrichment(JOB, {
+    status: "completed", source: "auto_enrichment", score: 82, dealType: "ngop_ngon", isNgoP: 88, confidence: "high", checkedAt: "2026-10-03T02:00:00Z",
+  });
+  const filters = h.last("update")!.filters.map(([op, col, val]) => `${op}:${col}=${String(val)}`);
+  assert.ok(filters.includes("eq:enrichment_job_id=job-1"), `publish phải CAS theo job, có: ${filters.join(" | ")}`);
+  assert.equal(ok, true);
 });
 
 await test("MANDATORY 31. persistMatchEnrichment CHỈ ghi cột enrichment_*, đúng radar_id+external_id", async () => {
@@ -256,7 +298,7 @@ await test("MANDATORY 31. persistMatchEnrichment CHỈ ghi cột enrichment_*, �
   for (const c of cols) assert.ok(c.startsWith("enrichment_"), `${c} phải nằm trong prefix enrichment_`);
   assert.equal(u.payload!.enrichment_checked_at, "2026-10-03T02:00:00Z", "cột timestamp đúng tên enrichment_checked_at");
   assert.equal(u.payload!.enrichment_fingerprint, "hash-111");
-  assert.deepEqual(u.filters.map(([op, col]) => `${op}:${col}`).sort(), ["eq:external_id", "eq:radar_id"]);
+  assert.deepEqual(u.filters.map(([op, col]) => `${op}:${col}`).sort(), ["eq:enrichment_job_id", "eq:external_id", "eq:radar_id"]);
 });
 
 await test("persistMatchEnrichment giữ nguyên null (score=0 không bị đổi, null không thành 0)", async () => {

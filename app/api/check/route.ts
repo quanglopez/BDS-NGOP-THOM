@@ -8,7 +8,7 @@ import { extractPhone } from "@/lib/phone";
 import { extractBedrooms } from "@/lib/bedrooms";
 import { resolveAreaM2 } from "@/lib/area";
 import { analyzeListing, fromApiResponse, SCORING_CODE_VERSION } from "@/lib/scoring";
-import { CHECK_QUESTIONS, callJev, investmentScore100, type JevAnswer } from "@/lib/ai/jev-check";
+import { CHECK_QUESTIONS, callJev, checkInvestmentVerdict, type JevAnswer } from "@/lib/ai/jev-check";
 import { buildScoringSnapshot } from "@/lib/score-snapshot";
 import { resolveListingGeo } from "@/lib/geo/url-parser";
 import { persistCheckGeo } from "@/lib/check-geo";
@@ -227,8 +227,18 @@ export async function POST(req: NextRequest) {
     // answers: object, mỗi câu hỏi có score/noul/choice/confidence
     const ans = (data.answers ?? data) as Record<string, JevAnswer>;
 
-    // Điểm 0-4 của score type quy về thang 100
-    const invest100 = investmentScore100(ans.investment_potential?.score ?? 0) ?? 0;
+    // Điểm 0-4 của score type quy về thang 100.
+    // Score hỏng (thiếu / không phải số) -> 502, KHÔNG phải 0: ghi 0 xuống checks
+    // sẽ biến tin thành đã-chấm-0 trên Radar (score giả).
+    const decided = checkInvestmentVerdict(ans);
+    if (!decided.ok) {
+      console.warn(`[check:${requestId}] JEV_BAD_SCORE type=invalid`);
+      return NextResponse.json(
+        { error: "Jev trả về dữ liệu không hợp lệ" },
+        { status: 502, headers: CORS },
+      );
+    }
+    const invest100 = decided.score;
     const dealType = ans.deal_type?.choice || "binh_thuong";
     const isNgop = Math.round((ans.is_ngop?.noul ?? 0) * 100);
 

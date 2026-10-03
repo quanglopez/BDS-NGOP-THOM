@@ -57,6 +57,26 @@ export function investmentScore100(value: unknown): number | null {
   return n <= 4 ? Math.round((n / 4) * 100) : Math.round(n);
 }
 
+/** Điểm investment cho luồng Check thủ công. Trả null khi Jev trả score hỏng —
+ *  KHÔNG bao giờ quy về 0: 0 là điểm thật và sẽ được persist thành Radar signal. */
+export function manualInvestmentScore(raw: unknown): number | null {
+  return investmentScore100(raw);
+}
+
+/** Quyết định của /api/check cho score thủ công: hoặc trả điểm hợp lệ, hoặc
+ *  báo `invalid` để route trả 502. KHÔNG bao giờ `ok` với score giả. */
+export function decideManualInvestment(raw: unknown): { ok: true; score: number } | { ok: false } {
+  const score = investmentScore100(raw);
+  return score == null ? { ok: false } : { ok: true, score };
+}
+
+/** Kiểm tra phần trả lời Jev cho luồng Check. Trả lỗi rõ ràng để route map vào
+ *  502 thay vì persistence score giả. Giữ deal_type fallback / is_ngop rounding
+ *  ngoài phạm vi hàm này. */
+export function checkInvestmentVerdict(ans: { investment_potential?: { score?: unknown } }): { ok: true; score: number } | { ok: false } {
+  return decideManualInvestment(ans.investment_potential?.score);
+}
+
 // Gọi Jev 1 lần với timeout riêng (tránh treo hết maxDuration mà không rõ lý do)
 export async function callJevOnce(key: string, body: unknown, timeoutMs: number) {
   const ctrl = new AbortController();

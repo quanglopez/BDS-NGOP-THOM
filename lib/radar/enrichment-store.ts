@@ -114,10 +114,13 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
       if (updateError) throw updateError;
     },
 
-    async markMatchProcessing(job: EnrichmentJobRow): Promise<void> {
-      // Chỉ đổi trạng thái hiển thị; KHÔNG đụng enrichment_score/deal_type/is_ngop
-      // (giữ nguyên null của lần chạy trước) và không chạm cột manual.
-      const { error } = await db
+    /** Ghi trạng thái processing, CÓ CAS theo job đang sở hữu radar_match.
+ *  Job khác fingerprint cho cùng listing đã publish xong thì không bị lật ngược:
+ *  - chỉ khớp khi enrichment_job_id = job.id (row do chính job này claim),
+ *  - hoặc row chưa được job nào chiếm (đi từ pending/scan) và chưa có kết quả.
+ *  Trả về false khi CAS không khớp — KHÔNG coi như thành công. */
+async markMatchProcessing(job: EnrichmentJobRow): Promise<boolean> {
+      const { data, error } = await db
         .from("radar_matches")
         .update({
           enrichment_status: "processing",
@@ -126,8 +129,27 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
           enrichment_fingerprint: job.material_input_hash,
         })
         .eq("radar_id", job.radar_id)
-        .eq("external_id", job.external_id);
+        .eq("external_id", job.external_id)
+        .eq("enrichment_job_id", job.id)
+        .select("id");
       if (error) throw error;
+      if ((data?.length ?? 0) > 0) return true;
+      // Chưa có job nào chiếm row: claim row chưa có kết quả (pending/scan mới).
+      const fresh = await db
+        .from("radar_matches")
+        .update({
+          enrichment_status: "processing",
+          enrichment_source: "auto_enrichment",
+          enrichment_job_id: job.id,
+          enrichment_fingerprint: job.material_input_hash,
+        })
+        .eq("radar_id", job.radar_id)
+        .eq("external_id", job.external_id)
+        .is("enrichment_job_id", null)
+        .in("enrichment_status", ["not_started", "pending"])
+        .select("id");
+      if (fresh.error) throw fresh.error;
+      return (fresh.data?.length ?? 0) > 0;
     },
 
     // Check thủ công mới nhất của 1 listing: chỉ lấy Check ĐÃ chấm, lọc chính xác
@@ -150,7 +172,7 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
     },
 
     async persistMatchEnrichment(job, patch: MatchEnrichmentPatch) {
-      const { error } = await db
+      const { data, error } = await db
         .from("radar_matches")
         .update({
           enrichment_status: patch.status,
@@ -163,9 +185,14 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
           enrichment_job_id: job.id,
           enrichment_fingerprint: job.material_input_hash,
         })
+        // CAS: chỉ job đang sở hữu row được publish. Job khác fingerprint đã có
+        // kết quả thì job này không được ghi đè (và ngược lại).
         .eq("radar_id", job.radar_id)
-        .eq("external_id", job.external_id);
+        .eq("external_id", job.external_id)
+        .eq("enrichment_job_id", job.id)
+        .select("id");
       if (error) throw error;
+      return (data?.length ?? 0) > 0;
     },
   };
 }

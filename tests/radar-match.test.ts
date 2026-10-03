@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { signalLabels } from "@/lib/radar/format";
-import { getRadarMatches, scanRadar } from "@/lib/radar/data";
+import { getRadarMatches, scanRadar, syncEnrichmentJobs } from "@/lib/radar/data";
 import { materialFingerprint, materialInputFromRow } from "@/lib/radar/auto-enrollment";
 import type { RadarMatch, RadarSummary } from "@/lib/radar/types";
 
@@ -632,22 +632,21 @@ const PRO_USER = { id: "user-1", plan: "pro", plan_expires_at: "2099-01-01T00:00
   }
   assert.equal(f.fromCalls.auto_enrichment_jobs, 3, "2 select (existing + allowance count) + 1 insert batch, không N+1");
 
+  // FIX 1/4: pending phải nằm TRONG payload upsert (row mới chưa tồn tại nên
+  // update trước upsert là no-op -> match mới sẽ mắc default 'not_started').
   const matchUpsert = f.upserts.find((u) => u.table === "radar_matches")!;
   for (const row of matchUpsert.rows) {
-    assert.equal("enrichment_status" in row, false, "scan khong ghi enrichment fields o payload upsert (worker lo)");
-    assert.equal("enrichment_score" in row, false);
+    assert.equal(row.enrichment_status, "pending", "row mới phải vào upsert với pending");
+    assert.equal(row.enrichment_source, "auto_enrichment");
+    assert.equal("enrichment_score" in row, false, "không được ghi enrichment_score khi chưa có kết quả");
+    assert.equal("enrichment_deal_type" in row, false);
+    assert.equal("enrichment_is_ngop" in row, false);
+    assert.equal("enrichment_checked_at" in row, false);
+    assert.equal(row.score, null, "không fabricate score");
+    assert.equal(row.deal_type, null);
+    assert.equal(row.is_ngop, null);
+    assert.equal(row.scoring_available, false);
   }
-  // FIX 2: enqueue phai lam enrichment_status = pending REACHABLE (UI "Cho phan tich").
-  const mark = f.updates.find((u) => u.table === "radar_matches")!;
-  assert.ok(mark, "phai ghi trang thai pending vao radar_matches");
-  assert.equal(mark.patch.enrichment_status, "pending");
-  assert.equal(mark.patch.enrichment_source, "auto_enrichment");
-  assert.deepEqual(mark.patch.enrichment_score, undefined, "khong duoc fabricate score");
-  assert.deepEqual(mark.patch.enrichment_deal_type, undefined);
-  assert.deepEqual(mark.patch.enrichment_is_ngop, undefined);
-  const markFilter = mark.pending as unknown as Filter[] | undefined;
-  assert.ok(markFilter?.some(([op, col]) => op === "eq" && col === "radar_id"));
-  assert.ok(markFilter?.some(([op, col]) => op === "in" && col === "external_id"), "loc dung danh sach vua enqueue");
 }
 
 // FIX 2: job ACTIVE (pending/processing) cùng fingerprint không bị scan ghi đè
@@ -679,11 +678,163 @@ for (const activeStatus of ["pending", "processing"] as const) {
     ],
   });
   await scanRadar(f.db, RADAR_PRO);
-  const mark = f.updates.find((u) => u.table === "radar_matches");
-  const ids = mark
-    ? ((((mark.pending as unknown as Filter[]) ?? []).find(([op]) => op === "in") ?? [, , undefined])[2] as string[] | undefined)
-    : undefined;
-  assert.equal((ids ?? []).includes("111"), false, `job ${activeStatus}: khong duoc ghi de trang thai hien thi`);
+  const upsert = f.upserts.find((u) => u.table === "radar_matches")!;
+  assert.equal("enrichment_status" in upsert.rows[0]!, false, `job ${activeStatus}: scan KHÔNG được ghi đè trạng thái của job đang chạy`);
+  assert.equal("enrichment_source" in upsert.rows[0]!, false);
+}
+
+// ------------------------------------------------- FIX 4: end-state của match MỚI
+// Không được chỉ assert "update() được gọi": row mới chưa tồn tại trong
+// radar_matches nên update trước upsert là no-op. Test đọc state cuối từ fake DB
+// rồi đọc lại qua getRadarMatches (đường production của UI).
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  assert.ok(f.inserts.some((i) => i.table === "auto_enrichment_jobs"), "phải enqueue job");
+
+  const rows = f.tables.radar_matches!;
+  assert.equal(rows.length, 1, "row radar_matches phải tồn tại");
+  const row = rows[0]!;
+  assert.equal(row.enrichment_status, "pending", "match MỚI phải kết thúc ở pending");
+  assert.notEqual(row.enrichment_status, "not_started", "không được để default của migration");
+  assert.equal(row.enrichment_source, "auto_enrichment");
+  assert.equal(row.score, null);
+  assert.equal(row.deal_type, null);
+  assert.equal(row.is_ngop, null);
+  assert.equal(row.scoring_available, false);
+
+  const got = await getRadarMatches(f.db, RADAR_PRO);
+  const m = got[0]!;
+  assert.equal(m.auto_enrichment!.status, "pending", "UI phải thấy pending");
+  assert.equal(m.auto_enrichment!.source, "auto_enrichment");
+  assert.equal(m.auto_enrichment!.score, null);
+  assert.equal(m.scoringAvailable, false);
+}
+
+// FIX 5 (đọc state thật từ DB): radar_match đang 'processing' VÌ có job active
+// thì scan KHÔNG được đưa về 'pending'. Job active được đưa vào auto_enrichment_jobs
+// đúng fingerprint (select của scanRadar không có area_v2 -> 9 cột allowlist).
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [
+      { ...storedMatch("111", "2026-10-02T09:00:00Z"), enrichment_status: "processing", enrichment_job_id: "job-1" },
+    ],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [
+      {
+        id: "job-1", radar_id: "radar-1", external_id: "111", status: "processing",
+        material_input_hash: materialFingerprint(
+          materialInputFromRow({
+            external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+            region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+            size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+            last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+          }),
+        ),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  // FIX 5: lớp bảo vệ cuối trong syncEnrichmentJobs (queued.filter) phải giữ
+  // được: dù policy không enqueue job active, nếu mất lớp này thì queued vẫn
+  // có thể chứa id và scan sẽ lật row về pending.
+  assert.equal(f.updates.filter((u) => u.table === "radar_matches").length, 0, "không được update trực tiếp row radar_matches (race với upsert)");
+  const fullUpsert = f.upserts.filter((u) => u.table === "radar_matches").at(-1)!;
+  // Được phép ghi lại 'processing' (giữ đúng state), nhưng TUYỆT ĐỐI không được
+  // ghi 'pending' -> không được lật ngược job đang chạy.
+  assert.notEqual(fullUpsert.rows[0]!.enrichment_status, "pending", "job đang processing: KHÔNG được lật về pending");
+  assert.equal(fullUpsert.rows[0]!.enrichment_status, "processing");
+  assert.equal(f.tables.auto_enrichment_jobs!.length, 1, "không tạo job mới khi đã có job active cùng fingerprint");
+  const row = f.tables.radar_matches![0]!;
+  assert.equal(row.enrichment_status, "processing", "row đang processing phải giữ nguyên");
+  assert.equal(row.enrichment_job_id, "job-1");
+  assert.equal(row.score, null);
+  assert.equal(row.scoring_available, false);
+}
+
+// FIX 5 (trực tiếp): syncEnrichmentJobs KHÔNG được trả về id đang có job
+// processing — đây là lớp bảo vệ cuối, không phụ thuộc policy planner.
+{
+  const hash = materialFingerprint(
+    materialInputFromRow({
+      external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+      region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+      size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+      last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+    }),
+  );
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z"), listing("222", "2026-10-02T08:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [
+      { id: "job-active", radar_id: "radar-1", external_id: "111", status: "processing", material_input_hash: hash, updated_at: new Date().toISOString() },
+    ],
+  });
+  const queued = await syncEnrichmentJobs(f.db, RADAR_PRO, [
+    { external_id: "111", score: null, scoring_available: false },
+    { external_id: "222", score: null, scoring_available: false },
+  ]);
+  const ids = queued.map((q) => q.externalId);
+  assert.equal(ids.includes("111"), false, "id đang có job processing không được xuất hiện trong queue");
+}
+
+// FIX 1 (job terminal quá TTL được tái sử dụng): upsert phải GIỮ kết quả cũ,
+// không ghi đè bằng pending trước khi worker có kết quả mới.
+{
+  const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+  const hash = materialFingerprint(
+    materialInputFromRow({
+      external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+      region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+      size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+      last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+    }),
+  );
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [
+      {
+        ...storedMatch("111", "2026-10-02T09:00:00Z"),
+        enrichment_status: "completed", enrichment_source: "auto_enrichment",
+        enrichment_score: 82, enrichment_deal_type: "ngop_ngon", enrichment_is_ngop: 88,
+        enrichment_confidence: "high", enrichment_checked_at: oldDate,
+      },
+    ],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [
+      { id: "old-job", radar_id: "radar-1", external_id: "111", status: "completed", material_input_hash: hash, updated_at: oldDate },
+    ],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  const recycled = f.updates.find((u) => u.table === "auto_enrichment_jobs");
+  assert.ok(recycled, "job terminal quá TTL phải được tái sử dụng (không tạo job mới)");
+  assert.equal(recycled!.patch.status, "pending");
+  assert.equal(recycled!.patch.attempts, 0);
+  assert.equal(recycled!.patch.dispatch_started_at, null, "tái sử dụng không được charge");
+
+  const stripped = f.upserts.find(
+    (u) => u.table === "radar_matches" && u.rows.every((r) => !("enrichment_status" in r)),
+  );
+  assert.ok(stripped, "phải có 1 upsert bỏ cột enrichment_* cho row đã có kết quả");
+  const row = f.tables.radar_matches![0]!;
+  assert.equal(row.enrichment_status, "completed", "kết quả cũ phải được giữ tới khi worker publish");
+  assert.equal(row.enrichment_score, 82);
 }
 
 // Enqueue lỗi (select jobs lỗi) -> scan vẫn chạy xong, radar_matches + radars ghi bình thường.

@@ -177,4 +177,3 @@ export function shouldShowProcessingPlaceholder(args: {
 }): boolean {
   return !args.scoringAvailable && args.status === "processing";
 }
-

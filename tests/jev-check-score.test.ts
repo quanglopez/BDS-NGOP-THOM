@@ -2,7 +2,7 @@
 // Khoá behavior CŨ của /api/check (JS coerce chuỗi số) — việc tách hàm lúc refactor
 // đã từng biến "3" thành 0, và 0 đó được persist thành Radar signal.
 import assert from "node:assert/strict";
-import { investmentScore100, CHECK_QUESTIONS } from "@/lib/ai/jev-check";
+import { investmentScore100, decideManualInvestment, checkInvestmentVerdict, CHECK_QUESTIONS } from "@/lib/ai/jev-check";
 import { mapEnrichmentAnswers } from "@/lib/radar/enrichment-provider";
 
 let failures = 0;
@@ -86,6 +86,25 @@ test("bộ câu hỏi dùng chung không bị lệch", () => {
   assert.equal(CHECK_QUESTIONS.investment_potential.type, "score");
   assert.equal(CHECK_QUESTIONS.is_ngop.type, "noul");
   assert.ok("binh_thuong" in CHECK_QUESTIONS.deal_type.criteria, "criteria deal_type phải có binh_thuong");
+});
+
+// FIX 7: đường Check thủ công phải giữ "malformed = invalid", tuyệt đối không
+// biến invalid thành 0 (0 được persist vào checks -> thành Radar signal giả).
+test("FIX 7. decideManualInvestment: invalid -> {ok:false}, valid 0 -> score 0", () => {
+  assert.deepEqual(decideManualInvestment("abc"), { ok: false }, "malformed phải báo invalid");
+  assert.deepEqual(decideManualInvestment(undefined), { ok: false });
+  assert.deepEqual(decideManualInvestment(null), { ok: false });
+  assert.deepEqual(decideManualInvestment(NaN), { ok: false });
+  assert.deepEqual(decideManualInvestment({}), { ok: false });
+  assert.deepEqual(decideManualInvestment(0), { ok: true, score: 0 }, "điểm 0 thật phải giữ 0");
+  assert.deepEqual(decideManualInvestment("0"), { ok: true, score: 0 });
+  assert.deepEqual(decideManualInvestment("3"), { ok: true, score: 75 }, "chuỗi số hợp lệ vẫn coerce");
+  assert.deepEqual(decideManualInvestment(4), { ok: true, score: 100 });
+  for (const bad of ["abc", undefined, null, NaN, {}, [], ""]) {
+    const r = decideManualInvestment(bad);
+    assert.equal(r.ok, false, `input ${JSON.stringify(bad) ?? "undefined"} tuyệt đối không được ok`);
+    if (r.ok) throw new Error("khong duoc con duong publish score giả");
+  }
 });
 
 console.log(`\njev-check-score: ${failures} fail`);

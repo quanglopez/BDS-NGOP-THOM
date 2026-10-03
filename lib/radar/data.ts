@@ -47,15 +47,19 @@ async function statsFor(db:SupabaseClient,radar:RadarCriteria){if(radar.category
  *  Chỉ cột điểm được chọn ra, không đọc `original_text` (nội dung riêng tư). */
 async function signalIndexFor(db:SupabaseClient,externalIds:string[]):Promise<Map<string,ListingSignal>>{if(!externalIds.length)return new Map();const {data,error}=await db.from("checks").select("listing_url,score,deal_type,is_ngop,created_at").not("score","is",null).order("created_at",{ascending:false}).limit(SIGNAL_WINDOW);if(error)throw error;const want=new Set(externalIds);return new Map([...buildSignalIndex(data??[])].filter(([id])=>want.has(id)));}
 function mapMatch(r:Row,c:RadarCriteria):RadarMatch{const autoFrom=(r.enrichment_status?String(r.enrichment_status):null) as string|null;const autoEnrichment=autoFrom?{status:(['pending','processing','completed','insufficient_data','low_confidence','failed'].includes(autoFrom)?autoFrom:'not_started') as AutoEnrollmentStatus,score:n(r.enrichment_score),dealType:s(r.enrichment_deal_type),isNgoP:n(r.enrichment_is_ngop),source:(s(r.enrichment_source)==='manual_check'?'manual_check':'auto_enrichment') as "auto_enrichment"|"manual_check",confidence:normalizeConfidenceColumn(r.enrichment_confidence),checkedAt:s(r.enrichment_checked_at),fingerprint:s(r.enrichment_fingerprint)}: null;return{externalId:String(r.external_id),url:s(r.url),title:s(r.title),areaName:s(r.area_name),regionName:s(r.region_name),categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2),pricePerM2:n(r.price_per_m2),listedAt:s(r.listed_at),lastSeenAt:s(r.last_seen_at),score:n(r.score),dealType:s(r.deal_type),isNgoP:n(r.is_ngop),scoringAvailable:Boolean(r.scoring_available),comparison:n(r.median_ppm2)!=null?{medianPpm2:n(r.median_ppm2),differencePercent:n(r.difference_percent),confidence:(s(r.confidence) as PriceConfidence|null),scopeDescription:s(r.scope_description)}:null,firstMatchedAt:String(r.first_matched_at),lastMatchedAt:String(r.last_matched_at),currentMatch:listingMatchesCriteria({categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2)},c),auto_enrichment:autoEnrichment};}
-export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, rows:(Record<string,unknown>&{score?:unknown;scoring_available?:unknown})[]) {
-  if (process.env.AUTO_ENRICHMENT_KILL_SWITCH === '1' || process.env.AUTO_ENRICHMENT_COST_GUARD === '1' || !radar.userId) return;
+/** Danh sách external_id vừa được enqueue, để scanRadar ghi kèm vào upsert
+ *  radar_matches. Row MỚI không có ở DB nên update trước upsert là no-op ->
+ *  pending phải nằm trong chính payload upsert. */
+export type QueuedEnrichment = { externalId: string; fingerprint: string };
+export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, rows:(Record<string,unknown>&{score?:unknown;scoring_available?:unknown})[]):Promise<QueuedEnrichment[]> {
+  if (process.env.AUTO_ENRICHMENT_KILL_SWITCH === '1' || process.env.AUTO_ENRICHMENT_COST_GUARD === '1' || !radar.userId) return [];
   try {
     const { data: profile, error: profileError } = await db.from("users").select("plan,plan_expires_at").eq("id", radar.userId).maybeSingle();
     if (profileError) throw profileError;
     const plan = effectivePlan(profile?.plan, profile?.plan_expires_at);
-    if (plan !== 'pro') return;
+    if (plan !== 'pro') return [];
     const eligibleRows = rows.filter((r) => r.score == null && r.scoring_available !== true);
-    if (!eligibleRows.length) return;
+    if (!eligibleRows.length) return [];
 
     const ids = eligibleRows.map((r) => String(r.external_id));
     const existingJobs = await db
@@ -102,7 +106,7 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
     // Dòng mới -> insert. Gom insert 1 lần để không N+1.
     const resetCols = { claim_token: null, processing_started_at: null, next_attempt_at: null, error_kind: null };
     const fresh: Record<string, unknown>[] = [];
-    const queuedIds: string[] = [];
+    const queued: QueuedEnrichment[] = [];
     for (const item of toCreate) {
       const existSame = (byExternal[String(item.row.external_id)] ?? []).find((j) => j.material_input_hash === item.hash);
       const isStaleTerminal =
@@ -125,7 +129,7 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      queuedIds.push(String(item.row.external_id));
+      queued.push({ externalId: String(item.row.external_id), fingerprint: item.hash });
       if (existSame && isStaleTerminal) {
         const u = await db.from("auto_enrichment_jobs").update(payload).eq("id", existSame.id);
         if (u.error) console.error("[auto-enrollment:update]", u.error.code);
@@ -138,22 +142,18 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
       // 23505 = scan khác đã tạo job active cùng fingerprint -> bỏ qua, không phải lỗi.
       if (ins.error && ins.error.code !== "23505") console.error("[auto-enrollment:insert]", ins.error.code);
     }
-    // Trạng thái hiển thị phải theo job: vừa enqueue -> pending (UI "Chờ phân tích").
-    // Chỉ ghi cột enrichment_*; score/deal_type/is_ngop của tín hiệu thủ công không bị đụng.
-    // Job đang processing giữ nguyên trạng thái để không giật UI về "chờ".
-    const visibleIds = [...new Set(queuedIds)].filter(
-      (id) => !(byExternal[id] ?? []).some((j) => String(j.status) === "processing"),
-    );
-    if (visibleIds.length) {
-      const mark = await db
-        .from("radar_matches")
-        .update({ enrichment_status: "pending", enrichment_source: "auto_enrichment" })
-        .eq("radar_id", radar.id)
-        .in("external_id", visibleIds);
-      if (mark.error) console.error("[auto-enrollment:mark-pending]", mark.error.code);
-    }
+    // Row ĐÃ TỒN TẠI mà vừa được enqueue lại (job terminal quá TTL được tái sử
+    // dụng) thì upsert của scan sẽ ghi đè cột enrichment_* cũ, nên phải trả về danh
+    // sách để scan bỏ qua: trạng thái cuối cho các row này do worker lo, không
+    // phải reset về pending ở đây. Row MỚI thì ngược lại: upsert sẽ mang pending.
+    // Việc lọc "job đang processing" ở đây cũng tránh việc scan lật ngược trạng
+    // thái của job mà worker vừa claim (FIX 5: không dựa trên snapshot cũ —
+    // snapshot này đọc ngay trước bước enqueue, và job mới chỉ có thể là
+    // chính job vừa tạo nên không cần đọc lại).
+    return queued.filter((q) => !(byExternal[q.externalId] ?? []).some((j) => String(j.status) === "processing"));
   } catch (e) {
     console.error("[auto-enrollment:scan]", e);
+    return [];
   }
 }
 function normalizeConfidenceColumn(v:unknown):'low'|'medium'|'high'|null{return v==='low'||v==='medium'||v==='high'?v:null;}
@@ -166,11 +166,30 @@ const [matchRes,coverage,stats]=await Promise.all([q,getAreaCoverage(db,radar.ar
   const candidates=found.map(r=>({...r,score:null,deal_type:null,is_ngop:null} as Row));
   // Lọc tín hiệu TRƯỚC khi đếm mới/upsert: tin chưa chấm điểm không bị loại.
   const rows=attachSignals<Row>(candidates,await signalIndexFor(db,candidates.map(r=>String(r.external_id))),{minScore:radar.minScore,dealTypes:radar.dealTypes,ngoPOnly:radar.ngoPOnly});
-  if (radar.userId) { try { await syncEnrichmentJobs(db, radar, rows as unknown as Record<string, unknown>[]); } catch (e) { console.error("[auto-enrollment:scan]", e); } }
-  const ids=rows.map(r=>String(r.external_id));let existingRows:Row[]=[];if(ids.length){const e=await db.from("radar_matches").select("external_id,first_matched_at").eq("radar_id",radar.id).in("external_id",ids);if(e.error)throw e.error;existingRows=e.data??[];}
-  const existing=new Map(existingRows.map(r=>[String(r.external_id),String(r.first_matched_at)]));let newCount=0;
-  const mapped=rows.map(r=>{const id=String(r.external_id),ppm=n(r.price_per_m2),cmp=comparison(pickStats(stats,n(r.size_m2),n(r.rooms)),ppm);if(!existing.has(id))newCount++;return{radar_id:radar.id,external_id:id,url:s(r.url),title:s(r.title),area_name:s(r.area_name),region_name:s(r.region_name),category_code:n(r.category_code),price_vnd:n(r.price_vnd),size_m2:n(r.size_m2),price_per_m2:ppm,listed_at:s(r.listed_at),last_seen_at:s(r.last_seen_at),score:n(r.score),deal_type:s(r.deal_type),is_ngop:n(r.is_ngop),scoring_available:Boolean(r.scoring_available),median_ppm2:cmp?.medianPpm2??null,difference_percent:cmp?.differencePercent??null,confidence:cmp?.confidence??null,scope_description:cmp?.scopeDescription??null,first_matched_at:existing.get(id)??scanAt,last_matched_at:scanAt};});
- if(mapped.length){const u=await db.from("radar_matches").upsert(mapped,{onConflict:"radar_id,external_id"});if(u.error)throw u.error;}
+  // Enqueue TRƯỚC khi upsert để biết row nào cần mang enrichment_status='pending'
+  // ngay trong payload upsert. Update trước upsert sẽ là no-op với row mới.
+  let queued:QueuedEnrichment[]=[];
+  if (radar.userId) { try { queued = await syncEnrichmentJobs(db, radar, rows as unknown as Record<string, unknown>[]); } catch (e) { console.error("[auto-enrollment:scan]", e); } }
+  const pendingByExternal=new Map(queued.map(q=>[q.externalId,q.fingerprint]));
+  const ids=rows.map(r=>String(r.external_id));let existingRows:Row[]=[];if(ids.length){const e=await db.from("radar_matches").select("external_id,first_matched_at,enrichment_status").eq("radar_id",radar.id).in("external_id",ids);if(e.error)throw e.error;existingRows=e.data??[];}
+  const existing=new Map(existingRows.map(r=>[String(r.external_id),r]));let newCount=0;
+  const mapped:Row[]=rows.map(r=>{const id=String(r.external_id),ppm=n(r.price_per_m2),cmp=comparison(pickStats(stats,n(r.size_m2),n(r.rooms)),ppm);const prev=existing.get(id);if(!prev)newCount++;
+    // Row có job ĐANG processing (worker đã dispatch) thì không được đưa về pending.
+    const liveProcessing=prev?.enrichment_status==='processing' && !pendingByExternal.has(id);
+    // Row vừa enqueue -> pending; row khác giữ nguyên trạng thái đọc được (undefined
+    // => không đụng cột, giá trị cũ của DB được giữ khi upsert).
+    const enr:Row|undefined=pendingByExternal.has(id)&&!liveProcessing?{enrichment_status:'pending' as const,enrichment_source:'auto_enrichment' as const}:liveProcessing?{enrichment_status:'processing' as const}:undefined;
+    const base:Row={radar_id:radar.id,external_id:id,url:s(r.url),title:s(r.title),area_name:s(r.area_name),region_name:s(r.region_name),category_code:n(r.category_code),price_vnd:n(r.price_vnd),size_m2:n(r.size_m2),price_per_m2:ppm,listed_at:s(r.listed_at),last_seen_at:s(r.last_seen_at),score:n(r.score),deal_type:s(r.deal_type),is_ngop:n(r.is_ngop),scoring_available:Boolean(r.scoring_available),median_ppm2:cmp?.medianPpm2??null,difference_percent:cmp?.differencePercent??null,confidence:cmp?.confidence??null,scope_description:cmp?.scopeDescription??null,first_matched_at:prev?String(prev.first_matched_at):scanAt,last_matched_at:scanAt};
+    return enr?{...base,...enr}:base;});
+  if(mapped.length){
+    // Row đã tồn tại mà vừa enqueue lại (job terminal quá TTL được tái sử dụng) giữ cột
+    // enrichment cũ trong DB. Bỏ 2 cột khỏi payload ở CẢ 2 lần upsert, nếu không
+    // lần upsert đầy đủ sẽ ghi đè kết quả cũ bằng pending trước khi worker có kết quả mới.
+    const keepExisting=(r:Row):Row=>{const id=String(r.external_id);if(!pendingByExternal.has(id)||!existing.has(id))return r;const copy:Row={...r};delete copy.enrichment_status;delete copy.enrichment_source;return copy;};
+    const patchable:Row[]=mapped.filter(r=>pendingByExternal.has(String(r.external_id))&&existing.has(String(r.external_id))).map(keepExisting);
+    if(patchable.length){const pu=await db.from("radar_matches").upsert(patchable,{onConflict:"radar_id,external_id"});if(pu.error)throw pu.error;}
+    const u=await db.from("radar_matches").upsert(mapped.map(keepExisting),{onConflict:"radar_id,external_id"});if(u.error)throw u.error;
+  }
  const finalCoverage={...coverage,checkedAt:scanAt};
  const u=await db.from("radars").update({checked_at:scanAt,last_seen_at:coverage.lastSeenAt,new_match_count:newCount,coverage_status:coverage.status,coverage_listing_count:coverage.listingCount,coverage_freshness:coverage.freshness,coverage_staleness:coverage.staleness,coverage_source:coverage.source,coverage_description:coverage.description,excluded_count:coverage.excludedCount,last_scan_count:rows.length,last_scan_error:null,updated_at:scanAt}).eq("id",radar.id);if(u.error)throw u.error;
  return{coverage:finalCoverage,matches:mapped.map(r=>mapMatch(r,radar)),newMatchCount:newCount};
