@@ -3,7 +3,9 @@ import { confidenceFrom } from "@/lib/price/stats";
 import { MIN_SAMPLE_SIZE, type PriceConfidence } from "@/lib/price/types";
 import { listingMatchesCriteria } from "./criteria";
 import { attachSignals, buildSignalIndex, type ListingSignal } from "./signals";
-import type { CoverageStatus,RadarAreaOption,RadarComparison,RadarCriteria,RadarCoverage,RadarMatch,RadarSummary,Staleness } from "./types";
+import { materialInputFromRow, materialFingerprint, planAutoEnrollmentForRows, AUTO_ENRICHMENT_DAILY_LIMIT } from "./auto-enrollment";
+import { effectivePlan, vnDayStartISO } from "@/lib/quota";
+import type { CoverageStatus,RadarAreaOption,RadarComparison,RadarCriteria,RadarCoverage,RadarMatch,RadarSummary,Staleness,AutoEnrollmentStatus } from "./types";
 
 type Row=Record<string,unknown>;
 const SOURCE="chotot_gateway";
@@ -20,7 +22,7 @@ function stale(iso:string|null):Staleness{if(!iso)return"unknown";return Date.no
 function covStatus(v:unknown):CoverageStatus{return v==="ok"||v==="thin"||v==="none"?v:"unknown";}
 function staleOf(v:unknown):Staleness{return v==="fresh"||v==="stale"?v:"unknown";}
 function mapCoverage(r:Row):RadarCoverage{return{status:covStatus(r.coverage_status),lastSeenAt:s(r.last_seen_at),freshness:s(r.coverage_freshness),staleness:staleOf(r.coverage_staleness),listingCount:n(r.coverage_listing_count),checkedAt:s(r.checked_at),source:s(r.coverage_source)??SOURCE,description:s(r.coverage_description),excludedCount:n(r.excluded_count)};}
-function mapRadar(r:Row):RadarSummary{return{id:String(r.id),name:String(r.name),areaV2:Number(r.area_v2),areaName:s(r.area_name),regionName:s(r.region_name),categoryCode:n(r.category_code),priceMinVnd:n(r.price_min_vnd),priceMaxVnd:n(r.price_max_vnd),areaMinM2:n(r.area_min_m2),areaMaxM2:n(r.area_max_m2),minScore:n(r.min_score),dealTypes:Array.isArray(r.deal_types)?r.deal_types:[],ngoPOnly:Boolean(r.ngop_only),status:r.status==="PAUSED"?"PAUSED":"ACTIVE",createdAt:String(r.created_at),updatedAt:String(r.updated_at),coverage:mapCoverage(r),newMatchCount:Number(r.new_match_count??0),lastScanCount:n(r.last_scan_count),lastScanError:s(r.last_scan_error)};}
+function mapRadar(r:Row):RadarSummary{return{id:String(r.id),userId:typeof r.user_id==='string'?r.user_id:null,name:String(r.name),areaV2:Number(r.area_v2),areaName:s(r.area_name),regionName:s(r.region_name),categoryCode:n(r.category_code),priceMinVnd:n(r.price_min_vnd),priceMaxVnd:n(r.price_max_vnd),areaMinM2:n(r.area_min_m2),areaMaxM2:n(r.area_max_m2),minScore:n(r.min_score),dealTypes:Array.isArray(r.deal_types)?r.deal_types:[],ngoPOnly:Boolean(r.ngop_only),status:r.status==="PAUSED"?"PAUSED":"ACTIVE",createdAt:String(r.created_at),updatedAt:String(r.updated_at),coverage:mapCoverage(r),newMatchCount:Number(r.new_match_count??0),lastScanCount:n(r.last_scan_count),lastScanError:s(r.last_scan_error)};}
 
 export async function getRadar(db:SupabaseClient,userId:string,id:string){const {data,error}=await db.from("radars").select("*").eq("id",id).eq("user_id",userId).maybeSingle();if(error)throw error;return data?mapRadar(data):null;}
 export async function listRadars(db:SupabaseClient,userId:string){const {data,error}=await db.from("radars").select("*").eq("user_id",userId).order("updated_at",{ascending:false});if(error)throw error;return(data??[]).map(mapRadar);}
@@ -44,7 +46,92 @@ async function statsFor(db:SupabaseClient,radar:RadarCriteria){if(radar.category
  *  riêng của người chấm — và Check mới nhất là bản chấm điện nhất nên đúng hơn.
  *  Chỉ cột điểm được chọn ra, không đọc `original_text` (nội dung riêng tư). */
 async function signalIndexFor(db:SupabaseClient,externalIds:string[]):Promise<Map<string,ListingSignal>>{if(!externalIds.length)return new Map();const {data,error}=await db.from("checks").select("listing_url,score,deal_type,is_ngop,created_at").not("score","is",null).order("created_at",{ascending:false}).limit(SIGNAL_WINDOW);if(error)throw error;const want=new Set(externalIds);return new Map([...buildSignalIndex(data??[])].filter(([id])=>want.has(id)));}
-function mapMatch(r:Row,c:RadarCriteria):RadarMatch{return{externalId:String(r.external_id),url:s(r.url),title:s(r.title),areaName:s(r.area_name),regionName:s(r.region_name),categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2),pricePerM2:n(r.price_per_m2),listedAt:s(r.listed_at),lastSeenAt:s(r.last_seen_at),score:n(r.score),dealType:s(r.deal_type),isNgoP:n(r.is_ngop),scoringAvailable:Boolean(r.scoring_available),comparison:n(r.median_ppm2)!=null?{medianPpm2:n(r.median_ppm2),differencePercent:n(r.difference_percent),confidence:(s(r.confidence) as PriceConfidence|null),scopeDescription:s(r.scope_description)}:null,firstMatchedAt:String(r.first_matched_at),lastMatchedAt:String(r.last_matched_at),currentMatch:listingMatchesCriteria({categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2)},c)};}
+function mapMatch(r:Row,c:RadarCriteria):RadarMatch{const autoFrom=(r.enrichment_status?String(r.enrichment_status):null) as string|null;const autoEnrichment=autoFrom?{status:(['pending','processing','completed','insufficient_data','low_confidence','failed'].includes(autoFrom)?autoFrom:'not_started') as AutoEnrollmentStatus,score:n(r.enrichment_score),dealType:s(r.enrichment_deal_type),isNgoP:n(r.enrichment_is_ngop),source:'auto_enrichment' as const,confidence:normalizeConfidenceColumn(r.enrichment_confidence),checkedAt:s(r.auto_enrichment_checked_at)}: null;return{externalId:String(r.external_id),url:s(r.url),title:s(r.title),areaName:s(r.area_name),regionName:s(r.region_name),categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2),pricePerM2:n(r.price_per_m2),listedAt:s(r.listed_at),lastSeenAt:s(r.last_seen_at),score:n(r.score),dealType:s(r.deal_type),isNgoP:n(r.is_ngop),scoringAvailable:Boolean(r.scoring_available),comparison:n(r.median_ppm2)!=null?{medianPpm2:n(r.median_ppm2),differencePercent:n(r.difference_percent),confidence:(s(r.confidence) as PriceConfidence|null),scopeDescription:s(r.scope_description)}:null,firstMatchedAt:String(r.first_matched_at),lastMatchedAt:String(r.last_matched_at),currentMatch:listingMatchesCriteria({categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2)},c),auto_enrichment:autoEnrichment};}
+export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, rows:(Record<string,unknown>&{score?:unknown;scoring_available?:unknown})[]) {
+  if (process.env.AUTO_ENRICHMENT_KILL_SWITCH === '1' || process.env.AUTO_ENRICHMENT_COST_GUARD === '1' || !radar.userId) return;
+  try {
+    const { data: profile, error: profileError } = await db.from("users").select("plan,plan_expires_at").eq("id", radar.userId).maybeSingle();
+    if (profileError) throw profileError;
+    const plan = effectivePlan(profile?.plan, profile?.plan_expires_at);
+    if (plan !== 'pro') return;
+    const eligibleRows = rows.filter((r) => r.score == null && r.scoring_available !== true);
+    if (!eligibleRows.length) return;
+
+    const ids = eligibleRows.map((r) => String(r.external_id));
+    const existingJobs = await db
+      .from("auto_enrichment_jobs")
+      .select("id,external_id,status,material_input_hash,created_at,updated_at,dispatch_started_at")
+      .eq("radar_id", radar.id)
+      .in("external_id", ids);
+    if (existingJobs.error) throw existingJobs.error;
+    const byExternal: Record<string, { id?: string; status?: unknown; material_input_hash?: unknown; created_at?: unknown; updated_at?: unknown; dispatch_started_at?: unknown }[]> = {};
+    for (const j of existingJobs.data ?? []) {
+      const k = String(j.external_id); byExternal[k] = byExternal[k] ?? []; byExternal[k].push(j);
+    }
+    const consumed = await db
+      .from("auto_enrichment_jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", radar.userId)
+      .gte("created_at", vnDayStartISO())
+      .not("dispatch_started_at", "is", null);
+    const allowanceRemaining = Math.max(0, AUTO_ENRICHMENT_DAILY_LIMIT - (consumed.count ?? 0));
+    const existingStatusById: Record<string, { status: AutoEnrollmentStatus | null | undefined; hash: string | null | undefined; updatedAt: string | null | undefined }> = {};
+    for (const row of rows) {
+      const rawJobs = byExternal[String(row.external_id)] ?? [];
+      const sameHash = rawJobs.find((j) => j.material_input_hash === materialFingerprint(materialInputFromRow(row)));
+      existingStatusById[String(row.external_id)] = sameHash
+        ? {
+          status: (sameHash.status as AutoEnrollmentStatus | undefined) ?? null,
+          hash: typeof sameHash.material_input_hash === "string" ? sameHash.material_input_hash : null,
+          updatedAt: typeof sameHash.updated_at === "string" ? sameHash.updated_at : null,
+        }
+        : { status: null, hash: null, updatedAt: null };
+    }
+
+    const toCreate = planAutoEnrollmentForRows({
+      plan,
+      killSwitch: false,
+      costGuard: false,
+      existingStatus: existingStatusById,
+      rows: eligibleRows,
+      allowanceRemaining,
+      nowMs: Date.now(),
+    });
+    for (const item of toCreate) {
+      const input = item.input;
+      const existSame = (byExternal[String(item.row.external_id)] ?? []).find(
+        (j) => j.material_input_hash === item.hash,
+      );
+      const isStaleCompleted =
+        existSame && typeof existSame.updated_at === "string" && Date.parse(existSame.updated_at) > 0 &&
+        ["completed", "insufficient_data", "low_confidence", "failed"].includes(String(existSame.status))
+          ? Date.now() - Date.parse(existSame.updated_at) >= 30 * 24 * 60 * 60 * 1000
+          : false;
+      if (existSame && !isStaleCompleted) continue;
+      const payload = {
+        radar_id: radar.id,
+        user_id: radar.userId,
+        external_id: String(item.row.external_id),
+        material_input_hash: item.hash,
+        material_input: input,
+        status: "pending" as const,
+        attempts: 0,
+        dispatch_started_at: null,
+        allowance_consumed: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      if (existSame && isStaleCompleted) {
+        await db.from("auto_enrichment_jobs").update(payload).eq("id", existSame.id);
+      } else {
+        await db.from("auto_enrichment_jobs").insert([payload]);
+      }
+    }
+  } catch (e) {
+    console.error("[auto-enrollment:scan]", e);
+  }
+}
+function normalizeConfidenceColumn(v:unknown):'low'|'medium'|'high'|null{return v==='low'||v==='medium'||v==='high'?v:null;}
 
 export async function scanRadar(db:SupabaseClient,radar:RadarSummary){
  const scanAt=new Date().toISOString();
@@ -54,6 +141,7 @@ const [matchRes,coverage,stats]=await Promise.all([q,getAreaCoverage(db,radar.ar
   const candidates=found.map(r=>({...r,score:null,deal_type:null,is_ngop:null} as Row));
   // Lọc tín hiệu TRƯỚC khi đếm mới/upsert: tin chưa chấm điểm không bị loại.
   const rows=attachSignals<Row>(candidates,await signalIndexFor(db,candidates.map(r=>String(r.external_id))),{minScore:radar.minScore,dealTypes:radar.dealTypes,ngoPOnly:radar.ngoPOnly});
+  if (radar.userId) { try { await syncEnrichmentJobs(db, radar, rows as unknown as Record<string, unknown>[]); } catch (e) { console.error("[auto-enrollment:scan]", e); } }
   const ids=rows.map(r=>String(r.external_id));let existingRows:Row[]=[];if(ids.length){const e=await db.from("radar_matches").select("external_id,first_matched_at").eq("radar_id",radar.id).in("external_id",ids);if(e.error)throw e.error;existingRows=e.data??[];}
   const existing=new Map(existingRows.map(r=>[String(r.external_id),String(r.first_matched_at)]));let newCount=0;
   const mapped=rows.map(r=>{const id=String(r.external_id),ppm=n(r.price_per_m2),cmp=comparison(pickStats(stats,n(r.size_m2),n(r.rooms)),ppm);if(!existing.has(id))newCount++;return{radar_id:radar.id,external_id:id,url:s(r.url),title:s(r.title),area_name:s(r.area_name),region_name:s(r.region_name),category_code:n(r.category_code),price_vnd:n(r.price_vnd),size_m2:n(r.size_m2),price_per_m2:ppm,listed_at:s(r.listed_at),last_seen_at:s(r.last_seen_at),score:n(r.score),deal_type:s(r.deal_type),is_ngop:n(r.is_ngop),scoring_available:Boolean(r.scoring_available),median_ppm2:cmp?.medianPpm2??null,difference_percent:cmp?.differencePercent??null,confidence:cmp?.confidence??null,scope_description:cmp?.scopeDescription??null,first_matched_at:existing.get(id)??scanAt,last_matched_at:scanAt};});
