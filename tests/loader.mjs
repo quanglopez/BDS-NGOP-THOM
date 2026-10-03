@@ -28,6 +28,7 @@ export async function resolve(specifier, context, next) {
     // test ngoài Next. Chỉ dùng cho test, không ảnh hưởng build.
     return next("next/server.js", context);
   }
+  if (specifier === "next/headers") return next("next/headers.js", context);
   if (
     (specifier.startsWith("./") || specifier.startsWith("../")) &&
     context.parentURL &&

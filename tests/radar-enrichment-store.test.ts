@@ -29,7 +29,7 @@ function recordingDb(rpcResults: Record<string, unknown> = {}) {
 
   function from(table: string) {
     const filters: Filter[] = [];
-    let payload: Row | null = null;
+    const payload: Row | null = null;
     let orderCol: string | undefined;
     let orderAsc = true;
     let limit: number | undefined;
