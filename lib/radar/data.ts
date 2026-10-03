@@ -3,7 +3,7 @@ import { confidenceFrom } from "@/lib/price/stats";
 import { MIN_SAMPLE_SIZE, type PriceConfidence } from "@/lib/price/types";
 import { listingMatchesCriteria } from "./criteria";
 import { attachSignals, buildSignalIndex, type ListingSignal } from "./signals";
-import { materialInputFromRow, materialFingerprint, planAutoEnrollmentForRows, AUTO_ENRICHMENT_DAILY_LIMIT } from "./auto-enrollment";
+import { materialInputFromRow, materialFingerprint, planAutoEnrollmentForRows, AUTO_ENRICHMENT_DAILY_LIMIT, AUTO_ENRICHMENT_TTL_MS } from "./auto-enrollment";
 import { effectivePlan, vnDayStartISO } from "@/lib/quota";
 import type { CoverageStatus,RadarAreaOption,RadarComparison,RadarCriteria,RadarCoverage,RadarMatch,RadarSummary,Staleness,AutoEnrollmentStatus } from "./types";
 
@@ -46,7 +46,7 @@ async function statsFor(db:SupabaseClient,radar:RadarCriteria){if(radar.category
  *  riêng của người chấm — và Check mới nhất là bản chấm điện nhất nên đúng hơn.
  *  Chỉ cột điểm được chọn ra, không đọc `original_text` (nội dung riêng tư). */
 async function signalIndexFor(db:SupabaseClient,externalIds:string[]):Promise<Map<string,ListingSignal>>{if(!externalIds.length)return new Map();const {data,error}=await db.from("checks").select("listing_url,score,deal_type,is_ngop,created_at").not("score","is",null).order("created_at",{ascending:false}).limit(SIGNAL_WINDOW);if(error)throw error;const want=new Set(externalIds);return new Map([...buildSignalIndex(data??[])].filter(([id])=>want.has(id)));}
-function mapMatch(r:Row,c:RadarCriteria):RadarMatch{const autoFrom=(r.enrichment_status?String(r.enrichment_status):null) as string|null;const autoEnrichment=autoFrom?{status:(['pending','processing','completed','insufficient_data','low_confidence','failed'].includes(autoFrom)?autoFrom:'not_started') as AutoEnrollmentStatus,score:n(r.enrichment_score),dealType:s(r.enrichment_deal_type),isNgoP:n(r.enrichment_is_ngop),source:'auto_enrichment' as const,confidence:normalizeConfidenceColumn(r.enrichment_confidence),checkedAt:s(r.auto_enrichment_checked_at)}: null;return{externalId:String(r.external_id),url:s(r.url),title:s(r.title),areaName:s(r.area_name),regionName:s(r.region_name),categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2),pricePerM2:n(r.price_per_m2),listedAt:s(r.listed_at),lastSeenAt:s(r.last_seen_at),score:n(r.score),dealType:s(r.deal_type),isNgoP:n(r.is_ngop),scoringAvailable:Boolean(r.scoring_available),comparison:n(r.median_ppm2)!=null?{medianPpm2:n(r.median_ppm2),differencePercent:n(r.difference_percent),confidence:(s(r.confidence) as PriceConfidence|null),scopeDescription:s(r.scope_description)}:null,firstMatchedAt:String(r.first_matched_at),lastMatchedAt:String(r.last_matched_at),currentMatch:listingMatchesCriteria({categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2)},c),auto_enrichment:autoEnrichment};}
+function mapMatch(r:Row,c:RadarCriteria):RadarMatch{const autoFrom=(r.enrichment_status?String(r.enrichment_status):null) as string|null;const autoEnrichment=autoFrom?{status:(['pending','processing','completed','insufficient_data','low_confidence','failed'].includes(autoFrom)?autoFrom:'not_started') as AutoEnrollmentStatus,score:n(r.enrichment_score),dealType:s(r.enrichment_deal_type),isNgoP:n(r.enrichment_is_ngop),source:(s(r.enrichment_source)==='manual_check'?'manual_check':'auto_enrichment') as "auto_enrichment"|"manual_check",confidence:normalizeConfidenceColumn(r.enrichment_confidence),checkedAt:s(r.enrichment_checked_at),fingerprint:s(r.enrichment_fingerprint)}: null;return{externalId:String(r.external_id),url:s(r.url),title:s(r.title),areaName:s(r.area_name),regionName:s(r.region_name),categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2),pricePerM2:n(r.price_per_m2),listedAt:s(r.listed_at),lastSeenAt:s(r.last_seen_at),score:n(r.score),dealType:s(r.deal_type),isNgoP:n(r.is_ngop),scoringAvailable:Boolean(r.scoring_available),comparison:n(r.median_ppm2)!=null?{medianPpm2:n(r.median_ppm2),differencePercent:n(r.difference_percent),confidence:(s(r.confidence) as PriceConfidence|null),scopeDescription:s(r.scope_description)}:null,firstMatchedAt:String(r.first_matched_at),lastMatchedAt:String(r.last_matched_at),currentMatch:listingMatchesCriteria({categoryCode:n(r.category_code),priceVnd:n(r.price_vnd),sizeM2:n(r.size_m2)},c),auto_enrichment:autoEnrichment};}
 export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, rows:(Record<string,unknown>&{score?:unknown;scoring_available?:unknown})[]) {
   if (process.env.AUTO_ENRICHMENT_KILL_SWITCH === '1' || process.env.AUTO_ENRICHMENT_COST_GUARD === '1' || !radar.userId) return;
   try {
@@ -68,12 +68,13 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
     for (const j of existingJobs.data ?? []) {
       const k = String(j.external_id); byExternal[k] = byExternal[k] ?? []; byExternal[k].push(j);
     }
+    // Allowance đếm theo NGÀY DISPATCH (không phải ngày tạo job): job tạo hôm qua
+    // nhưng dispatch hôm nay phải tính vào hôm nay, khớp bảng allowance của RPC.
     const consumed = await db
       .from("auto_enrichment_jobs")
       .select("id", { count: "exact", head: true })
       .eq("user_id", radar.userId)
-      .gte("created_at", vnDayStartISO())
-      .not("dispatch_started_at", "is", null);
+      .gte("dispatch_started_at", vnDayStartISO());
     const allowanceRemaining = Math.max(0, AUTO_ENRICHMENT_DAILY_LIMIT - (consumed.count ?? 0));
     const existingStatusById: Record<string, { status: AutoEnrollmentStatus | null | undefined; hash: string | null | undefined; updatedAt: string | null | undefined }> = {};
     for (const row of rows) {
@@ -97,35 +98,43 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
       allowanceRemaining,
       nowMs: Date.now(),
     });
+    // Job terminal quá hạn TTL -> TÁI SỬ DỤNG dòng đó (giữ 1 dòng / (radar,listing,hash)).
+    // Dòng mới -> insert. Gom insert 1 lần để không N+1.
+    const resetCols = { claim_token: null, processing_started_at: null, next_attempt_at: null, error_kind: null };
+    const fresh: Record<string, unknown>[] = [];
     for (const item of toCreate) {
-      const input = item.input;
-      const existSame = (byExternal[String(item.row.external_id)] ?? []).find(
-        (j) => j.material_input_hash === item.hash,
-      );
-      const isStaleCompleted =
+      const existSame = (byExternal[String(item.row.external_id)] ?? []).find((j) => j.material_input_hash === item.hash);
+      const isStaleTerminal =
         existSame && typeof existSame.updated_at === "string" && Date.parse(existSame.updated_at) > 0 &&
         ["completed", "insufficient_data", "low_confidence", "failed"].includes(String(existSame.status))
-          ? Date.now() - Date.parse(existSame.updated_at) >= 30 * 24 * 60 * 60 * 1000
+          ? Date.now() - Date.parse(existSame.updated_at) >= AUTO_ENRICHMENT_TTL_MS
           : false;
-      if (existSame && !isStaleCompleted) continue;
+      if (existSame && !isStaleTerminal) continue;
       const payload = {
         radar_id: radar.id,
         user_id: radar.userId,
         external_id: String(item.row.external_id),
         material_input_hash: item.hash,
-        material_input: input,
+        material_input: item.input,
         status: "pending" as const,
         attempts: 0,
         dispatch_started_at: null,
         allowance_consumed: false,
+        ...resetCols,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      if (existSame && isStaleCompleted) {
-        await db.from("auto_enrichment_jobs").update(payload).eq("id", existSame.id);
+      if (existSame && isStaleTerminal) {
+        const u = await db.from("auto_enrichment_jobs").update(payload).eq("id", existSame.id);
+        if (u.error) console.error("[auto-enrollment:update]", u.error.code);
       } else {
-        await db.from("auto_enrichment_jobs").insert([payload]);
+        fresh.push(payload);
       }
+    }
+    if (fresh.length) {
+      const ins = await db.from("auto_enrichment_jobs").insert(fresh);
+      // 23505 = scan khác đã tạo job active cùng fingerprint -> bỏ qua, không phải lỗi.
+      if (ins.error && ins.error.code !== "23505") console.error("[auto-enrollment:insert]", ins.error.code);
     }
   } catch (e) {
     console.error("[auto-enrollment:scan]", e);

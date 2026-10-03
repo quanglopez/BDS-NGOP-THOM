@@ -8,6 +8,7 @@ import { extractPhone } from "@/lib/phone";
 import { extractBedrooms } from "@/lib/bedrooms";
 import { resolveAreaM2 } from "@/lib/area";
 import { analyzeListing, fromApiResponse, SCORING_CODE_VERSION } from "@/lib/scoring";
+import { CHECK_QUESTIONS, callJev, investmentScore100, type JevAnswer } from "@/lib/ai/jev-check";
 import { buildScoringSnapshot } from "@/lib/score-snapshot";
 import { resolveListingGeo } from "@/lib/geo/url-parser";
 import { persistCheckGeo } from "@/lib/check-geo";
@@ -40,90 +41,6 @@ function corsHeaders(req: Request): Record<string, string> {
     "Access-Control-Allow-Headers": "Content-Type",
     "Vary": "Origin",
   };
-}
-
-// Shape 1 câu trả lời từ Jev
-type JevAnswer = {
-  score?: number;
-  noul?: number;
-  choice?: string;
-  confidence?: number;
-};
-
-// Bộ câu hỏi chấm điểm 1 tin BĐS Việt Nam
-const QUESTIONS = {
-  investment_potential: {
-    type: "score",
-    instructions: "Chấm điểm tiềm năng đầu tư BĐS Việt Nam",
-    criteria: ["Rất tệ", "Thấp", "Trung bình", "Cao", "Rất cao kèo thơm"],
-  },
-  is_ngop: {
-    type: "noul",
-    instructions: "Có phải bán gấp ngộp bank thanh lý cần tiền gấp không?",
-  },
-  legal_safety: {
-    type: "noul",
-    instructions: "Pháp lý có an toàn không? sổ hồng riêng không tranh chấp?",
-  },
-  location_growth: {
-    type: "score",
-    instructions: "Vị trí tiềm năng tăng giá?",
-    criteria: ["Xa trung tâm", "Trung bình", "Khá", "Tốt gần biển trung tâm", "Rất tốt mặt tiền biển Thùy Vân Trần Phú"],
-  },
-  liquidity: {
-    type: "score",
-    instructions: "Thanh khoản dễ bán lại?",
-    criteria: ["Rất khó bán", "Khó", "Trung bình", "Dễ", "Rất dễ bán lại"],
-  },
-  deal_type: {
-    type: "choice",
-    instructions: "Phân loại kèo BĐS",
-    criteria: {
-      ngop_ngon: "Kèo ngộp ngân hàng giá rẻ hơn thị trường 15%+ - nên mua nhanh",
-      thom_dau_tu: "Kèo thơm đầu tư tốt giá hợp lý vị trí đẹp",
-      gia_cao: "Giá cao hơn thị trường",
-      rui_ro_phap_ly: "Rủi ro pháp lý quy hoạch tranh chấp",
-      binh_thuong: "Tin bình thường",
-    },
-  },
-} as const;
-
-// Gọi Jev 1 lần với timeout riêng (tránh treo hết maxDuration mà không rõ lý do)
-async function callJevOnce(key: string, body: unknown, timeoutMs: number) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    return await fetch("https://api.typesafe.ai/v1/systemone", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-// Gọi Jev tối đa 2 lần: retry khi timeout/mạng sập/lỗi 5xx.
-// Lỗi 4xx là do request sai nên không retry.
-async function callJev(key: string, body: unknown, requestId: string, logPrefix: string) {
-  const TIMEOUT_MS = 25000;
-  let lastError = "";
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      const res = await callJevOnce(key, body, TIMEOUT_MS);
-      if (res.ok || (res.status >= 400 && res.status < 500)) return res;
-      lastError = `status=${res.status} body=${(await res.text()).slice(0, 300)}`;
-      console.warn(`[check:${requestId}] JEV_RETRY attempt=${attempt} ${lastError} ${logPrefix}`);
-    } catch (e) {
-      lastError = e instanceof Error ? e.name : "fetch_error";
-      console.warn(`[check:${requestId}] JEV_RETRY attempt=${attempt} error=${lastError} ${logPrefix}`);
-    }
-  }
-  throw new Error(`Jev không phản hồi sau 2 lần thử (${lastError})`);
 }
 
 export async function OPTIONS(req: NextRequest) {
@@ -272,7 +189,7 @@ export async function POST(req: NextRequest) {
           model: "jev-latest",
           // Chèn hint khu vực để AI chấm vị trí/tăng giá đúng tỉnh
           state: `Khu vực: ${provinceLabel(detectedProvince)}\n${text.slice(0, 5900)}`,
-          questions: QUESTIONS,
+          questions: CHECK_QUESTIONS,
         },
         requestId,
         `ip=${ip}`,
@@ -311,8 +228,7 @@ export async function POST(req: NextRequest) {
     const ans = (data.answers ?? data) as Record<string, JevAnswer>;
 
     // Điểm 0-4 của score type quy về thang 100
-    const invest = ans.investment_potential?.score ?? 0;
-    const invest100 = invest <= 4 ? Math.round((invest / 4) * 100) : Math.round(invest);
+    const invest100 = investmentScore100(ans.investment_potential?.score ?? 0) ?? 0;
     const dealType = ans.deal_type?.choice || "binh_thuong";
     const isNgop = Math.round((ans.is_ngop?.noul ?? 0) * 100);
 

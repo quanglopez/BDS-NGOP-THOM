@@ -1,8 +1,6 @@
 // Auto-Enrichment V1: eligibility, fingerprint, giới hạn, trạng thái.
 // Cam kết non-blocking: hàm này chỉ ra quyết định enqueue/dispatch, KHÔNG await AI.
 
-import type { SupabaseClient } from "@supabase/supabase-js";
-
 export const AUTO_ENRICHMENT_PER_RADAR_CAP = 25;
 export const AUTO_ENRICHMENT_DAILY_LIMIT = 200;
 export const AUTO_ENRICHMENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -153,5 +151,30 @@ export function isManualCheckWinnerOk(createdAt: unknown, dispatchStartedAt: str
   const start = Date.parse(dispatchStartedAt);
   if (Number.isNaN(start)) return false;
   return typeof createdAt === "string" && Date.parse(createdAt) > start;
+}
+
+// Wording UI theo đúng state — pending TUYỆT ĐỐI không phải "Đang phân tích"
+// (AI chưa dispatch thì chưa phân tích).
+const STATUS_LABELS: Record<AutoEnrollmentStatus, string> = {
+  not_started: "",
+  pending: "Chờ phân tích",
+  processing: "Đang phân tích",
+  completed: "Đã chấm",
+  insufficient_data: "Không đủ dữ liệu",
+  low_confidence: "Độ tin cậy thấp",
+  failed: "Phân tích thất bại",
+};
+
+export function enrichmentStatusLabel(status: AutoEnrollmentStatus): string {
+  return STATUS_LABELS[status] ?? "";
+}
+
+/** Placeholder "Đang phân tích" CHỈ khi AI đã dispatch (processing).
+ *  pending = chờ phân tích, chưa có AI nào chạy. */
+export function shouldShowProcessingPlaceholder(args: {
+  scoringAvailable: boolean;
+  status: AutoEnrollmentStatus | null | undefined;
+}): boolean {
+  return !args.scoringAvailable && args.status === "processing";
 }
 

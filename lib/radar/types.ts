@@ -3,7 +3,7 @@ export type RadarStatus="ACTIVE"|"PAUSED";
 export type CoverageStatus="ok"|"thin"|"none"|"unknown";
 export type Staleness="fresh"|"stale"|"unknown";
 export type AutoEnrollmentStatus="not_started"|"pending"|"processing"|"completed"|"insufficient_data"|"low_confidence"|"failed";
-export interface RadarAutoEnrichment{status:AutoEnrollmentStatus;score:number|null;dealType:string|null;isNgoP:number|null;source:"auto_enrichment";confidence:"low"|"medium"|"high"|null;checkedAt:string|null;}
+export interface RadarAutoEnrichment{status:AutoEnrollmentStatus;score:number|null;dealType:string|null;isNgoP:number|null;source:"auto_enrichment"|"manual_check";confidence:"low"|"medium"|"high"|null;checkedAt:string|null;fingerprint:string|null;}
 
 export interface RadarCriteria{name:string;areaV2:number;areaName:string|null;regionName:string|null;categoryCode:number|null;priceMinVnd:number|null;priceMaxVnd:number|null;areaMinM2:number|null;areaMaxM2:number|null;minScore:number|null;dealTypes:string[];ngoPOnly:boolean;status:RadarStatus;}
 export interface RadarCoverage{status:CoverageStatus;lastSeenAt:string|null;freshness:string|null;staleness:Staleness;listingCount:number|null;checkedAt:string|null;source:string;description:string|null;excludedCount:number|null;}

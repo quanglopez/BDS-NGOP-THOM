@@ -62,13 +62,14 @@ interface UpsertCall {
  *  số query mỗi bảng để chứng minh batch lookup (không N+1). */
 function fakeDb(
   tables: Record<string, Row[]>,
-  failures: { table: string; op: "select" | "upsert" }[] = [],
+  failures: { table: string; op: "select" | "upsert" | "insert" }[] = [],
 ) {
   const upserts: UpsertCall[] = [];
+  const inserts: UpsertCall[] = [];
   const updates: { table: string; patch: Row }[] = [];
   const fromCalls: Record<string, number> = {};
   const store = (t: string): Row[] => (tables[t] ??= []);
-  const forced = (table: string, op: "select" | "upsert") =>
+  const forced = (table: string, op: "select" | "upsert" | "insert") =>
     failures.some((f) => f.table === table && f.op === op)
       ? { code: "XX000", message: `forced_${op}_failure` }
       : null;
@@ -84,8 +85,15 @@ function fakeDb(
     const match = (r: Row) =>
       filters.every(([op, c, v]) => {
         if (op === "eq") return r[c] === v;
-        if (op === "gte") return Number(r[c]) >= Number(v);
-        if (op === "lte") return Number(r[c]) <= Number(v);
+        // NULL không thoả gte/lte (giống SQL); so chuỗi ISO theo thứ tự từ điển.
+        if (op === "gte") {
+          if (r[c] == null) return false;
+          return typeof r[c] === "string" && typeof v === "string" ? (r[c] as string) >= v : Number(r[c]) >= Number(v);
+        }
+        if (op === "lte") {
+          if (r[c] == null) return false;
+          return typeof r[c] === "string" && typeof v === "string" ? (r[c] as string) <= v : Number(r[c]) <= Number(v);
+        }
         if (op === "not") return r[c] !== null && r[c] !== undefined;
         if (op === "in") return Array.isArray(v) && v.includes(r[c]);
         return true;
@@ -164,6 +172,23 @@ function fakeDb(
         }
         return { data: null, error: null };
       },
+      async insert(payload: Row[]) {
+        const forcedError = forced(table, "insert");
+        if (forcedError) return { data: null, error: forcedError };
+        inserts.push({ table, rows: payload });
+        const cur = store(table);
+        for (const row of payload) cur.push({ ...row });
+        return { data: null, error: null };
+      },
+      async maybeSingle() {
+        const forcedError = forced(table, "select");
+        if (forcedError) return { data: null, error: forcedError };
+        if (pending) {
+          for (const r of store(table)) if (match(r)) Object.assign(r, pending);
+          pending = null;
+        }
+        return { data: rows()[0] ?? null, error: null };
+      },
       update(patch: Row) {
         updates.push({ table, patch });
         pending = patch;
@@ -173,7 +198,7 @@ function fakeDb(
     return api;
   }
 
-  return { db: { from } as unknown as SupabaseClient, upserts, updates, tables, fromCalls };
+  return { db: { from } as unknown as SupabaseClient, upserts, inserts, updates, tables, fromCalls };
 }
 
 const listing = (id: string, lastSeen: string): Row => ({
@@ -554,4 +579,183 @@ const storedMatch = (id: string, lastMatchedAt: string): Row => ({
   assert.deepEqual(JSON.parse(JSON.stringify(f.tables.market_listings)), listingsBefore, "input market_listings bị mutate");
   assert.deepEqual(JSON.parse(JSON.stringify(f.tables.checks)), checksBefore, "input checks bị mutate");
   assert.deepEqual(JSON.parse(JSON.stringify(RADAR)), radarBefore, "Radar config bị mutate");
+}
+
+// ------------------------------------------------- auto-enrollment integration
+// MANDATORY 34/35: scan chỉ ENQUEUE job pending — không dispatch AI, không charge,
+// không chờ provider; mọi lỗi enqueue không được làm scan fail.
+const RADAR_PRO: RadarSummary = { ...RADAR, userId: "user-1" };
+const PRO_USER = { id: "user-1", plan: "pro", plan_expires_at: "2099-01-01T00:00:00Z" };
+
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z"), listing("222", "2026-10-02T08:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [],
+  });
+  const res = await scanRadar(f.db, RADAR_PRO);
+
+  assert.equal(res.matches.length, 2, "scan phải xong dù có enqueue job");
+  const jobInserts = f.inserts.filter((i) => i.table === "auto_enrichment_jobs");
+  assert.equal(jobInserts.length, 1, "job enqueue theo batch 1 lần");
+  assert.equal(jobInserts[0]!.rows.length, 2);
+  for (const row of jobInserts[0]!.rows) {
+    assert.equal(row.status, "pending");
+    assert.equal(row.dispatch_started_at, null, "enqueue KHÔNG được dispatch/charge");
+    assert.equal(row.allowance_consumed, false);
+    assert.equal(row.user_id, "user-1");
+    assert.equal(row.radar_id, "radar-1");
+    assert.equal((row.material_input as Row).url, undefined, "material input không được chứa url");
+    assert.equal((row.material_input as Row).original_text, undefined);
+  }
+  assert.equal(f.fromCalls.auto_enrichment_jobs, 3, "2 select (existing + allowance count) + 1 insert batch, không N+1");
+
+  const matchUpsert = f.upserts.find((u) => u.table === "radar_matches")!;
+  for (const row of matchUpsert.rows) {
+    assert.equal("enrichment_status" in row, false, "scan không ghi enrichment fields (worker lo)");
+    assert.equal("enrichment_score" in row, false);
+  }
+}
+
+// Enqueue lỗi (select jobs lỗi) -> scan vẫn chạy xong, radar_matches + radars ghi bình thường.
+{
+  const f = fakeDb(
+    {
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [],
+      radar_matches: [],
+      radars: [{ id: "radar-1" }],
+      users: [PRO_USER],
+      auto_enrichment_jobs: [],
+    },
+    [{ table: "auto_enrichment_jobs", op: "select" }],
+  );
+  const res = await scanRadar(f.db, RADAR_PRO);
+  assert.equal(res.matches.length, 1, "lỗi enqueue không làm scan fail");
+  assert.equal(f.tables.radar_matches.length, 1, "radar_matches vẫn được ghi");
+  assert.ok(f.updates.some((u) => u.table === "radars"), "radars vẫn được cập nhật");
+}
+
+// Enqueue lỗi (insert jobs lỗi) -> scan vẫn chạy xong.
+{
+  const f = fakeDb(
+    {
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [],
+      radar_matches: [],
+      radars: [{ id: "radar-1" }],
+      users: [PRO_USER],
+      auto_enrichment_jobs: [],
+    },
+    [{ table: "auto_enrichment_jobs", op: "insert" }],
+  );
+  const res = await scanRadar(f.db, RADAR_PRO);
+  assert.equal(res.matches.length, 1, "lỗi insert job không làm scan fail");
+  assert.equal(f.tables.radar_matches.length, 1);
+}
+
+// Allowance đếm theo dispatch_started_at: 199 job đã dispatch hôm nay + 1 pending
+// -> chỉ còn đúng 1 slot, dù có 3 tin eligible.
+{
+  const dispatchedToday = Array.from({ length: 199 }, (_, i) => ({
+    id: "job-" + i,
+    user_id: "user-1",
+    dispatch_started_at: new Date().toISOString(),
+  }));
+  const f = fakeDb({
+    market_listings: [
+      listing("111", "2026-10-02T09:00:00Z"),
+      listing("222", "2026-10-02T08:00:00Z"),
+      listing("333", "2026-10-02T07:00:00Z"),
+    ],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [...dispatchedToday, { id: "job-pending", user_id: "user-1", dispatch_started_at: null }],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  const jobInserts = f.inserts.filter((i) => i.table === "auto_enrichment_jobs");
+  assert.equal(jobInserts.length, 1);
+  assert.equal(jobInserts[0]!.rows.length, 1, "consumed 199/200 -> cap còn 1 slot");
+}
+
+// Free plan: không enqueue, không query bảng jobs.
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [{ id: "user-1", plan: "free", plan_expires_at: "2099-01-01T00:00:00Z" }],
+    auto_enrichment_jobs: [],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  assert.equal(f.fromCalls.auto_enrichment_jobs ?? 0, 0, "free plan không được chạm bảng jobs");
+  assert.equal(f.inserts.filter((i) => i.table === "auto_enrichment_jobs").length, 0);
+}
+
+// ------------------------------------------------- auto-enrichment read mapping
+// Cột DB đúng tên: enrichment_checked_at + enrichment_fingerprint + enrichment_source
+// (đọc từ DB, không hardcode); null != 0.
+{
+  const f = fakeDb({
+    radar_matches: [
+      {
+        ...storedMatch("111", "2026-10-02T09:00:00Z"),
+        enrichment_status: "completed",
+        enrichment_source: null,
+        enrichment_score: 0,
+        enrichment_deal_type: null,
+        enrichment_is_ngop: null,
+        enrichment_confidence: "high",
+        enrichment_checked_at: "2026-10-03T00:00:00Z",
+        enrichment_fingerprint: "hash-111",
+      },
+      {
+        ...storedMatch("222", "2026-10-02T08:00:00Z"),
+        enrichment_status: "completed",
+        enrichment_source: "manual_check",
+        enrichment_score: 82,
+        enrichment_deal_type: "ngop_ngon",
+        enrichment_is_ngop: 88,
+        enrichment_confidence: "medium",
+        enrichment_checked_at: "2026-10-03T01:00:00Z",
+        enrichment_fingerprint: "hash-222",
+      },
+      {
+        ...storedMatch("333", "2026-10-02T07:00:00Z"),
+        enrichment_status: "insufficient_data",
+        enrichment_source: "auto_enrichment",
+        enrichment_score: null,
+        enrichment_checked_at: null,
+        enrichment_fingerprint: null,
+      },
+    ],
+  });
+  const got = await getRadarMatches(f.db, RADAR);
+  const a = got.find((m: RadarMatch) => m.externalId === "111")!.auto_enrichment!;
+  assert.equal(a.status, "completed");
+  assert.equal(a.score, 0, "enrichment_score 0 phải giữ 0");
+  assert.notEqual(a.score, null);
+  assert.equal(a.dealType, null, "deal_type null giữ null");
+  assert.equal(a.isNgoP, null, "is_ngop null giữ null");
+  assert.equal(a.source, "auto_enrichment", "DB null -> fallback auto");
+  assert.equal(a.confidence, "high");
+  assert.equal(a.checkedAt, "2026-10-03T00:00:00Z", "phải đọc đúng cột enrichment_checked_at");
+  assert.equal(a.fingerprint, "hash-111", "phải đọc đúng cột enrichment_fingerprint");
+
+  const b = got.find((m: RadarMatch) => m.externalId === "222")!.auto_enrichment!;
+  assert.equal(b.source, "manual_check", "source phải đọc từ DB, không hardcode");
+  assert.equal(b.score, 82);
+
+  const c = got.find((m: RadarMatch) => m.externalId === "333")!.auto_enrichment!;
+  assert.equal(c.status, "insufficient_data");
+  assert.equal(c.score, null);
+  assert.notEqual(c.score, 0, "thiếu dữ liệu không được quy về 0");
+  assert.equal(c.checkedAt, null);
+  assert.equal(c.fingerprint, null);
 }
