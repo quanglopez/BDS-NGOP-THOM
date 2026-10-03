@@ -169,6 +169,25 @@ export function enrichmentStatusLabel(status: AutoEnrollmentStatus): string {
   return STATUS_LABELS[status] ?? "";
 }
 
+/** Điểm + nhãn hiển thị trên thẻ tin. completed mà không có điểm (manual thắng,
+ *  auto không publish score) KHÔNG được nói "Đã chấm". Không bịa điểm.
+ *  scoringAvailable: điểm thủ công thắng, kể cả khi auto completed/null. */
+export function matchEnrichmentDisplay(args: {
+  scoringAvailable: boolean;
+  manualScore: number | null;
+  autoStatus: AutoEnrollmentStatus | null;
+  autoScore: number | null;
+}): { score: number | null; statusLabel: string } {
+  const autoScore = args.autoStatus === "completed" ? args.autoScore : null;
+  const score = args.scoringAvailable ? args.manualScore : autoScore;
+  const claimedScored = args.autoStatus === "completed" && args.autoScore == null;
+  const statusLabel =
+    !args.scoringAvailable && args.autoStatus && args.autoStatus !== "not_started" && !claimedScored
+      ? enrichmentStatusLabel(args.autoStatus)
+      : "";
+  return { score, statusLabel };
+}
+
 /** Placeholder "Đang phân tích" CHỈ khi AI đã dispatch (processing).
  *  pending = chờ phân tích, chưa có AI nào chạy. */
 export function shouldShowProcessingPlaceholder(args: {

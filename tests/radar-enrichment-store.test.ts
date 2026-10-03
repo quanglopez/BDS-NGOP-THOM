@@ -107,10 +107,8 @@ function recordingDb(rpcResults: Record<string, unknown> = {}) {
     const rec: Recorded = { op: "rpc", table: name, args, filters: [] };
     calls.push(rec);
     const result = rpcResults[name];
-    // RPC trả scalar boolean (begin_dispatch) hoặc setof rows (claim).
-    if (typeof result === "boolean") return Promise.resolve({ data: result, error: null });
-    const data = Array.isArray(result) ? result : result === undefined ? [] : [result];
-    return Promise.resolve({ data, error: null });
+    // Trả đúng kiểu caller khai: boolean, string, null, array, object. Không bọc thêm.
+    return Promise.resolve({ data: result === undefined ? [] : result, error: null });
   };
 
   return {
@@ -159,46 +157,38 @@ await test("claimPending gọi RPC với limit, không dùng SELECT/UPDATE rời
   assert.equal(h.all("update").length, 0, "không được UPDATE thủ công sau SELECT");
 });
 
-await test("beginDispatch truyền p_daily_limit = 200 (cap ngày chốt ở DB)", async () => {
-  const h = recordingDb({ begin_auto_enrichment_dispatch: true });
+await test("beginDispatch truyền p_daily_limit = 200 và trả timestamp RPC, không phải boolean", async () => {
+  const h = recordingDb({ begin_auto_enrichment_dispatch_at: "2026-10-01T00:00:00.000Z" });
   const store = createSupabaseEnrichmentStore(h.db);
-  assert.equal(await store.beginDispatch(JOB), true);
+  assert.equal(await store.beginDispatch(JOB), "2026-10-01T00:00:00.000Z");
   const rpc = h.last("rpc");
-  assert.equal(rpc.table, "begin_auto_enrichment_dispatch");
+  assert.equal(rpc.table, "begin_auto_enrichment_dispatch_at");
   assert.equal(rpc.args!.p_job_id, "job-1");
   assert.equal(rpc.args!.p_claim_token, "token-1");
   assert.equal(rpc.args!.p_daily_limit, 200, "phải khoá đúng policy 200/ngày");
+  assert.equal(h.all("update").length, 0, "không UPDATE dispatch_started_at phía client");
 });
 
-await test("beginDispatch false khi RPC trả false (cap/stale) — không coi là lỗi", async () => {
-  const h = recordingDb({ begin_auto_enrichment_dispatch: false });
+await test("beginDispatch null khi RPC trả null (cap/stale) — không coi là lỗi", async () => {
+  const h = recordingDb({ begin_auto_enrichment_dispatch_at: null });
   const store = createSupabaseEnrichmentStore(h.db);
-  assert.equal(await store.beginDispatch(JOB), false);
+  assert.equal(await store.beginDispatch(JOB), null);
 });
 
-await test("reclaim: xoá lease (claim_token + processing_started_at), lọc đúng 2 nhánh", async () => {
-  const h = recordingDb();
+await test("reclaim gọi RPC lease giây, không gửi timestamp app làm đồng hồ", async () => {
+  const h = recordingDb({ reclaim_stale_auto_enrichment_jobs: [{ requeued: 1, failed: 2 }] });
   const store = createSupabaseEnrichmentStore(h.db);
-  await store.reclaimStaleProcessing("2026-10-03T00:00:00Z", 3);
-
-  const ups = h.all("update");
-  assert.equal(ups.length, 2, "2 nhánh: còn lượt -> pending, hết lượt -> failed");
-  for (const u of ups) {
-    assert.equal(u.table, "auto_enrichment_jobs");
-    assert.equal(u.payload!.claim_token, null, "phải xoá claim token");
-    assert.equal(u.payload!.processing_started_at, null, "phải xoá processing_started_at (lease hết hiệu lực)");
-    assert.equal(u.payload!.error_kind, "lease_expired");
+  const got = await store.reclaimStaleProcessing(10 * 60 * 1000, 3);
+  assert.deepEqual(got, { requeued: 1, failed: 2 });
+  const rpc = h.last("rpc")!;
+  assert.equal(rpc.table, "reclaim_stale_auto_enrichment_jobs");
+  assert.equal(rpc.args!.p_lease_seconds, 600);
+  assert.equal(rpc.args!.p_max_attempts, 3);
+  assert.ok(Number(rpc.args!.p_backoff_seconds) >= 30, "backoff tối thiểu 30s");
+  for (const [k, v] of Object.entries(rpc.args!)) {
+    assert.equal(typeof v === "string", false, `${k} không được là timestamp client`);
   }
-  assert.equal(ups[0]!.payload!.status, "pending");
-  assert.equal(ups[0]!.payload!.next_attempt_at != null, true, "requeue phải có lịch chạy lại");
-  assert.equal(ups[1]!.payload!.status, "failed");
-  // CAS: chỉ job processing quá lease + đúng nhánh attempts.
-  for (const u of ups) {
-    const kinds = u.filters.map(([op]) => op);
-    assert.ok(kinds.includes("lt") && kinds.includes("eq"), "phải có điều kiện lọc (status + lease)");
-  }
-  const attemptsFilters = ups.map((u) => u.filters.filter(([op]) => op === "lt" || op === "gte").map(([op, col]) => `${op}:${col}`).join(","));
-  assert.notEqual(attemptsFilters[0], attemptsFilters[1], "2 nhánh phải lọc attempts khác nhau (< max vs >= max)");
+  assert.equal(h.all("update").length, 0, "không UPDATE lease phía client");
 });
 
 await test("releaseToPending: CAS theo id + claim_token + status=processing", async () => {
@@ -269,6 +259,14 @@ await test("FIX 2. markMatchProcessing: row của job khác -> false (không ove
   assert.ok(
     second.filters.some(([op, col]) => op === "is" && col === "enrichment_job_id"),
     "nhánh claim row chưa ai sở hữu phải lọc enrichment_job_id is null",
+  );
+  assert.ok(
+    second.filters.some(([op, col, val]) => op === "is" && col === "enrichment_fingerprint" && val == null),
+    "nhánh job_id null chỉ claim khi chưa có fingerprint",
+  );
+  assert.ok(
+    second.filters.some(([op, col, val]) => op === "is" && col === "enrichment_checked_at" && val == null),
+    "nhánh job_id null chỉ claim khi chưa publish (checked_at null)",
   );
   assert.ok(
     second.filters.some(([op, col]) => op === "in" && col === "enrichment_status"),
@@ -357,22 +355,48 @@ await test("persistMatchEnrichment giữ nguyên null (score=0 không bị đổ
   assert.equal(p.enrichment_is_ngop, 0);
 });
 
-await test("latestManualCheckAt: lọc theo external_id chính xác + chỉ Check đã chấm + sort mới nhất", async () => {
-  const h = recordingDb();
-  h.setRows([
-    { listing_url: "https://checkbds.vn/check/nha-123456.htm", created_at: "2026-10-03T01:00:00Z" },
-    { listing_url: "https://checkbds.vn/check/nha-111.htm", created_at: "2026-10-02T01:00:00Z" },
-  ]);
+await test("latestManualCheckAt gọi RPC exact-id, không like hậu tố + limit", async () => {
+  const h = recordingDb({ latest_manual_check_at: "2026-10-02T01:00:00Z" });
   const store = createSupabaseEnrichmentStore(h.db);
-  const at = await store.latestManualCheckAt("111");
-  assert.equal(at, "2026-10-02T01:00:00Z", "123456 là id KHÁC, không được khớp 111");
-  const q = h.last("select")!;
-  assert.equal(q.table, "checks");
-  assert.ok(q.filters.some(([op, col]) => op === "not" && col === "score"), "chỉ Check đã chấm");
-  assert.ok(q.filters.some(([op, col]) => op === "like" && col === "listing_url"), "lọc theo URL chứa external_id");
-  assert.ok(q.filters.some(([op]) => op === "gte" || op === "not"), "không đọc original_text");
-  assert.equal(q.orderCol, "created_at");
-  assert.equal(q.orderAsc, false, "mới nhất trước");
+  assert.equal(await store.latestManualCheckAt("111"), "2026-10-02T01:00:00Z");
+  const rpc = h.last("rpc")!;
+  assert.equal(rpc.table, "latest_manual_check_at");
+  assert.equal(rpc.args!.p_external_id, "111");
+  assert.equal(h.all("select").filter((c) => c.table === "checks").length, 0, "không select checks + like");
+});
+
+// Model predicate SQL 0022 (substring id = external_id rồi mới limit 1). Không phải proof Postgres.
+function modelLatestManualCheckAt(
+  rows: { listing_url: string; created_at: string; score: number | null }[],
+  externalId: string,
+): string | null {
+  const hits = rows.filter((r) => r.score != null && r.listing_url.match(/([0-9]+)\.htm($|[?#])/)?.[1] === externalId);
+  hits.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  return hits[0]?.created_at ?? null;
+}
+
+await test("P2-4. >10 check của A vẫn thấy dù B có URL hậu tố mới hơn", async () => {
+  const rows: { listing_url: string; created_at: string; score: number | null }[] = [];
+  for (let i = 0; i < 12; i++) {
+    rows.push({
+      listing_url: `https://checkbds.vn/check/nha-111.htm`,
+      created_at: `2026-10-01T${String(i).padStart(2, "0")}:00:00Z`,
+      score: 10 + i,
+    });
+  }
+  for (let i = 0; i < 15; i++) {
+    rows.push({
+      listing_url: `https://checkbds.vn/check/nha-${9000 + i}111.htm`,
+      created_at: `2026-10-03T${String(i).padStart(2, "0")}:00:00Z`,
+      score: 50,
+    });
+  }
+  assert.equal(modelLatestManualCheckAt(rows, "111"), "2026-10-01T11:00:00Z");
+  const oldLike = rows
+    .filter((r) => r.score != null && r.listing_url.endsWith("111.htm"))
+    .sort((a, b) => (a.created_at < b.created_at ? 1 : -1))
+    .slice(0, 10);
+  assert.equal(oldLike.some((r) => r.listing_url.endsWith("/nha-111.htm")), false, "limit 10 hậu tố che mất check thật");
 });
 
 await test("isPlanPro đọc plan + plan_expires_at, không đoán plan khác", async () => {
@@ -466,6 +490,33 @@ await test("P1-1. markMatchProcessing: takeover chỉ khi chủ cũ CỨ hơn jo
     { id: "m1", radar_id: "radar-1", external_id: "111", enrichment_job_id: "job-legacy", enrichment_fingerprint: "hash-A", enrichment_job_created_at: null },
   ]);
   assert.equal(await createSupabaseEnrichmentStore(legacyOwner.db).markMatchProcessing(JOB_B), false, "không có tuổi của chủ cũ -> không đè");
+});
+
+await test("P2-6. job_id null nhưng còn fingerprint của B -> A không cướp", async () => {
+  const h = recordingDb();
+  h.seed("radar_matches", [
+    {
+      id: "m1", radar_id: "radar-1", external_id: "111",
+      enrichment_job_id: null, enrichment_fingerprint: "hash-B",
+      enrichment_checked_at: "2026-10-03T00:00:00Z", enrichment_status: "pending",
+      enrichment_job_created_at: "2026-10-03T00:00:00Z",
+    },
+  ]);
+  assert.equal(await createSupabaseEnrichmentStore(h.db).markMatchProcessing(JOB), false, "A không được chiếm row đã publish của B");
+  const fresh = h.all("update")[1]!;
+  assert.ok(fresh.filters.some(([op, col]) => op === "is" && col === "enrichment_fingerprint"));
+});
+
+await test("P2-8. markTerminal false khi claim_token không khớp, true khi khớp", async () => {
+  const miss = recordingDb();
+  miss.seed("auto_enrichment_jobs", [{ id: "job-1", claim_token: "stolen", status: "processing" }]);
+  assert.equal(await createSupabaseEnrichmentStore(miss.db).markTerminal(JOB, "completed"), false);
+  const filters = miss.last("update")!.filters.map(([op, col]) => `${op}:${col}`);
+  assert.ok(filters.includes("eq:claim_token") && filters.includes("eq:id") && filters.includes("eq:status"));
+
+  const hit = recordingDb();
+  hit.seed("auto_enrichment_jobs", [{ id: "job-1", claim_token: "token-1", status: "processing" }]);
+  assert.equal(await createSupabaseEnrichmentStore(hit.db).markTerminal(JOB, "completed"), true);
 });
 
 await test("P1-1. takeover vẫn ghi 'processing' + đúng fingerprint/job của job mới", async () => {

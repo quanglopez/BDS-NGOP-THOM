@@ -6,49 +6,23 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { effectivePlan } from "@/lib/quota";
 import { AUTO_ENRICHMENT_DAILY_LIMIT } from "./auto-enrollment";
-import { listingIdFromUrl } from "./signals";
 import type { EnrichmentJobRow, EnrichmentWorkerStore, MatchEnrichmentPatch } from "./enrichment-worker";
 
 export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWorkerStore {
   const nowISO = () => new Date().toISOString();
 
   return {
-    // Quá lease -> trả về pending (còn lượt) hoặc failed (hết lượt). Idempotent.
-    async reclaimStaleProcessing(cutoffISO, maxAttempts) {
-      const requeued = await db
-        .from("auto_enrichment_jobs")
-        .update({
-          status: "pending",
-          claim_token: null,
-          processing_started_at: null,
-          next_attempt_at: nowISO(),
-          error_kind: "lease_expired",
-          last_error: "lease_expired",
-          updated_at: nowISO(),
-        })
-        .eq("status", "processing")
-        .lt("processing_started_at", cutoffISO)
-        .lt("attempts", maxAttempts)
-        .select("id");
-      if (requeued.error) throw requeued.error;
-
-      const dead = await db
-        .from("auto_enrichment_jobs")
-        .update({
-          status: "failed",
-          claim_token: null,
-          processing_started_at: null,
-          error_kind: "lease_expired",
-          last_error: "lease_expired",
-          updated_at: nowISO(),
-        })
-        .eq("status", "processing")
-        .lt("processing_started_at", cutoffISO)
-        .gte("attempts", maxAttempts)
-        .select("id");
-      if (dead.error) throw dead.error;
-
-      return { requeued: requeued.data?.length ?? 0, failed: dead.data?.length ?? 0 };
+    // Quá lease theo now() của DB (RPC 0022), không theo giờ app.
+    // Requeue lùi >= 30s. Không xoá dispatch_started_at.
+    async reclaimStaleProcessing(leaseMs, maxAttempts) {
+      const { data, error } = await db.rpc("reclaim_stale_auto_enrichment_jobs", {
+        p_lease_seconds: Math.max(1, Math.ceil(leaseMs / 1000)),
+        p_max_attempts: maxAttempts,
+        p_backoff_seconds: 30,
+      });
+      if (error) throw error;
+      const row = (Array.isArray(data) ? data[0] : data) as { requeued?: number; failed?: number } | null;
+      return { requeued: Number(row?.requeued ?? 0), failed: Number(row?.failed ?? 0) };
     },
 
     async claimPending(limit) {
@@ -68,13 +42,13 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
     },
 
     async beginDispatch(job) {
-      const { data, error } = await db.rpc("begin_auto_enrichment_dispatch", {
+      const { data, error } = await db.rpc("begin_auto_enrichment_dispatch_at", {
         p_job_id: job.id,
         p_claim_token: job.claim_token,
         p_daily_limit: AUTO_ENRICHMENT_DAILY_LIMIT,
       });
       if (error) throw error;
-      return data === true;
+      return typeof data === "string" && data.length > 0 ? data : null;
     },
 
     async releaseToPending(job, patch) {
@@ -97,7 +71,7 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
     },
 
     async markTerminal(job, status, error) {
-      const { error: updateError } = await db
+      const { data, error: updateError } = await db
         .from("auto_enrichment_jobs")
         .update({
           status,
@@ -112,6 +86,7 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
         .eq("status", "processing")
         .select("id");
       if (updateError) throw updateError;
+      return (data?.length ?? 0) > 0;
     },
 
     /** Ghi trạng thái processing. Ownership của row phân giải theo BỘ BA
@@ -138,9 +113,12 @@ async markMatchProcessing(job: EnrichmentJobRow): Promise<boolean> {
       const owned = await row().eq("enrichment_job_id", job.id).select("id");
       if (owned.error) throw owned.error;
       if ((owned.data?.length ?? 0) > 0) return true;
-      // 2) Chưa có job nào chiếm row: claim row chưa có kết quả (pending/scan mới).
+      // 2) Chưa có job nào chiếm row VÀ chưa từng publish (fingerprint + checked_at
+      // đều null). job_id bị xoá nhưng còn fingerprint thì không được cướp.
       const fresh = await row()
         .is("enrichment_job_id", null)
+        .is("enrichment_fingerprint", null)
+        .is("enrichment_checked_at", null)
         .in("enrichment_status", ["not_started", "pending"])
         .select("id");
       if (fresh.error) throw fresh.error;
@@ -149,23 +127,12 @@ async markMatchProcessing(job: EnrichmentJobRow): Promise<boolean> {
       return takeOverMatchRow(db, job, cols);
     },
 
-    // Check thủ công mới nhất của 1 listing: chỉ lấy Check ĐÃ chấm, lọc chính xác
-    // external_id để tránh trùng hậu tố số (123456 vs 23456).
+    // Check thủ công mới nhất: RPC bóc id đúng listing RỒI mới limit 1.
+    // like hậu tố + limit 10 để URL mới hơn (…99111.htm) che mất 111.
     async latestManualCheckAt(externalId) {
-      const { data, error } = await db
-        .from("checks")
-        .select("listing_url,created_at")
-        .not("score", "is", null)
-        .like("listing_url", `%${externalId}.htm`)
-        .order("created_at", { ascending: false })
-        .limit(10);
+      const { data, error } = await db.rpc("latest_manual_check_at", { p_external_id: externalId });
       if (error) throw error;
-      for (const row of data ?? []) {
-        if (listingIdFromUrl(row.listing_url) === externalId && typeof row.created_at === "string") {
-          return row.created_at;
-        }
-      }
-      return null;
+      return typeof data === "string" && data.length > 0 ? data : null;
     },
 
     async persistMatchEnrichment(job, patch: MatchEnrichmentPatch) {

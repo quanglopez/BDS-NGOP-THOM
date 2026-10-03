@@ -47,21 +47,25 @@ export interface MatchEnrichmentPatch {
 }
 
 export interface EnrichmentWorkerStore {
-  reclaimStaleProcessing(cutoffISO: string, maxAttempts: number): Promise<{ requeued: number; failed: number }>;
+  /** leaseMs là ĐỘ DÀI lease, không phải cutoff. Store/RPC so với now() của DB. */
+  reclaimStaleProcessing(leaseMs: number, maxAttempts: number): Promise<{ requeued: number; failed: number }>;
   claimPending(limit: number): Promise<EnrichmentJobRow[]>;
   isPlanPro(userId: string): Promise<boolean>;
-  beginDispatch(job: EnrichmentJobRow): Promise<boolean>;
+  /** null = hết cap hoặc mất claim. string = dispatch_started_at DB ghi cho lần dispatch này
+   *  (retry trả đúng mốc cũ, không phải now() mới). */
+  beginDispatch(job: EnrichmentJobRow): Promise<string | null>;
   /** false = CAS không khớp (row do job khác sở hữu / đã có kết quả). */
   markMatchProcessing(job: EnrichmentJobRow): Promise<boolean>;
   releaseToPending(
     job: EnrichmentJobRow,
     patch: { nextAttemptAt: string; updatedAt: string; errorKind: string; lastError: string },
   ): Promise<void>;
+  /** false = CAS claim_token không khớp. Caller không được tính là đã ghi terminal. */
   markTerminal(
     job: EnrichmentJobRow,
     status: EnrichmentTerminalStatus,
     error?: { errorKind: string; lastError: string },
-  ): Promise<void>;
+  ): Promise<boolean>;
   latestManualCheckAt(externalId: string): Promise<string | null>;
   persistMatchEnrichment(job: EnrichmentJobRow, patch: MatchEnrichmentPatch): Promise<boolean>;
 }
@@ -127,11 +131,9 @@ export async function runEnrichmentWorker(args: {
   };
 
   // Job processing mồ côi (worker crash) -> trả về pending nếu còn lượt, hết lượt -> failed.
+  // Cutoff tính trong DB (now() - lease), không lấy giờ app.
   try {
-    await args.store.reclaimStaleProcessing(
-      new Date(nowFn() - limits.leaseMs).toISOString(),
-      limits.maxAttempts,
-    );
+    await args.store.reclaimStaleProcessing(limits.leaseMs, limits.maxAttempts);
   } catch (e) {
     result.errors.push("reclaim:" + errName(e));
   }
@@ -153,14 +155,16 @@ export async function runEnrichmentWorker(args: {
 
       // PRO-only end-to-end: user hết hạn giữa lúc enqueue và dispatch -> không tiêu tiền AI.
       if (!(await args.store.isPlanPro(job.user_id))) {
-        await args.store.markTerminal(job, "failed", { errorKind: "plan_inactive", lastError: "plan_inactive" });
-        result.planBlocked++;
+        const closed = await args.store.markTerminal(job, "failed", { errorKind: "plan_inactive", lastError: "plan_inactive" });
+        if (!closed) result.lostClaims++;
+        else result.planBlocked++;
         continue;
       }
 
-      // Atomic tại DB: charge allowance (lần đầu) + tăng attempts. false = cap/stale claim.
-      const started = await args.store.beginDispatch(job);
-      if (!started) {
+      // Atomic tại DB: charge allowance (lần đầu) + tăng attempts.
+      // null = cap/mất claim. string = mốc dispatch DB vừa ghi (hoặc mốc cũ nếu retry).
+      const dispatchStartedAt = await args.store.beginDispatch(job);
+      if (dispatchStartedAt == null) {
         if (firstDispatch) {
           await args.store.releaseToPending(job, {
             nextAttemptAt: new Date(nowFn() + limits.capRetryMs).toISOString(),
@@ -177,21 +181,26 @@ export async function runEnrichmentWorker(args: {
       const attempts = job.attempts + 1;
 
       // Đã dispatch -> AI đang chạy: đưa radar_matches sang processing để UI báo
-      // "Đang phân tích". false = row đang do job KHÁC sở hữu và job đó MỚI HƠN
-      // (job cũ của fingerprint cũ) -> tiếp tục chạy nhưng ghi kết quả sẽ bị CAS
-      // chặn, KHÔNG được coi là đã ghi được processing.
-      // Job có fingerprint KHÁC nhưng tạo SAU (material đã đổi) thì vẫn chiếm được
-      // row — guard theo created_at, xem enrichment-store.markMatchProcessing.
+      // "Đang phân tích". false = không chiếm được row (job khác mới hơn, hoặc
+      // row đã có kết quả). Không gọi provider — allowance đã charge, không thiết
+      // kế lại cách tính tiền. Vẫn markTerminal để job không kẹt processing.
+      // Ném lỗi khi ghi processing thì KHÔNG biết ownership: vẫn gọi provider.
       let ownsRow = false;
+      let ownershipDenied = false;
       try {
         ownsRow = await args.store.markMatchProcessing(job);
-        // Row đang do job khác sở hữu -> không được coi là đã ghi processing.
-        if (!ownsRow) result.lostClaims++;
+        if (!ownsRow) {
+          result.lostClaims++;
+          ownershipDenied = true;
+        }
       } catch (e) {
         result.errors.push(job.id + ":mark_processing:" + errName(e));
       }
-      // ownsRow=false vẫn chạy tiếp: kết quả sẽ bị CAS của persistMatchEnrichment
-      // chặn, job vẫn terminal -> không mất job, không ghi đè row của job khác.
+      if (ownershipDenied) {
+        const closed = await args.store.markTerminal(job, "failed", { errorKind: "lost_claim", lastError: "lost_claim" });
+        if (!closed) result.lostClaims++;
+        continue;
+      }
 
       let outcome: AutoProviderOutcome;
       try {
@@ -202,7 +211,9 @@ export async function runEnrichmentWorker(args: {
 
       if (outcome.kind === "published") {
         const manualAt = await args.store.latestManualCheckAt(job.external_id);
-        const manualWins = isManualCheckWinnerOk(manualAt, job.dispatch_started_at ?? startedAt);
+        // Mốc so sánh là dispatch_started_at DB vừa trả, không phải startedAt local
+        // (chụp trước RPC) và không phải snapshot claim (null ở lần dispatch đầu).
+        const manualWins = isManualCheckWinnerOk(manualAt, dispatchStartedAt);
         const checkedAt = new Date(nowFn()).toISOString();
         const wrote = await args.store.persistMatchEnrichment(
           job,
@@ -210,10 +221,9 @@ export async function runEnrichmentWorker(args: {
             ? { status: "completed", source: "auto_enrichment", score: null, dealType: null, isNgoP: null, confidence: null, checkedAt }
             : { status: "completed", source: "auto_enrichment", score: outcome.score, dealType: outcome.dealType, isNgoP: outcome.isNgoP, confidence: outcome.confidence, checkedAt },
         );
-        // CAS không khớp (row đã sang job khác) -> job vẫn terminal nhưng KHÔNG báo
-        // publish: che mất việc mất ownership cũng là sai.
-        await args.store.markTerminal(job, "completed");
-        if (!wrote) result.lostClaims++;
+        // CAS job không khớp -> không được tính publish/terminal từ worker này.
+        const closed = await args.store.markTerminal(job, "completed");
+        if (!wrote || !closed) result.lostClaims++;
         else if (manualWins) result.manualWins++;
         else result.published++;
         continue;
@@ -230,8 +240,8 @@ export async function runEnrichmentWorker(args: {
           confidence: status === "low_confidence" ? "low" : null,
           checkedAt: new Date(nowFn()).toISOString(),
         });
-        await args.store.markTerminal(job, status);
-        if (!wrote) result.lostClaims++;
+        const closed = await args.store.markTerminal(job, status);
+        if (!wrote || !closed) result.lostClaims++;
         else if (status === "low_confidence") result.lowConfidence++;
         else result.insufficient++;
         continue;
@@ -259,9 +269,9 @@ export async function runEnrichmentWorker(args: {
         confidence: null,
         checkedAt: new Date(nowFn()).toISOString(),
       });
-      await args.store.markTerminal(job, "failed", { errorKind: outcome.kind, lastError: outcome.kind });
-      // Job terminal nhưng row đang của job khác -> không ghi đè, không tính failed.
-      if (!wroteFailed) result.lostClaims++;
+      const closed = await args.store.markTerminal(job, "failed", { errorKind: outcome.kind, lastError: outcome.kind });
+      // CAS miss (row hoặc claim_token) -> không tính failed/publish từ worker này.
+      if (!wroteFailed || !closed) result.lostClaims++;
       else result.failed++;
     } catch (e) {
       result.errors.push(job.id + ":" + errName(e));

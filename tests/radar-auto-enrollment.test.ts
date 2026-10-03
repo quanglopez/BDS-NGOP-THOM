@@ -17,6 +17,7 @@ import {
   provenanceLabel,
   isManualCheckWinnerOk,
   enrichmentStatusLabel,
+  matchEnrichmentDisplay,
   shouldShowProcessingPlaceholder,
   AUTO_ENROLLMENT_STATUSES,
   AUTO_ENRICHMENT_PER_RADAR_CAP,
@@ -266,6 +267,36 @@ test("placeholder 'Đang phân tích' chỉ khi processing (đã dispatch)", () 
   assert.equal(shouldShowProcessingPlaceholder({ scoringAvailable: true, status: "processing" }), false);
   assert.equal(shouldShowProcessingPlaceholder({ scoringAvailable: false, status: null }), false);
   assert.equal(shouldShowProcessingPlaceholder({ scoringAvailable: false, status: "completed" }), false);
+});
+
+test("P2-1. completed + score null không nói Đã chấm; điểm thủ công vẫn thắng", () => {
+  const manualWin = matchEnrichmentDisplay({
+    scoringAvailable: false,
+    manualScore: null,
+    autoStatus: "completed",
+    autoScore: null,
+  });
+  assert.equal(manualWin.score, null, "không bịa điểm khi auto không publish");
+  assert.equal(manualWin.statusLabel, "", "không được hiện Đã chấm");
+  assert.notEqual(manualWin.statusLabel, "Đã chấm");
+
+  const scored = matchEnrichmentDisplay({
+    scoringAvailable: false,
+    manualScore: null,
+    autoStatus: "completed",
+    autoScore: 82,
+  });
+  assert.equal(scored.score, 82);
+  assert.equal(scored.statusLabel, "Đã chấm");
+
+  const manual = matchEnrichmentDisplay({
+    scoringAvailable: true,
+    manualScore: 77,
+    autoStatus: "completed",
+    autoScore: null,
+  });
+  assert.equal(manual.score, 77, "scoringAvailable: điểm thủ công thắng");
+  assert.notEqual(manual.score, null);
 });
 
 test("provenance labels", () => {

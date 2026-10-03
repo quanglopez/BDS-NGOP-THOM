@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 
 const SQL = readFileSync(new URL("../supabase/migrations/0020_auto_enrichment_v1.sql", import.meta.url), "utf8");
 const SQL_0021 = readFileSync(new URL("../supabase/migrations/0021_radar_match_enrichment_ownership.sql", import.meta.url), "utf8");
+const SQL_0022 = readFileSync(new URL("../supabase/migrations/0022_enrichment_lease_and_dispatch_clock.sql", import.meta.url), "utf8");
 
 /** Cắt phần thân của `create or replace function ... $$ ... $$;` theo tên. */
 function functionBody(name: string): string {
@@ -284,6 +285,79 @@ test("H2. 0021 không làm yếu RLS/grant của 0019/0020", () => {
   // Không đòi backfill: cột nullable, không default, không update dữ liệu cũ.
   assert.equal(/\bupdate\b/i.test(SQL_0021_CODE), false, "0021 không được sửa dữ liệu cũ (không backfill)");
   assert.equal(/\bdelete\b/i.test(SQL_0021_CODE), false, "không được xoá dữ liệu");
+});
+
+// ================================================================ I. migration 0022
+// Assert tĩnh trên SQL. Không chạy Postgres — không phải proof runtime.
+
+function body0022(name: string): string {
+  const start = SQL_0022.indexOf(`function public.${name}(`);
+  assert.ok(start >= 0, `0022 thiếu function public.${name}`);
+  const open = SQL_0022.indexOf("$$", start);
+  const close = SQL_0022.indexOf("$$", open + 2);
+  assert.ok(open >= 0 && close > open, `0022 function ${name} thiếu $$`);
+  return flat(SQL_0022.slice(open + 2, close));
+}
+
+const SQL_0022_CODE = SQL_0022.replace(/--[^\n]*/g, "");
+
+test("I1. reclaim so now() - interval, không nhận timestamp client làm đồng hồ", () => {
+  const body = body0022("reclaim_stale_auto_enrichment_jobs");
+  assert.match(body, /processing_started_at < now\(\) - make_interval\(secs => v_lease\)/);
+  assert.match(body, /next_attempt_at = now\(\) \+ make_interval\(secs => v_backoff\)/);
+  assert.match(body, /v_backoff := greatest\(coalesce\(p_backoff_seconds, 30\), 30\)/);
+  assert.equal(/p_cutoff|cutoffISO|timestamptz/i.test(body), false, "không được có tham số giờ client");
+  assert.equal(/\bdispatch_started_at\b/i.test(body), false, "reclaim không được xoá dispatch_started_at");
+  assert.match(body, /attempts < coalesce\(p_max_attempts, 3\)/);
+  assert.match(body, /attempts >= coalesce\(p_max_attempts, 3\)/);
+});
+
+test("I2. begin_auto_enrichment_dispatch_at trả mốc DB, charge-once, không đè hàm 0020", () => {
+  const body = body0022("begin_auto_enrichment_dispatch_at");
+  assert.match(body, /select user_id, dispatch_started_at into v_user, v_dispatch/);
+  assert.match(body, /if v_dispatch is null then/);
+  assert.match(body, /set dispatch_started_at = now\(\), allowance_consumed = true/);
+  assert.match(body, /returning dispatch_started_at into v_dispatch/);
+  assert.match(body, /return v_dispatch/);
+  assert.match(body, /claim_token = p_claim_token/);
+  assert.match(body, /where public\.auto_enrichment_allowance\.consumed < p_daily_limit/);
+  assert.match(SQL_0022, /function public\.begin_auto_enrichment_dispatch_at\(/);
+  assert.equal(/function public\.begin_auto_enrichment_dispatch\(/i.test(SQL_0022), false, "không thay chữ ký hàm 0020");
+  assert.match(SQL, /function public\.begin_auto_enrichment_dispatch\(/);
+});
+
+test("I3. latest_manual_check_at lọc exact id trước limit 1, không like + limit 10", () => {
+  const body = body0022("latest_manual_check_at");
+  assert.match(body, /substring\(c\.listing_url from '\(\[0-9\]\+\)\\.htm\(\$\|\[\?#\]\)'\) = p_external_id/);
+  assert.match(body, /c\.score is not null/);
+  assert.match(body, /order by c\.created_at desc/);
+  assert.match(body, /limit 1/);
+  assert.equal(/\blike\b/i.test(body), false, "không like hậu tố");
+  const whereAt = body.indexOf("where");
+  const limitAt = body.indexOf("limit 1");
+  assert.ok(whereAt >= 0 && whereAt < limitAt, "exact id phải đứng trước limit");
+});
+
+test("I4. trigger chặn pending đè processing, không tắt RLS, grant chỉ service_role", () => {
+  const body = body0022("preserve_radar_match_processing");
+  assert.match(body, /old\.enrichment_status = 'processing' and new\.enrichment_status = 'pending'/);
+  assert.match(body, /new\.enrichment_status := old\.enrichment_status/);
+  assert.match(body, /new\.enrichment_source := old\.enrichment_source/);
+  assert.match(SQL_0022_CODE, /before update on public\.radar_matches/);
+  assert.match(SQL_0022_CODE, /drop trigger if exists radar_matches_preserve_processing/);
+  assert.equal(/disable row level security/i.test(SQL_0022_CODE), false);
+  assert.equal(/\bdrop\s+table\b/i.test(SQL_0022_CODE), false);
+  assert.equal(/\btruncate\s+table\b/i.test(SQL_0022_CODE), false);
+  for (const fn of [
+    "reclaim_stale_auto_enrichment_jobs(integer, integer, integer)",
+    "begin_auto_enrichment_dispatch_at(uuid, uuid, integer)",
+    "latest_manual_check_at(text)",
+    "preserve_radar_match_processing()",
+  ]) {
+    assert.match(SQL_0022_CODE, new RegExp(`revoke all on function public\\.${fn.replace(/[()]/g, "\\$&")} from public, anon, authenticated`, "i"));
+    assert.match(SQL_0022_CODE, new RegExp(`grant execute on function public\\.${fn.replace(/[()]/g, "\\$&")} to service_role`, "i"));
+  }
+  assert.equal(/grant execute on function public\.\w+.*to (anon|authenticated|public)/i.test(SQL_0022_CODE), false);
 });
 
 console.log(`\nauto-enrichment-migration-sql: ${failures} fail`);

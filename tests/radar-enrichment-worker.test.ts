@@ -41,6 +41,8 @@ type StoredEnrichment = Partial<MatchEnrichmentPatch> & { jobId?: string | null;
 /** Mô phỏng DB: claim = CAS theo status; charge = atomic cap; claim token chống double. */
 class MemStore implements EnrichmentWorkerStore {
   nowMs = T0;
+  /** null = đồng hồ DB đi theo nowMs. Set để mô phỏng lệch giờ app/DB. Không phải proof Postgres. */
+  dbNowMs: number | null = null;
   dailyLimit = 200;
   jobs: StoredJob[] = [];
   matches = new Map<string, { score: number | null; deal_type: string | null; is_ngop: number | null; enrichment: StoredEnrichment }>();
@@ -55,6 +57,11 @@ class MemStore implements EnrichmentWorkerStore {
 
   private iso() {
     return new Date(this.nowMs).toISOString();
+  }
+
+  /** Giờ DB. RPC claim/reclaim/dispatch dùng now() này, không dùng giờ app. */
+  private dbIso() {
+    return new Date(this.dbNowMs ?? this.nowMs).toISOString();
   }
 
   seedJob(over: Partial<StoredJob> = {}): StoredJob {
@@ -105,23 +112,32 @@ class MemStore implements EnrichmentWorkerStore {
     return Number.isFinite(owner) && owner < Date.parse(job.created_at);
   }
 
-  async reclaimStaleProcessing(cutoffISO: string, maxAttempts: number) {
+  // Model predicate 0022: processing_started_at < dbNow - lease. Không nhận cutoff từ app.
+  // ponytail: backoff cố định 30s, giống floor SQL; không phải proof Postgres.
+  async reclaimStaleProcessing(leaseMs: number, maxAttempts: number) {
+    const dbNow = this.dbNowMs ?? this.nowMs;
+    const cutoff = dbNow - leaseMs;
+    const backoffAt = new Date(dbNow + 30_000).toISOString();
     let requeued = 0;
     let failed = 0;
     for (const j of this.jobs) {
-      if (j.status !== "processing" || j.processing_started_at == null || j.processing_started_at >= cutoffISO) continue;
+      if (j.status !== "processing" || j.processing_started_at == null) continue;
+      if (Date.parse(j.processing_started_at) >= cutoff) continue;
+      const dispatchAt = j.dispatch_started_at;
       if (j.attempts < maxAttempts) {
         j.status = "pending";
         j.claim_token = null;
         j.processing_started_at = null;
-        j.next_attempt_at = this.iso();
+        j.next_attempt_at = backoffAt;
         j.error_kind = "lease_expired";
+        j.dispatch_started_at = dispatchAt;
         requeued++;
       } else {
         j.status = "failed";
         j.claim_token = null;
         j.processing_started_at = null;
         j.error_kind = "lease_expired";
+        j.dispatch_started_at = dispatchAt;
         failed++;
       }
     }
@@ -133,10 +149,10 @@ class MemStore implements EnrichmentWorkerStore {
     for (const j of this.jobs) {
       if (out.length >= limit) break;
       if (j.status !== "pending") continue;
-      if (j.next_attempt_at && j.next_attempt_at > this.iso()) continue;
+      if (j.next_attempt_at && j.next_attempt_at > this.dbIso()) continue;
       j.status = "processing";
       j.claim_token = "token-" + j.id;
-      j.processing_started_at = this.iso();
+      j.processing_started_at = this.dbIso();
       out.push({ ...j });
     }
     return out;
@@ -148,19 +164,19 @@ class MemStore implements EnrichmentWorkerStore {
 
   async beginDispatch(job: EnrichmentJobRow) {
     const j = this.jobs.find((x) => x.id === job.id && x.claim_token === job.claim_token && x.status === "processing");
-    if (!j) return false;
+    if (!j) return null;
     if (j.dispatch_started_at == null) {
-      const day = this.iso().slice(0, 10);
+      const day = this.dbIso().slice(0, 10);
       const key = j.user_id + "|" + day;
       const used = this.allowance.get(key) ?? 0;
-      if (used >= this.dailyLimit) return false;
+      if (used >= this.dailyLimit) return null;
       this.allowance.set(key, used + 1);
-      j.dispatch_started_at = this.iso();
+      j.dispatch_started_at = this.dbIso();
       j.allowance_consumed = true;
       this.charges.push(j.id);
     }
     j.attempts += 1;
-    return true;
+    return j.dispatch_started_at;
   }
 
   async releaseToPending(job: EnrichmentJobRow, patch: { nextAttemptAt: string; updatedAt: string; errorKind: string; lastError: string }) {
@@ -176,14 +192,15 @@ class MemStore implements EnrichmentWorkerStore {
   }
 
   async markTerminal(job: EnrichmentJobRow, status: "completed" | "insufficient_data" | "low_confidence" | "failed", error?: { errorKind: string; lastError: string }) {
-    const j = this.jobs.find((x) => x.id === job.id);
-    if (!j) return;
+    const j = this.jobs.find((x) => x.id === job.id && x.claim_token === job.claim_token && x.status === "processing");
+    if (!j) return false;
     j.status = status;
     j.claim_token = null;
     j.processing_started_at = null;
     j.error_kind = error?.errorKind ?? null;
     j.last_error = error?.lastError ?? null;
-    j.updated_at = this.iso();
+    j.updated_at = this.dbIso();
+    return true;
   }
 
   async latestManualCheckAt(externalId: string) {
@@ -202,7 +219,8 @@ class MemStore implements EnrichmentWorkerStore {
     const e = m.enrichment;
     const status = e.status ?? null;
     const owns = e.jobId === job.id;
-    const claimable = e.jobId == null && (status === null || status === "not_started" || status === "pending");
+    const neverPublished = e.fingerprint == null && e.checkedAt == null;
+    const claimable = e.jobId == null && neverPublished && (status === null || status === "not_started" || status === "pending");
     if (!owns && !claimable && !this.ownsRow(e, job)) return false;
     m.enrichment = {
       ...e,
@@ -365,8 +383,10 @@ await test("FIX 2: markMatchProcessing trả false (CAS miss) KHÔNG đếm publ
   store.markMatchProcessing = async () => false;
   const res = await runWorker(store, providerFrom(store, PUBLISHED));
   assert.equal(res.published, 0);
-  assert.equal(res.lostClaims, 2, "mất ownership ở cả processing và persist");
-  assert.equal(job.status, "completed");
+  assert.equal(store.dispatches, 0, "không sở hữu row thì không gọi provider");
+  assert.equal(res.lostClaims >= 1, true);
+  assert.equal(job.status, "failed", "vẫn terminal, không kẹt processing");
+  assert.notEqual(job.status, "processing");
 });
 
 await test("FIX 2: mất ownership -> KHÔNG ghi đè kết quả của job khác", async () => {
@@ -378,13 +398,14 @@ await test("FIX 2: mất ownership -> KHÔNG ghi đè kết quả của job khá
   const res = await runWorker(store, providerFrom(store, PUBLISHED));
 
   assert.equal(res.published, 0, "không được báo publish khi CAS không khớp");
-  assert.equal(res.lostClaims >= 2, true, "phải báo mất ownership (processing + persist)");
+  assert.equal(res.lostClaims >= 1, true, "phải báo mất ownership");
+  assert.equal(store.dispatches, 0, "không sở hữu row thì không gọi provider");
   const m = store.matches.get("111")!;
   assert.equal(m.enrichment.status, "completed");
   assert.equal(m.enrichment.score, 70, "kết quả của job khác phải còn nguyên");
   assert.equal(m.enrichment.dealType, "thom_dau_tu");
   assert.equal(m.enrichment.jobId, "job-other");
-  assert.equal(job.status, "completed", "job của ta vẫn terminal");
+  assert.equal(job.status, "failed", "job của ta vẫn terminal, không kẹt processing");
 });
 
 await test("FIX 2: job chiếm row pending (chưa ai sở hữu) thì ghi processing được", async () => {
@@ -478,6 +499,43 @@ await test("P1-1. job fingerprint MỚI chiếm row và publish đè kết quả
   assert.equal(jobB.status, "completed");
 });
 
+// Recycle TTL giữ created_at gốc (khoá payload ở radar-match.test.ts). Job A sau
+// recycle không được trông mới hơn B.
+await test("P1-1 residual. job A TTL-recycle giữ created_at cũ không ghi đè fingerprint của B", async () => {
+  const store = setup();
+  const createdA = new Date(T0 - 40 * 24 * 3600 * 1000).toISOString();
+  const createdB = new Date(T0 - 60 * MIN).toISOString();
+  store.matches.get("111")!.enrichment = {
+    status: "completed",
+    source: "auto_enrichment",
+    score: 70,
+    dealType: "thom_dau_tu",
+    isNgoP: 30,
+    confidence: "high",
+    checkedAt: createdB,
+    jobId: "job-B",
+    fingerprint: "hash-B",
+    jobCreatedAt: createdB,
+  };
+  const jobA = store.seedJob({
+    id: "job-A",
+    status: "pending",
+    material_input_hash: "hash-A",
+    created_at: createdA,
+    attempts: 0,
+    dispatch_started_at: null,
+  });
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+  assert.equal(jobA.created_at, createdA, "recycle không được làm A trẻ lại");
+  assert.equal(res.published, 0);
+  assert.equal(store.dispatches, 0, "A không sở hữu row -> không gọi provider");
+  const m = store.matches.get("111")!;
+  assert.equal(m.enrichment.fingerprint, "hash-B");
+  assert.equal(m.enrichment.score, 70);
+  assert.equal(m.enrichment.jobId, "job-B");
+  assert.equal(jobA.status, "failed", "A vẫn terminal, không kẹt processing");
+});
+
 // P1-1 (ngược): job A đang bay (fingerprint cũ) thì material đổi, job B chiếm
 // row và publish. Khi A chạy xong, nó KHÔNG được ghi đè kết quả của B.
 await test("P1-1 (ngược). worker cũ của fingerprint A không ghi đè được kết quả của B", async () => {
@@ -495,7 +553,7 @@ await test("P1-1 (ngược). worker cũ của fingerprint A không ghi đè đư
       const [claimedB] = await store.claimPending(1);
       assert.equal(claimedB.id, "job-B", "job A đang processing nên chỉ B được claim");
       assert.equal(await store.isPlanPro(USER), true);
-      assert.equal(await store.beginDispatch(claimedB), true, "B phải charge allowance");
+      assert.equal(typeof await store.beginDispatch(claimedB), "string", "B phải charge allowance và nhận mốc dispatch");
       assert.equal(await store.markMatchProcessing(claimedB), true, "B mới hơn A -> chiếm row được");
       await providerB(jobB.material_input);
       await store.persistMatchEnrichment(claimedB, {
@@ -728,6 +786,50 @@ await test("manual Check cũ hơn dispatch -> auto publish bình thường", asy
   assert.equal(store.matches.get("111")!.score, 55, "manual cũ vẫn không bị ghi đè");
 });
 
+await test("P2-2. manual trước dispatch_started_at của DB -> auto vẫn publish", async () => {
+  const store = setup();
+  store.nowMs = T0;
+  store.dbNowMs = T0 + 5 * MIN;
+  store.seedJob();
+  store.checks.push({ external_id: "111", created_at: new Date(T0 + MIN).toISOString(), score: 40 });
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+  assert.equal(res.published, 1, "manual trước dispatch thật không được chặn auto");
+  assert.equal(res.manualWins, 0);
+  assert.equal(store.persistCalls[0]!.patch.score, 82);
+  assert.equal(store.jobs[0]!.dispatch_started_at, new Date(store.dbNowMs).toISOString());
+});
+
+await test("P2-2. manual sau dispatch_started_at authoritative -> manual thắng, không ghi score auto", async () => {
+  const store = setup();
+  store.nowMs = T0 + 60 * MIN;
+  store.dbNowMs = T0;
+  store.seedJob();
+  store.seedMatch("111", { score: 77, deal_type: "thom_dau_tu", is_ngop: 91 });
+  store.checks.push({ external_id: "111", created_at: new Date(T0 + 5 * MIN).toISOString(), score: 77 });
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+  assert.equal(res.manualWins, 1);
+  assert.equal(res.published, 0);
+  assert.equal(store.persistCalls[0]!.patch.score, null, "không ghi score auto");
+  assert.equal(store.matches.get("111")!.score, 77);
+  assert.equal(store.matches.get("111")!.enrichment.score, null);
+});
+
+await test("P2-2. retry dùng dispatch_started_at gốc, không dùng đồng hồ local mới", async () => {
+  const store = setup();
+  const original = new Date(T0 - 10 * MIN).toISOString();
+  store.nowMs = T0 + 2 * 60 * MIN;
+  store.dbNowMs = T0 + 2 * 60 * MIN;
+  store.seedJob({ dispatch_started_at: original, allowance_consumed: true, attempts: 1 });
+  store.seedMatch("111", { score: 77, deal_type: "thom_dau_tu", is_ngop: 91 });
+  store.checks.push({ external_id: "111", created_at: new Date(T0).toISOString(), score: 77 });
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+  assert.equal(store.jobs[0]!.dispatch_started_at, original, "retry không được ghi đè mốc dispatch");
+  assert.equal(res.manualWins, 1);
+  assert.equal(res.published, 0);
+  assert.equal(store.persistCalls[0]!.patch.score, null);
+  assert.equal(store.charges.length, 0, "retry không charge lại");
+});
+
 await test("MANDATORY 31. persistence boundary chỉ ghi enrichment_* — không có key manual", async () => {
   const store = setup();
   store.seedJob();
@@ -779,9 +881,11 @@ await test("worker crash: processing quá lease -> requeue (còn lượt) / fail
     allowance_consumed: true,
   });
   const res = await runWorker(store, providerFrom(store, PUBLISHED));
-  assert.equal(res.claimed, 1);
-  assert.equal(stale.status, "completed");
-  assert.equal(stale.attempts, 2);
+  assert.equal(res.claimed, 0, "backoff >= 30s -> không spin trong cùng tick");
+  assert.equal(stale.status, "pending");
+  assert.equal(stale.attempts, 1, "requeue không reset attempts");
+  assert.equal(stale.dispatch_started_at, new Date(T0 - 12 * MIN).toISOString(), "không xoá cờ charge-once");
+  assert.ok(stale.next_attempt_at && Date.parse(stale.next_attempt_at) >= T0 + 30_000);
   assert.equal(store.charges.length, 0, "đã dispatch trước đó -> không charge lại");
 
   const store2 = setup();
@@ -795,6 +899,125 @@ await test("worker crash: processing quá lease -> requeue (còn lượt) / fail
   const res2 = await runWorker(store2, providerFrom(store2, PUBLISHED));
   assert.equal(res2.claimed, 0);
   assert.equal(dead.status, "failed");
+});
+
+// P1-3: MemStore mô phỏng predicate SQL `processing_started_at < now() - lease`.
+// Không chạy Postgres — proof runtime nằm ở test SQL tĩnh của migration 0022.
+await test("P1-3. app clock lệch, lease DB chưa hết -> không cướp claim đang sống", async () => {
+  const behind = setup();
+  behind.dbNowMs = T0;
+  behind.nowMs = T0 - 5 * 60 * MIN;
+  const live = behind.seedJob({
+    id: "job-live",
+    status: "processing",
+    processing_started_at: new Date(T0 - MIN).toISOString(),
+    claim_token: "live-token",
+    attempts: 1,
+    dispatch_started_at: new Date(T0 - MIN).toISOString(),
+    allowance_consumed: true,
+  });
+  const res = await runWorker(behind, providerFrom(behind, PUBLISHED));
+  assert.equal(live.status, "processing");
+  assert.equal(live.claim_token, "live-token");
+  assert.equal(res.claimed, 0);
+
+  const ahead = setup();
+  ahead.dbNowMs = T0;
+  ahead.nowMs = T0 + 5 * 60 * MIN;
+  const live2 = ahead.seedJob({
+    id: "job-live-2",
+    status: "processing",
+    processing_started_at: new Date(T0 - MIN).toISOString(),
+    claim_token: "live-token-2",
+    attempts: 1,
+    dispatch_started_at: new Date(T0 - MIN).toISOString(),
+    allowance_consumed: true,
+  });
+  await runWorker(ahead, providerFrom(ahead, PUBLISHED));
+  assert.equal(live2.status, "processing", "app ahead cũng không được reclaim lease còn hạn theo giờ DB");
+  assert.equal(live2.claim_token, "live-token-2");
+  assert.equal(live2.dispatch_started_at, new Date(T0 - MIN).toISOString());
+});
+
+await test("P1-3. lease hết theo giờ DB vẫn reclaim dù app clock đứng sau", async () => {
+  const store = setup();
+  store.dbNowMs = T0;
+  store.nowMs = T0 - 5 * 60 * MIN;
+  const dispatchAt = new Date(T0 - 20 * MIN).toISOString();
+  const stale = store.seedJob({
+    id: "job-expired",
+    status: "processing",
+    processing_started_at: new Date(T0 - 11 * MIN).toISOString(),
+    claim_token: "old",
+    attempts: 1,
+    dispatch_started_at: dispatchAt,
+    allowance_consumed: true,
+  });
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+  assert.equal(stale.status, "pending");
+  assert.equal(stale.dispatch_started_at, dispatchAt);
+  assert.ok(Date.parse(stale.next_attempt_at!) >= T0 + 30_000);
+  assert.equal(res.claimed, 0, "backoff chặn spin cùng tick");
+
+  const deadStore = setup();
+  deadStore.dbNowMs = T0;
+  deadStore.nowMs = T0 - 5 * 60 * MIN;
+  const deadAt = new Date(T0 - 30 * MIN).toISOString();
+  const dead = deadStore.seedJob({
+    id: "job-dead-skew",
+    status: "processing",
+    processing_started_at: new Date(T0 - 11 * MIN).toISOString(),
+    claim_token: "old",
+    attempts: 3,
+    dispatch_started_at: deadAt,
+    allowance_consumed: true,
+  });
+  await runWorker(deadStore, providerFrom(deadStore, PUBLISHED));
+  assert.equal(dead.status, "failed");
+  assert.equal(dead.dispatch_started_at, deadAt, "fail theo attempts cũng không xoá dispatch_started_at");
+});
+
+await test("P2-6. job_id null nhưng đã có fingerprint -> job khác không cướp", async () => {
+  const store = setup();
+  store.matches.get("111")!.enrichment = {
+    status: "pending",
+    jobId: null,
+    fingerprint: "hash-B",
+    checkedAt: new Date(T0 - MIN).toISOString(),
+    score: 70,
+    dealType: "thom_dau_tu",
+    isNgoP: 30,
+  };
+  store.seedJob({ id: "job-A", material_input_hash: "hash-A" });
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+  assert.equal(store.dispatches, 0);
+  assert.equal(res.published, 0);
+  assert.equal(store.matches.get("111")!.enrichment.fingerprint, "hash-B");
+  assert.equal(store.matches.get("111")!.enrichment.score, 70);
+  assert.equal(store.matches.get("111")!.enrichment.jobId, null);
+});
+
+await test("P2-8. mất claim_token: markTerminal khớp 0 dòng, lostClaims tăng, published không tăng", async () => {
+  const store = setup();
+  store.seedJob();
+  const job = store.jobs[0]!;
+  const orig = store.markTerminal.bind(store);
+  store.markTerminal = async (j, status, error) => {
+    const row = store.jobs.find((x) => x.id === j.id)!;
+    row.claim_token = "stolen";
+    return orig(j, status, error);
+  };
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+  assert.equal(res.published, 0, "CAS miss không được tính publish");
+  assert.equal(res.lostClaims >= 1, true);
+  assert.equal(job.status, "processing", "không ghi được terminal thì job còn processing để reclaim");
+  assert.equal(store.persistCalls.length, 1, "persist row vẫn xảy ra trước khi mất token job");
+
+  store.dbNowMs = T0 + 11 * MIN;
+  const reclaimed = await store.reclaimStaleProcessing(10 * MIN, 3);
+  assert.equal(reclaimed.requeued, 1, "worker chết vẫn được reclaim");
+  assert.equal(job.status, "pending");
+  assert.ok(job.dispatch_started_at, "reclaim không xoá dispatch_started_at");
 });
 
 await test("MANDATORY 33. không chạy lại job đã terminal: claim lần 2 = 0, không dispatch thêm", async () => {

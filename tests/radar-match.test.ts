@@ -189,8 +189,16 @@ function fakeDb(
           const i = cur.findIndex(
             (x) => String(x.external_id) === String(row.external_id) && String(x.radar_id ?? "") === String(row.radar_id ?? ""),
           );
-          if (i >= 0) cur[i] = { ...cur[i], ...row };
-          else cur.push({ ...row });
+          if (i >= 0) {
+            const prev = cur[i]!;
+            const next = { ...prev, ...row };
+            // Model trigger 0022 preserve_radar_match_processing. Không phải proof Postgres.
+            if (prev.enrichment_status === "processing" && row.enrichment_status === "pending") {
+              next.enrichment_status = prev.enrichment_status;
+              next.enrichment_source = prev.enrichment_source;
+            }
+            cur[i] = next;
+          } else cur.push({ ...row });
         }
         return { data: null, error: null };
       },
@@ -983,6 +991,52 @@ for (const activeStatus of ["pending", "processing"] as const) {
   assert.equal(c.fingerprint, null);
 }
 
+// P2-7: snapshot scan không thấy processing, worker kịp set processing, upsert
+// vẫn gửi pending. Trigger 0022 (model trong fake upsert) phải giữ processing.
+// Không phải proof Postgres — predicate khoá ở auto-enrichment-migration-sql.test.ts.
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [],
+  });
+  let raced = false;
+  const rawFrom = f.db.from.bind(f.db);
+  (f.db as { from: typeof rawFrom }).from = (table: string) => {
+    const q = rawFrom(table);
+    if (table !== "radar_matches") return q;
+    const origThen = q.then.bind(q);
+    q.then = ((resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+      origThen((v: unknown) => {
+        if (!raced) {
+          raced = true;
+          f.tables.radar_matches.push({
+            radar_id: "radar-1",
+            external_id: "111",
+            enrichment_status: "processing",
+            enrichment_source: "auto_enrichment",
+            enrichment_job_id: "job-live",
+            enrichment_fingerprint: "hash-live",
+          });
+        }
+        return resolve(v);
+      }, reject)) as typeof q.then;
+    return q;
+  };
+  await scanRadar(f.db, RADAR_PRO);
+  const wrotePending = f.upserts.some(
+    (u) => u.table === "radar_matches" && u.rows.some((r) => r.external_id === "111" && r.enrichment_status === "pending"),
+  );
+  assert.equal(wrotePending, true, "snapshot cũ vẫn gửi pending — guard phải ở DB, không chỉ sửa payload");
+  const row = f.tables.radar_matches.find((r) => String(r.external_id) === "111")!;
+  assert.equal(row.enrichment_status, "processing", "P2-7: không được lật processing về pending");
+  assert.equal(row.enrichment_job_id, "job-live");
+  assert.equal(row.enrichment_fingerprint, "hash-live");
+}
+
 // ------------------------------------------------- P1-2: scan recycle không
 // được charge 2 lần. `existSame`/`isStaleTerminal` đọc từ SNAPSHOT trước khi
 // ghi: job có thể đã được scan khác tái sử dụng về pending và worker claim +
@@ -1088,6 +1142,7 @@ for (const activeStatus of ["pending", "processing"] as const) {
         {
           id: "job-old", radar_id: "radar-1", external_id: "111", user_id: "user-1",
           status: "completed", material_input_hash: hash, updated_at: oldDate,
+          created_at: oldDate,
           dispatch_started_at: oldDate, attempts: 1, allowance_consumed: true,
           claim_token: null,
         },
@@ -1098,6 +1153,8 @@ for (const activeStatus of ["pending", "processing"] as const) {
     assert.ok(recycled, "P1-2: job terminal quá TTL vẫn phải được tái sử dụng");
     assert.equal(recycled.patch.status, "pending");
     assert.equal(recycled.patch.attempts, 0);
+    assert.equal("created_at" in recycled.patch, false, "P1-1 residual: recycle không được reset created_at");
+    assert.equal(f.tables.auto_enrichment_jobs![0]!.created_at, oldDate, "tuổi job phải giữ nguyên");
     // Guard lúc ghi: chỉ reset job VẪN terminal VÀ chưa ai claim.
     const guards = recycled.pending!.map(([op, col, val]) => `${op}:${col}=${String(val)}`).sort();
     assert.ok(guards.includes("in:status=completed,insufficient_data,low_confidence,failed"), `P1-2: phải lọc terminal, có: ${guards.join(" | ")}`);

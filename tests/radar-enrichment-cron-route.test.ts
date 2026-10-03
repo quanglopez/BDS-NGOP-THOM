@@ -25,10 +25,10 @@ function stubStore(): EnrichmentWorkerStore {
     reclaimStaleProcessing: async () => ({ requeued: 0, failed: 0 }),
     claimPending: async () => [],
     isPlanPro: async () => true,
-    beginDispatch: async () => true,
+    beginDispatch: async () => "2026-10-03T00:00:00.000Z",
     markMatchProcessing: noop,
     releaseToPending: noop,
-    markTerminal: noop,
+    markTerminal: async () => true,
     latestManualCheckAt: async () => null,
     persistMatchEnrichment: noop,
   } as unknown as EnrichmentWorkerStore;

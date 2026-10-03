@@ -128,11 +128,12 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
         dispatch_started_at: null,
         allowance_consumed: false,
         ...resetCols,
-        created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
       queued.push({ externalId: String(item.row.external_id), fingerprint: item.hash });
       if (existSame && isStaleTerminal) {
+        // KHÔNG reset created_at. Takeover so `enrichment_job_created_at < job.created_at`.
+        // Reset làm job fingerprint cũ trông mới hơn job kế thừa và cướp row sau TTL.
         // TÁI SỬ DỤNG chỉ khi job VẪN terminal VÀ chưa ai claim lúc ghi.
         // `existSame`/`isStaleTerminal` đọc từ SNAPSHOT trước khi ghi: job có thể
         // đã được scan khác tái sử dụng (về pending) và worker claim + charge
@@ -152,7 +153,7 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
           .select("id");
         if (u.error) console.error("[auto-enrollment:update]", u.error.code);
       } else {
-        fresh.push(payload);
+        fresh.push({ ...payload, created_at: new Date().toISOString() });
       }
     }
     if (fresh.length) {
