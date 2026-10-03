@@ -8,6 +8,10 @@
     {
       "path": "/api/cron/radar-scan",
       "schedule": "7 3 * * *"
+    },
+    {
+      "path": "/api/cron/radar-enrichment",
+      "schedule": "37 3 * * *"
     }
   ]
 }
