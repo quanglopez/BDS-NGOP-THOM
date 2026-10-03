@@ -21,6 +21,21 @@ interface Recorded {
 }
 type Filter = [op: string, col: string, val: unknown];
 
+/** Fake DB: `select()` trả `selectRows`; `update()` trả các row khớp filter —
+ *  dùng để kiểm tra CAS của từng nhánh (job đang sở hữu / row chưa ai sở hữu /
+ *  takeover). */
+function matchRow(r: Row, filters: Filter[]): boolean {
+  return filters.every(([op, c, v]) => {
+    const cell = r[c];
+    if (op === "eq") return cell === v;
+    if (op === "is") return (cell ?? null) === (v ?? null);
+    if (op === "not") return (cell ?? null) !== (v ?? null);
+    if (op === "in") return Array.isArray(v) && v.includes(cell);
+    if (op === "lt") return cell != null && typeof cell === "string" && typeof v === "string" ? cell < v : Number(cell) < Number(v);
+    return true;
+  });
+}
+
 /** Supabase client ghi lại mọi lệnh; `rpcResults` điều khiển trả về của RPC. */
 function recordingDb(rpcResults: Record<string, unknown> = {}) {
   const calls: Recorded[] = [];
@@ -77,7 +92,12 @@ function recordingDb(rpcResults: Record<string, unknown> = {}) {
         rec.orderAsc = orderAsc;
         rec.limit = limit;
         calls.push(rec);
-        return Promise.resolve({ data: selectRows, error: null, count: selectRows.length }).then(resolve);
+        // `seed(table)` có dữ liệu -> update chỉ "khớp" row thật theo filter
+        // (kiểm tra được CAS từng nhánh). Không seed -> giữ nguyên hành vi cũ:
+        // trả về selectRows (test cũ không đổi).
+        const seeded = rowsByTable[table];
+        const data = rec.op === "update" && seeded ? seeded.filter((r) => matchRow(r, filters)) : selectRows;
+        return Promise.resolve({ data, error: null, count: data.length }).then(resolve);
       },
     };
     return api;
@@ -118,6 +138,7 @@ const JOB: EnrichmentJobRow = {
   attempts: 1,
   dispatch_started_at: "2026-10-03T00:00:00Z",
   claim_token: "token-1",
+  created_at: "2026-10-02T00:00:00Z",
 };
 
 let failures = 0;
@@ -281,7 +302,8 @@ await test("MANDATORY 31. persistMatchEnrichment CHỈ ghi cột enrichment_*, �
     confidence: "high",
     checkedAt: "2026-10-03T02:00:00Z",
   });
-  const u = h.last("update")!;
+  // Write ĐẦU TIÊN là CAS "job đang sở hữu row" — luôn phải khoá đúng 3 cột.
+  const u = h.all("update")[0]!;
   assert.equal(u.table, "radar_matches");
   const cols = Object.keys(u.payload!).sort();
   assert.deepEqual(cols, [
@@ -290,6 +312,7 @@ await test("MANDATORY 31. persistMatchEnrichment CHỈ ghi cột enrichment_*, �
     "enrichment_deal_type",
     "enrichment_fingerprint",
     "enrichment_is_ngop",
+    "enrichment_job_created_at",
     "enrichment_job_id",
     "enrichment_score",
     "enrichment_source",
@@ -364,6 +387,100 @@ await test("isPlanPro đọc plan + plan_expires_at, không đoán plan khác", 
   const team = recordingDb();
   team.setRows([{ plan: "team", plan_expires_at: "2099-01-01T00:00:00Z" }]);
   assert.equal(await createSupabaseEnrichmentStore(team.db).isPlanPro("user-1"), false, "PRO-only");
+});
+
+// ---------------------------------------------------------------- P1-1 ownership
+
+const JOB_B: EnrichmentJobRow = { ...JOB, id: "job-B", material_input_hash: "hash-B", created_at: "2026-10-03T00:00:00Z" };
+const PATCH = {
+  status: "completed" as const,
+  source: "auto_enrichment" as const,
+  score: 82,
+  dealType: "ngop_ngon",
+  isNgoP: 88,
+  confidence: "high" as const,
+  checkedAt: "2026-10-03T02:00:00Z",
+};
+
+await test("P1-1. persistMatchEnrichment: job MỚI hơn chủ cũ (fingerprint khác) chiếm được row", async () => {
+  const h = recordingDb();
+  h.seed("radar_matches", [
+    {
+      id: "m1", radar_id: "radar-1", external_id: "111",
+      enrichment_job_id: "job-A", enrichment_fingerprint: "hash-A",
+      enrichment_job_created_at: "2026-10-01T00:00:00Z", enrichment_status: "completed",
+    },
+  ]);
+  const store = createSupabaseEnrichmentStore(h.db);
+  assert.equal(await store.persistMatchEnrichment(JOB_B, PATCH), true, "job tạo sau (material đổi) phải publish được");
+
+  const ups = h.all("update");
+  assert.equal(ups.length >= 2, true, "phải thử CAS chủ sở hữu trước, takeover sau");
+  const takeover = ups.at(-1)!;
+  assert.equal(takeover.payload!.enrichment_fingerprint, "hash-B");
+  assert.equal(takeover.payload!.enrichment_job_id, "job-B");
+  assert.equal(takeover.payload!.enrichment_job_created_at, "2026-10-03T00:00:00Z");
+  const guards = takeover.filters.map(([op, col]) => `${op}:${col}`);
+  assert.ok(guards.includes("lt:enrichment_job_created_at"), `takeover phải guard theo created_at, có: ${guards.join(" | ")}`);
+  assert.ok(guards.includes("eq:radar_id") && guards.includes("eq:external_id"));
+  // Chỉ ghi cột enrichment_* — cột manual không xuất hiện.
+  for (const c of Object.keys(takeover.payload!)) assert.ok(c.startsWith("enrichment_"), `${c} phải thuộc prefix enrichment_`);
+});
+
+await test("P1-1. persistMatchEnrichment: job CŨ hơn chủ hiện tại -> false, không ghi đè", async () => {
+  const h = recordingDb();
+  h.seed("radar_matches", [
+    {
+      id: "m1", radar_id: "radar-1", external_id: "111",
+      enrichment_job_id: "job-B", enrichment_fingerprint: "hash-B",
+      enrichment_job_created_at: "2026-10-03T00:00:00Z", enrichment_status: "completed",
+    },
+  ]);
+  const store = createSupabaseEnrichmentStore(h.db);
+  // job-A (created 2026-10-02) cố publish đè lên row do job-B (created 2026-10-03) sở hữu.
+  assert.equal(await store.persistMatchEnrichment(JOB, PATCH), false, "job cũ không được ghi đè job mới");
+  const takeover = h.all("update").at(-1)!;
+  const guards = takeover.filters.map(([op, col, val]) => `${op}:${col}=${String(val)}`);
+  assert.ok(guards.includes("eq:radar_id=radar-1") && guards.includes("eq:external_id=111"), "takeover vẫn khoá radar+listing");
+  assert.ok(guards.includes("lt:enrichment_job_created_at=2026-10-02T00:00:00Z"), `takeover phải guard theo created_at CỦA JOB NÀY, có: ${guards.join(" | ")}`);
+});
+
+await test("P1-1. markMatchProcessing: takeover chỉ khi chủ cũ CỨ hơn job này", async () => {
+  const olderOwner = recordingDb();
+  olderOwner.seed("radar_matches", [
+    { id: "m1", radar_id: "radar-1", external_id: "111", enrichment_job_id: "job-A", enrichment_fingerprint: "hash-A", enrichment_job_created_at: "2026-10-01T00:00:00Z" },
+  ]);
+  assert.equal(await createSupabaseEnrichmentStore(olderOwner.db).markMatchProcessing(JOB_B), true, "job mới hơn phải chiếm được row processing");
+
+  const newerOwner = recordingDb();
+  newerOwner.seed("radar_matches", [
+    { id: "m1", radar_id: "radar-1", external_id: "111", enrichment_job_id: "job-B", enrichment_fingerprint: "hash-B", enrichment_job_created_at: "2026-10-03T00:00:00Z" },
+  ]);
+  assert.equal(await createSupabaseEnrichmentStore(newerOwner.db).markMatchProcessing(JOB), false, "job cũ hơn không được chiếm row của job mới");
+
+  // Row chưa từng ghi enrichment_job_created_at (code trước migration 0021):
+  // không chứng minh được chủ cũ CỨ hơn -> KHÔNG takeover (an toàn, không ghi đè
+  // mờ). 0021 đi kèm code này nên mọi row ghi sau deploy đều có tuổi.
+  const legacyOwner = recordingDb();
+  legacyOwner.seed("radar_matches", [
+    { id: "m1", radar_id: "radar-1", external_id: "111", enrichment_job_id: "job-legacy", enrichment_fingerprint: "hash-A", enrichment_job_created_at: null },
+  ]);
+  assert.equal(await createSupabaseEnrichmentStore(legacyOwner.db).markMatchProcessing(JOB_B), false, "không có tuổi của chủ cũ -> không đè");
+});
+
+await test("P1-1. takeover vẫn ghi 'processing' + đúng fingerprint/job của job mới", async () => {
+  const h = recordingDb();
+  h.seed("radar_matches", [
+    { id: "m1", radar_id: "radar-1", external_id: "111", enrichment_job_id: "job-A", enrichment_fingerprint: "hash-A", enrichment_job_created_at: "2026-10-01T00:00:00Z" },
+  ]);
+  await createSupabaseEnrichmentStore(h.db).markMatchProcessing(JOB_B);
+  const takeover = h.all("update").at(-1)!;
+  assert.equal(takeover.payload!.enrichment_status, "processing");
+  assert.equal(takeover.payload!.enrichment_fingerprint, "hash-B");
+  assert.equal(takeover.payload!.enrichment_job_id, "job-B");
+  for (const c of ["enrichment_score", "enrichment_deal_type", "enrichment_is_ngop", "enrichment_checked_at", "enrichment_confidence"]) {
+    assert.equal(c in takeover.payload!, false, `markProcessing không được ghi ${c}`);
+  }
 });
 
 console.log(`\nradar-enrichment-store: ${failures} fail`);

@@ -114,42 +114,39 @@ export function createSupabaseEnrichmentStore(db: SupabaseClient): EnrichmentWor
       if (updateError) throw updateError;
     },
 
-    /** Ghi trạng thái processing, CÓ CAS theo job đang sở hữu radar_match.
- *  Job khác fingerprint cho cùng listing đã publish xong thì không bị lật ngược:
- *  - chỉ khớp khi enrichment_job_id = job.id (row do chính job này claim),
- *  - hoặc row chưa được job nào chiếm (đi từ pending/scan) và chưa có kết quả.
- *  Trả về false khi CAS không khớp — KHÔNG coi như thành công. */
+    /** Ghi trạng thái processing. Ownership của row phân giải theo BỘ BA
+ *  (radar_id, external_id, fingerprint) + thứ tự job:
+ *  1) `enrichment_job_id = job.id` — chính job này đang sở hữu row (retry).
+ *  2) row chưa ai sở hữu (`enrichment_job_id is null`) và chưa có kết quả.
+ *  3) TAKEOVER: row do job KHÁC sở hữu nhưng job đó CỨ HƠN job này
+ *     (`enrichment_job_created_at < job.created_at`) — material đã đổi nên job
+ *     mới PHẢI chiếm được row. Ghi theo guard, KHÔNG ghi đè mù.
+ *  Trả về false khi không nhánh nào khớp — KHÔNG coi là thành công.
+ *  Chủ MỚI hơn thì job cũ không bao giờ ghi đè được (P1-1). */
 async markMatchProcessing(job: EnrichmentJobRow): Promise<boolean> {
-      const { data, error } = await db
-        .from("radar_matches")
-        .update({
-          enrichment_status: "processing",
-          enrichment_source: "auto_enrichment",
-          enrichment_job_id: job.id,
-          enrichment_fingerprint: job.material_input_hash,
-        })
-        .eq("radar_id", job.radar_id)
-        .eq("external_id", job.external_id)
-        .eq("enrichment_job_id", job.id)
-        .select("id");
-      if (error) throw error;
-      if ((data?.length ?? 0) > 0) return true;
-      // Chưa có job nào chiếm row: claim row chưa có kết quả (pending/scan mới).
-      const fresh = await db
-        .from("radar_matches")
-        .update({
-          enrichment_status: "processing",
-          enrichment_source: "auto_enrichment",
-          enrichment_job_id: job.id,
-          enrichment_fingerprint: job.material_input_hash,
-        })
-        .eq("radar_id", job.radar_id)
-        .eq("external_id", job.external_id)
+      const cols = {
+        enrichment_status: "processing",
+        enrichment_source: "auto_enrichment",
+        enrichment_job_id: job.id,
+        enrichment_fingerprint: job.material_input_hash,
+        enrichment_job_created_at: job.created_at,
+      };
+      // Điểm bắt đầu chung: update + khoá radar/listing. Filter riêng từng nhánh
+      // nằm SAU `.eq(...)` của update builder (không được `.eq` trước `.update`).
+      const row = () => db.from("radar_matches").update(cols).eq("radar_id", job.radar_id).eq("external_id", job.external_id);
+      // 1) Job đang sở hữu row.
+      const owned = await row().eq("enrichment_job_id", job.id).select("id");
+      if (owned.error) throw owned.error;
+      if ((owned.data?.length ?? 0) > 0) return true;
+      // 2) Chưa có job nào chiếm row: claim row chưa có kết quả (pending/scan mới).
+      const fresh = await row()
         .is("enrichment_job_id", null)
         .in("enrichment_status", ["not_started", "pending"])
         .select("id");
       if (fresh.error) throw fresh.error;
-      return (fresh.data?.length ?? 0) > 0;
+      if ((fresh.data?.length ?? 0) > 0) return true;
+      // 3) TAKEOVER: chủ hiện tại chứng minh được là CŨ HƠN job này.
+      return takeOverMatchRow(db, job, cols);
     },
 
     // Check thủ công mới nhất của 1 listing: chỉ lấy Check ĐÃ chấm, lọc chính xác
@@ -172,27 +169,58 @@ async markMatchProcessing(job: EnrichmentJobRow): Promise<boolean> {
     },
 
     async persistMatchEnrichment(job, patch: MatchEnrichmentPatch) {
-      const { data, error } = await db
+      const cols = {
+        enrichment_status: patch.status,
+        enrichment_source: patch.source,
+        enrichment_score: patch.score,
+        enrichment_deal_type: patch.dealType,
+        enrichment_is_ngop: patch.isNgoP,
+        enrichment_confidence: patch.confidence,
+        enrichment_checked_at: patch.checkedAt,
+        enrichment_job_id: job.id,
+        enrichment_fingerprint: job.material_input_hash,
+        enrichment_job_created_at: job.created_at,
+      };
+      // CAS: chỉ job đang sở hữu row được publish.
+      const owned = await db
         .from("radar_matches")
-        .update({
-          enrichment_status: patch.status,
-          enrichment_source: patch.source,
-          enrichment_score: patch.score,
-          enrichment_deal_type: patch.dealType,
-          enrichment_is_ngop: patch.isNgoP,
-          enrichment_confidence: patch.confidence,
-          enrichment_checked_at: patch.checkedAt,
-          enrichment_job_id: job.id,
-          enrichment_fingerprint: job.material_input_hash,
-        })
-        // CAS: chỉ job đang sở hữu row được publish. Job khác fingerprint đã có
-        // kết quả thì job này không được ghi đè (và ngược lại).
+        .update(cols)
         .eq("radar_id", job.radar_id)
         .eq("external_id", job.external_id)
         .eq("enrichment_job_id", job.id)
         .select("id");
-      if (error) throw error;
-      return (data?.length ?? 0) > 0;
+      if (owned.error) throw owned.error;
+      if ((owned.data?.length ?? 0) > 0) return true;
+      // Job mới hơn chủ hiện tại (fingerprint khác) vẫn publish được, nhưng CHỈ
+      // qua guard takeover — không xoá CAS, không ghi đè mù.
+      return takeOverMatchRow(db, job, cols);
     },
   };
+}
+
+/** TAKEOVER ownership của radar_matches (P1-1).
+ *  Row đang do job KHÁC sở hữu, nhưng job đó CỨ HƠN job này -> job này được
+ *  chiếm row bằng MỘT write có guard. Guard: `enrichment_job_created_at <
+ *  job.created_at` (và job này phải có created_at hợp lệ) — không chứng minh
+ *  được "mới hơn" thì không được đè, nên job CŨ của fingerprint cũ không bao
+ *  giờ ghi đè được kết quả của job mới.
+ *  Row chưa từng ghi `enrichment_job_created_at` (do code TRƯỚC migration 0021)
+ *  thì không takeover được — chấp nhận được vì 0021 đi KÈM code này, mọi row ghi
+ *  sau deploy đều có tuổi. Nếu sau này cần mở khoá: join auto_enrichment_jobs
+ *  để lấy created_at của job chủ, hoặc fallback enrichment_checked_at. */
+async function takeOverMatchRow(
+  db: SupabaseClient,
+  job: EnrichmentJobRow,
+  cols: Record<string, unknown>,
+): Promise<boolean> {
+  if (!(Date.parse(job.created_at) > 0)) return false;
+  const older = await db
+    .from("radar_matches")
+    .update(cols)
+    .eq("radar_id", job.radar_id)
+    .eq("external_id", job.external_id)
+    .lt("enrichment_job_created_at", job.created_at)
+    .select("id");
+  if (older.error) throw older.error;
+  return (older.data?.length ?? 0) > 0;
 }

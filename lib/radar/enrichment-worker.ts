@@ -28,6 +28,12 @@ export interface EnrichmentJobRow {
   attempts: number;
   dispatch_started_at: string | null;
   claim_token: string | null;
+  /** Thời điểm tạo job (cột created_at, `not null default now()`). Là thứ tự
+   *  "job nào mới hơn": material đổi -> `syncEnrichmentJobs` tạo job MỚI, nên
+   *  job tạo sau luôn phản ánh material mới hơn. Dùng để guard takeover
+   *  ownership của radar_matches (P1-1). RPC claim trả `returning j.*` nên
+   *  luôn có giá trị. */
+  created_at: string;
 }
 
 export interface MatchEnrichmentPatch {
@@ -171,9 +177,11 @@ export async function runEnrichmentWorker(args: {
       const attempts = job.attempts + 1;
 
       // Đã dispatch -> AI đang chạy: đưa radar_matches sang processing để UI báo
-      // "Đang phân tích". false = row đang do job khác sở hữu (job khác fingerprint
-      // đã publish) -> tiếp tục chạy nhưng ghi kết quả sẽ bị CAS chặn, KHÔNG được
-      // coi là đã ghi được processing.
+      // "Đang phân tích". false = row đang do job KHÁC sở hữu và job đó MỚI HƠN
+      // (job cũ của fingerprint cũ) -> tiếp tục chạy nhưng ghi kết quả sẽ bị CAS
+      // chặn, KHÔNG được coi là đã ghi được processing.
+      // Job có fingerprint KHÁC nhưng tạo SAU (material đã đổi) thì vẫn chiếm được
+      // row — guard theo created_at, xem enrichment-store.markMatchProcessing.
       let ownsRow = false;
       try {
         ownsRow = await args.store.markMatchProcessing(job);

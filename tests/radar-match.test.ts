@@ -87,6 +87,8 @@ function fakeDb(
     const match = (r: Row) =>
       filters.every(([op, c, v]) => {
         if (op === "eq") return r[c] === v;
+        // `is null` / `not null` (giống SQL): undefined và null đều là NULL.
+        if (op === "is") return (r[c] ?? null) === (v ?? null);
         // NULL không thoả gte/lte (giống SQL); so chuỗi ISO theo thứ tự từ điển.
         if (op === "gte") {
           if (r[c] == null) return false;
@@ -144,6 +146,10 @@ function fakeDb(
       },
       in(col: string, val: unknown) {
         filters.push(["in", col, val]);
+        return api;
+      },
+      is(col: string, val: unknown) {
+        filters.push(["is", col, val]);
         return api;
       },
       order(col: string, opts?: { ascending?: boolean }) {
@@ -975,4 +981,128 @@ for (const activeStatus of ["pending", "processing"] as const) {
   assert.notEqual(c.score, 0, "thiếu dữ liệu không được quy về 0");
   assert.equal(c.checkedAt, null);
   assert.equal(c.fingerprint, null);
+}
+
+// ------------------------------------------------- P1-2: scan recycle không
+// được charge 2 lần. `existSame`/`isStaleTerminal` đọc từ SNAPSHOT trước khi
+// ghi: job có thể đã được scan khác tái sử dụng về pending và worker claim +
+// charge allowance trong khoảng giữa hai thời điểm. UPDATE chỉ khoá theo id sẽ
+// xoá dispatch_started_at -> guard "charge đúng 1 lần" của
+// begin_auto_enrichment_dispatch bị mở khoá -> cùng (radar, tin, hash) bị charge
+// LẦN THỨ HAI.
+{
+  const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+  const hash = materialFingerprint(
+    materialInputFromRow({
+      external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+      region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+      size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+      last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+    }),
+  );
+
+  /** Chạy scanRadar, nhưng NGAY SAU khi scan đọc snapshot job (select đầu trên
+   *  auto_enrichment_jobs) thì worker đã claim + charge job đó: mô phỏng đúng
+   *  thứ tự race, không phụ thuộc timing thật. */
+  function scanWithWorkerRaceBetweenSnapshotAndRecycle() {
+    const f = fakeDb({
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [],
+      radar_matches: [
+        {
+          ...storedMatch("111", "2026-10-02T09:00:00Z"),
+          enrichment_status: "completed", enrichment_source: "auto_enrichment",
+          enrichment_score: 82, enrichment_deal_type: "ngop_ngon", enrichment_is_ngop: 88,
+          enrichment_confidence: "high", enrichment_checked_at: oldDate,
+          enrichment_job_id: "job-old", enrichment_fingerprint: hash,
+        },
+      ],
+      radars: [{ id: "radar-1" }],
+      users: [PRO_USER],
+      auto_enrichment_jobs: [
+        {
+          id: "job-old", radar_id: "radar-1", external_id: "111", user_id: "user-1",
+          status: "completed", material_input_hash: hash, updated_at: oldDate,
+          // Snapshot của scan: job terminal, chưa ai claim, đã từng dispatch.
+          dispatch_started_at: oldDate, attempts: 1, allowance_consumed: true,
+          claim_token: null,
+        },
+      ],
+    });
+    const row = f.tables.auto_enrichment_jobs![0]!;
+    const rawFrom = f.db.from;
+    let raced = false;
+    (f.db as unknown as { from: typeof rawFrom }).from = (table: string) => {
+      const q = rawFrom(table);
+      const origThen = q.then.bind(q);
+      // @ts-expect-error test fake: bọc `then` để chèn race giữa đọc và ghi.
+      q.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+        origThen((v: unknown) => {
+          if (table === "auto_enrichment_jobs" && !raced) {
+            raced = true;
+            // Worker claim + beginDispatch: charge allowance lần ĐẦU.
+            row.status = "processing";
+            row.claim_token = "token-worker";
+            row.processing_started_at = new Date().toISOString();
+            row.dispatch_started_at = new Date().toISOString();
+            row.attempts = 1;
+            row.allowance_consumed = true;
+          }
+          return resolve(v);
+        }, reject);
+      return q;
+    };
+    return { f, row };
+  }
+
+  {
+    const { f, row } = scanWithWorkerRaceBetweenSnapshotAndRecycle();
+    await scanRadar(f.db, RADAR_PRO);
+
+    assert.equal(row.status, "processing", "P1-2: job worker vừa claim không được bị lật về pending");
+    assert.equal(row.claim_token, "token-worker", "P1-2: claim_token không được bị xoá");
+    assert.ok(row.dispatch_started_at, "P1-2: dispatch_started_at không được xoá -> guard charge-once còn nguyên");
+    assert.equal(row.attempts, 1, "P1-2: attempts không được bị reset về 0");
+    assert.equal(row.allowance_consumed, true, "P1-2: trạng thái allowance không được reset");
+    // Guard của begin_auto_enrichment_dispatch: charge CHỈ khi dispatch_started_at
+    // IS NULL. Cờ còn bật + claim còn giữ -> lần claim tiếp theo KHÔNG charge thêm.
+    assert.equal(row.dispatch_started_at == null, false, "P1-2: cờ bị xoá -> cùng (radar, tin, hash) sẽ bị charge LẦN THỨ HAI");
+    assert.equal(row.claim_token == null, false, "P1-2: job còn đang được worker giữ -> không thể bị claim lại");
+  }
+
+  {
+    const f = fakeDb({
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [],
+      radar_matches: [
+        {
+          ...storedMatch("111", "2026-10-02T09:00:00Z"),
+          enrichment_status: "completed", enrichment_source: "auto_enrichment",
+          enrichment_score: 82, enrichment_deal_type: "ngop_ngon", enrichment_is_ngop: 88,
+          enrichment_confidence: "high", enrichment_checked_at: oldDate,
+        },
+      ],
+      radars: [{ id: "radar-1" }],
+      users: [PRO_USER],
+      auto_enrichment_jobs: [
+        {
+          id: "job-old", radar_id: "radar-1", external_id: "111", user_id: "user-1",
+          status: "completed", material_input_hash: hash, updated_at: oldDate,
+          dispatch_started_at: oldDate, attempts: 1, allowance_consumed: true,
+          claim_token: null,
+        },
+      ],
+    });
+    await scanRadar(f.db, RADAR_PRO);
+    const recycled = f.updates.find((u) => u.table === "auto_enrichment_jobs")!;
+    assert.ok(recycled, "P1-2: job terminal quá TTL vẫn phải được tái sử dụng");
+    assert.equal(recycled.patch.status, "pending");
+    assert.equal(recycled.patch.attempts, 0);
+    // Guard lúc ghi: chỉ reset job VẪN terminal VÀ chưa ai claim.
+    const guards = recycled.pending!.map(([op, col, val]) => `${op}:${col}=${String(val)}`).sort();
+    assert.ok(guards.includes("in:status=completed,insufficient_data,low_confidence,failed"), `P1-2: phải lọc terminal, có: ${guards.join(" | ")}`);
+    assert.ok(guards.some((g) => g === "is:claim_token=null"), `P1-2: phải lọc claim_token null, có: ${guards.join(" | ")}`);
+    // Và mặc định `dispatch_started_at: null` (tái sử dụng không charge) vẫn giữ.
+    assert.equal(recycled.patch.dispatch_started_at, null, "tái sử dụng không được charge");
+  }
 }

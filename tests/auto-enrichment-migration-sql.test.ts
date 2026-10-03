@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const SQL = readFileSync(new URL("../supabase/migrations/0020_auto_enrichment_v1.sql", import.meta.url), "utf8");
+const SQL_0021 = readFileSync(new URL("../supabase/migrations/0021_radar_match_enrichment_ownership.sql", import.meta.url), "utf8");
 
 /** Cắt phần thân của `create or replace function ... $$ ... $$;` theo tên. */
 function functionBody(name: string): string {
@@ -256,6 +257,33 @@ test("G4. migration idempotent (if not exists / drop policy if exists / create o
   // Không có câu DDL phá huỷ dữ liệu.
   assert.equal(/drop table/i.test(SQL), false, "không được drop table");
   assert.equal(/\btruncate\s+table\b/i.test(SQL), false, "không được TRUNCATE trong migration");
+});
+
+// ================================================================ H. migration 0021 (P1-1)
+
+// 0021 chỉ thêm cột tuổi job chủ để phân giải ownership; không được nới lỏng bất
+// cứ RLS/grant nào của 0019/0020 và không cần backfill.
+/** Bỏ comment `--` để assert trên STATEMENT thật, không dính chữ trong comment. */
+const SQL_0021_CODE = SQL_0021.replace(/--[^\n]*/g, "").replace(/\s+/g, " ").trim();
+test("H1. 0021 thêm đúng 1 cột nullable, idempotent", () => {
+  const addCol = SQL_0021_CODE.match(/alter table public\.radar_matches add column if not exists enrichment_job_created_at timestamptz;/i);
+  assert.ok(addCol, "thiếu alter table radar_matches add column if not exists enrichment_job_created_at timestamptz");
+  assert.ok(/if not exists/i.test(SQL_0021_CODE), "phải idempotent");
+  // Chỉ 1 cột mới: không lôi score/deal_type/is_ngop (signal thủ công) vào.
+  const addCols = SQL_0021_CODE.match(/add column[^;]*/gi) ?? [];
+  assert.equal(addCols.length, 1, `0021 chỉ được thêm 1 cột, thấy: ${addCols.join(" | ")}`);
+  assert.equal(/\b(score|deal_type|is_ngop)\b/i.test(SQL_0021_CODE), false, "không được đụng cột signal thủ công");
+});
+
+test("H2. 0021 không làm yếu RLS/grant của 0019/0020", () => {
+  assert.equal(/disable row level security/i.test(SQL_0021_CODE), false, "không được tắt RLS");
+  assert.equal(/drop policy/i.test(SQL_0021_CODE), false, "không được drop policy");
+  assert.equal(/\b(revoke|grant)\b/i.test(SQL_0021_CODE), false, "không được đổi quyền");
+  assert.equal(/\bdrop\s+table\b/i.test(SQL_0021_CODE), false, "không được drop table");
+  assert.equal(/\btruncate\s+table\b/i.test(SQL_0021_CODE), false, "không được TRUNCATE");
+  // Không đòi backfill: cột nullable, không default, không update dữ liệu cũ.
+  assert.equal(/\bupdate\b/i.test(SQL_0021_CODE), false, "0021 không được sửa dữ liệu cũ (không backfill)");
+  assert.equal(/\bdelete\b/i.test(SQL_0021_CODE), false, "không được xoá dữ liệu");
 });
 
 console.log(`\nauto-enrichment-migration-sql: ${failures} fail`);

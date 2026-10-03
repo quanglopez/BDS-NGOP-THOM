@@ -105,6 +105,8 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
     // Job terminal quá hạn TTL -> TÁI SỬ DỤNG dòng đó (giữ 1 dòng / (radar,listing,hash)).
     // Dòng mới -> insert. Gom insert 1 lần để không N+1.
     const resetCols = { claim_token: null, processing_started_at: null, next_attempt_at: null, error_kind: null };
+    // Trạng thái terminal: chỉ những trạng thái này được tái sử dụng.
+    const RECYCLEABLE = ["completed", "insufficient_data", "low_confidence", "failed"];
     const fresh: Record<string, unknown>[] = [];
     const queued: QueuedEnrichment[] = [];
     for (const item of toCreate) {
@@ -131,7 +133,23 @@ export async function syncEnrichmentJobs(db:SupabaseClient, radar:RadarSummary, 
       };
       queued.push({ externalId: String(item.row.external_id), fingerprint: item.hash });
       if (existSame && isStaleTerminal) {
-        const u = await db.from("auto_enrichment_jobs").update(payload).eq("id", existSame.id);
+        // TÁI SỬ DỤNG chỉ khi job VẪN terminal VÀ chưa ai claim lúc ghi.
+        // `existSame`/`isStaleTerminal` đọc từ SNAPSHOT trước khi ghi: job có thể
+        // đã được scan khác tái sử dụng (về pending) và worker claim + charge
+        // allowance trong khoảng giữa hai thời điểm. Nếu UPDATE chỉ khoá theo id,
+        // nó xoá dispatch_started_at -> guard "charge đúng 1 lần" của
+        // begin_auto_enrichment_dispatch bị mở khoá -> cùng một (radar, tin, hash)
+        // bị charge LẦN THỨ HAI. Hai predicate dưới đây (terminal + claim_token
+        // null) chặn đúng race đó. KHÔNG lọc `dispatch_started_at is null`: job
+        // terminal bình thường (đã dispatch xong) LÀ đối tượng cần tái sử dụng —
+        // lọc thêm điều kiện đó sẽ triệt tiêu TTL reuse.
+        const u = await db
+          .from("auto_enrichment_jobs")
+          .update(payload)
+          .eq("id", existSame.id)
+          .in("status", RECYCLEABLE)
+          .is("claim_token", null)
+          .select("id");
         if (u.error) console.error("[auto-enrollment:update]", u.error.code);
       } else {
         fresh.push(payload);

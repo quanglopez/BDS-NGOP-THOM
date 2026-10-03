@@ -34,12 +34,16 @@ type StoredJob = EnrichmentJobRow & {
   updated_at: string;
 };
 
+/** Trạng thái enrichment trên radar_matches: chỉ cột enrichment_* (jobId,
+ *  fingerprint, tuổi của job chủ) — KHÔNG bao giờ chứa score/deal_type/is_ngop. */
+type StoredEnrichment = Partial<MatchEnrichmentPatch> & { jobId?: string | null; fingerprint?: string | null; jobCreatedAt?: string | null };
+
 /** Mô phỏng DB: claim = CAS theo status; charge = atomic cap; claim token chống double. */
 class MemStore implements EnrichmentWorkerStore {
   nowMs = T0;
   dailyLimit = 200;
   jobs: StoredJob[] = [];
-  matches = new Map<string, { score: number | null; deal_type: string | null; is_ngop: number | null; enrichment: Partial<MatchEnrichmentPatch> & { jobId?: string } }>();
+  matches = new Map<string, { score: number | null; deal_type: string | null; is_ngop: number | null; enrichment: StoredEnrichment }>();
   checks: { external_id: string; created_at: string; score: number | null }[] = [];
   plans = new Map<string, boolean>();
   allowance = new Map<string, number>();
@@ -64,6 +68,7 @@ class MemStore implements EnrichmentWorkerStore {
       attempts: 0,
       dispatch_started_at: null,
       claim_token: null,
+      created_at: this.iso(),
       status: "pending",
       next_attempt_at: null,
       processing_started_at: null,
@@ -77,8 +82,27 @@ class MemStore implements EnrichmentWorkerStore {
     return job;
   }
 
-  seedMatch(externalId = "111", over: { score?: number | null; deal_type?: string | null; is_ngop?: number | null } = {}) {
-    this.matches.set(externalId, { score: null, deal_type: null, is_ngop: null, ...over, enrichment: {} });
+  seedMatch(
+    externalId = "111",
+    over: {
+      score?: number | null;
+      deal_type?: string | null;
+      is_ngop?: number | null;
+      enrichment?: StoredEnrichment;
+    } = {},
+  ) {
+    const { enrichment, ...manual } = over;
+    this.matches.set(externalId, { score: null, deal_type: null, is_ngop: null, ...manual, enrichment: { ...enrichment } });
+  }
+
+  /** Ownership của row: job này sở hữu, HOẶC chứng minh được job đang sở hữu
+   *  CỨ HƠN job này (takeover). Không chứng minh được -> false. */
+  private ownsRow(e: StoredEnrichment, job: EnrichmentJobRow): boolean {
+    if (e.jobId === job.id) return true;
+    if (typeof job.created_at !== "string" || !(Date.parse(job.created_at) > 0)) return false;
+    if (e.jobId == null || e.jobCreatedAt == null) return false;
+    const owner = Date.parse(e.jobCreatedAt);
+    return Number.isFinite(owner) && owner < Date.parse(job.created_at);
   }
 
   async reclaimStaleProcessing(cutoffISO: string, maxAttempts: number) {
@@ -169,29 +193,39 @@ class MemStore implements EnrichmentWorkerStore {
     return list[0]?.created_at ?? null;
   }
 
-  // CAS mô phỏng đúng enrichment-store: chỉ job sở hữu row mới ghi được.
+  // CAS mô phỏng đúng enrichment-store: chỉ job sở hữu row (hoặc job MỚI HƠN chủ
+  // hiện tại — takeover P1-1) mới ghi được.
   async markMatchProcessing(job: EnrichmentJobRow) {
     this.processingCalls.push(job);
     const m = this.matches.get(job.external_id);
     if (!m) return false;
-    const owner = m.enrichment.jobId ?? null;
-    const status = m.enrichment.status ?? null;
-    const owns = owner === job.id;
-    const claimable = owner === null && (status === null || status === "not_started" || status === "pending");
-    if (!owns && !claimable) return false;
-    m.enrichment = { ...m.enrichment, status: "processing", jobId: job.id };
+    const e = m.enrichment;
+    const status = e.status ?? null;
+    const owns = e.jobId === job.id;
+    const claimable = e.jobId == null && (status === null || status === "not_started" || status === "pending");
+    if (!owns && !claimable && !this.ownsRow(e, job)) return false;
+    m.enrichment = {
+      ...e,
+      status: "processing",
+      jobId: job.id,
+      fingerprint: job.material_input_hash,
+      jobCreatedAt: job.created_at,
+    };
     return true;
   }
 
   async persistMatchEnrichment(job: EnrichmentJobRow, patch: MatchEnrichmentPatch) {
     const m = this.matches.get(job.external_id);
-    if (m && m.enrichment.jobId !== job.id) {
-      // Mất ownership -> CAS chặn, KHÔNG ghi (và KHÔNG tính vào persistCalls
-      // để test phân biệt được "đã thử ghi" với "đã ghi được").
-      return false;
-    }
+    // Mất ownership (hoặc job CỨ hơn chủ hiện tại) -> CAS chặn, KHÔNG ghi (và
+    // KHÔNG tính vào persistCalls để test phân biệt được "đã thử ghi" với "đã ghi được").
+    if (!m || !this.ownsRow(m.enrichment, job)) return false;
     this.persistCalls.push({ jobId: job.id, patch });
-    if (m) m.enrichment = { ...patch, jobId: job.id };
+    m.enrichment = {
+      ...patch,
+      jobId: job.id,
+      fingerprint: job.material_input_hash,
+      jobCreatedAt: job.created_at,
+    };
     return true;
   }
 }
@@ -389,6 +423,107 @@ await test("FIX 2: cap/plan blocked KHÔNG ghi processing (AI chưa chạy)", as
   noPlan.seedJob();
   await runWorker(noPlan, providerFrom(noPlan, PUBLISHED));
   assert.deepEqual(noPlan.processingCalls, []);
+});
+
+// ---------------------------------------------------------------- P1-1 ownership
+
+// P1-1: material đổi -> `syncEnrichmentJobs` tạo job MỚI (id khác, hash khác).
+// Job đó phải chiếm được row và publish được; allowance + lượt gọi AI của nó
+// không được bỏ phí. Trước fix: ownsRow = false ở cả 2 nhánh CAS cũ, persist
+// miss -> row đóng băng trên fingerprint cũ, allowance + Jev trả cho không.
+await test("P1-1. job fingerprint MỚI chiếm row và publish đè kết quả cũ (không bỏ phí allowance)", async () => {
+  const store = setup();
+  const jobA = store.seedJob({
+    id: "job-A",
+    status: "completed",
+    material_input_hash: "hash-A",
+    attempts: 1,
+    dispatch_started_at: new Date(T0 - 30 * 24 * 3600 * 1000).toISOString(),
+    allowance_consumed: true,
+    created_at: new Date(T0 - 31 * 24 * 3600 * 1000).toISOString(),
+  });
+  store.matches.get("111")!.enrichment = {
+    status: "completed",
+    source: "auto_enrichment",
+    score: 70,
+    dealType: "thom_dau_tu",
+    isNgoP: 30,
+    confidence: "high",
+    checkedAt: new Date(T0 - 31 * 24 * 3600 * 1000).toISOString(),
+    jobId: "job-A",
+    fingerprint: "hash-A",
+    jobCreatedAt: jobA.created_at,
+  };
+  // Job B: material_input_hash khác, id khác, tạo SAU job A.
+  const jobB = store.seedJob({
+    id: "job-B",
+    status: "pending",
+    material_input_hash: "hash-B",
+    created_at: new Date(T0 - 60 * 60 * 1000).toISOString(),
+  });
+
+  const res = await runWorker(store, providerFrom(store, PUBLISHED));
+
+  assert.equal(res.claimed, 1, "job A đã terminal -> chỉ job B được claim");
+  assert.equal(res.published, 1, "job B phải publish được (trước fix: lostClaims, row đóng băng trên hash-A)");
+  assert.equal(res.lostClaims, 0, "job B sở hữu row -> không được tính mất ownership");
+  const m = store.matches.get("111")!;
+  assert.equal(m.enrichment.jobId, "job-B");
+  assert.equal(m.enrichment.fingerprint, "hash-B", "row phải mang fingerprint MỚI");
+  assert.equal(m.enrichment.status, "completed");
+  assert.equal(m.enrichment.score, 82, "kết quả của B phải thay kết quả cũ của A");
+  assert.equal(m.enrichment.dealType, "ngop_ngon");
+  assert.deepEqual(store.charges, ["job-B"], "allowance của B không được bỏ phí: charge đúng 1");
+  assert.equal(store.dispatches, 1, "AI gọi đúng 1 lần cho B");
+  assert.equal(jobB.status, "completed");
+});
+
+// P1-1 (ngược): job A đang bay (fingerprint cũ) thì material đổi, job B chiếm
+// row và publish. Khi A chạy xong, nó KHÔNG được ghi đè kết quả của B.
+await test("P1-1 (ngược). worker cũ của fingerprint A không ghi đè được kết quả của B", async () => {
+  const store = setup();
+  store.seedJob({ id: "job-A", status: "pending", material_input_hash: "hash-A", created_at: new Date(T0 - 60 * 60 * 1000).toISOString() });
+
+  let bPublished = false;
+  const providerB = providerFrom(store, PUBLISHED);
+  const provider: EnrichmentProvider = async () => {
+    store.dispatches++;
+    if (!bPublished) {
+      // Trong lúc A đang gọi AI: material đổi -> job B (mới hơn) chiếm row + publish.
+      bPublished = true;
+      const jobB = store.seedJob({ id: "job-B", status: "pending", material_input_hash: "hash-B", created_at: new Date(T0 - 60_000).toISOString() });
+      const [claimedB] = await store.claimPending(1);
+      assert.equal(claimedB.id, "job-B", "job A đang processing nên chỉ B được claim");
+      assert.equal(await store.isPlanPro(USER), true);
+      assert.equal(await store.beginDispatch(claimedB), true, "B phải charge allowance");
+      assert.equal(await store.markMatchProcessing(claimedB), true, "B mới hơn A -> chiếm row được");
+      await providerB(jobB.material_input);
+      await store.persistMatchEnrichment(claimedB, {
+        status: "completed",
+        source: "auto_enrichment",
+        score: 70,
+        dealType: "thom_dau_tu",
+        isNgoP: 30,
+        confidence: "high",
+        checkedAt: new Date(T0).toISOString(),
+      });
+      await store.markTerminal(claimedB, "completed");
+      assert.equal(jobB.status, "completed");
+    }
+    return PUBLISHED;
+  };
+
+  const res = await runWorker(store, provider, { maxJobs: 1 });
+
+  assert.equal(store.dispatches, 2, "A và B đều gọi AI");
+  assert.equal(res.published, 0, "A mất ownership -> KHÔNG được báo publish");
+  assert.equal(res.lostClaims, 1, "A bị CAS chặn ở bước persist");
+  const m = store.matches.get("111")!;
+  assert.equal(m.enrichment.jobId, "job-B");
+  assert.equal(m.enrichment.fingerprint, "hash-B");
+  assert.equal(m.enrichment.score, 70, "kết quả của B phải còn nguyên, A không ghi đè");
+  assert.equal(m.score, null, "cột manual vẫn không bị đụng");
+  assert.deepEqual(store.charges, ["job-A", "job-B"], "mỗi job charge đúng 1");
 });
 
 // ---------------------------------------------------------------- terminal outcomes
