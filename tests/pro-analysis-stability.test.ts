@@ -6,7 +6,15 @@
 
 import { strict as assert } from "node:assert";
 import { jsonResponse, sseResponse } from "./openrouter-sse.ts";
-import { generateProAnalysis, chainBudgetMs, MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS_RETRY } from "../lib/ai/pro-analysis.ts";
+import {
+  generateProAnalysis,
+  chainBudgetMs,
+  MAX_OUTPUT_TOKENS,
+  MAX_OUTPUT_TOKENS_RETRY,
+  maxOutputTokens,
+  maxOutputTokensRetry,
+  MIN_CALL_BUDGET_MS,
+} from "../lib/ai/pro-analysis.ts";
 import { PRO_ANALYSIS_SYSTEM_PROMPT } from "../lib/ai/prompts.ts";
 import { BANNED_VERIFIED_CLAIMS, BANNED_ADVICE } from "../lib/ai/guard.ts";
 import { buildEvidencePack } from "../lib/ai/evidence.ts";
@@ -333,14 +341,165 @@ async function main() {
     } finally { globalThis.fetch = realFetch; }
   });
 
+  // ---------------------------------------------------------------
+  // PHASE 6 — NGÂN SÁCH TOKEN THEO EVIDENCE 2026-10-04
+  // JSON Pro thật cần ~5-6k output tokens (production: 5379). Trần 3000 cũ
+  // cắt ngay attempt 1; attempt 2 thì hết budget chain trước khi sinh xong.
+  // ---------------------------------------------------------------
+
+  // Chuỗi đệm dùng chung: schema (lib/ai/schema.ts) cắt mỗi chuỗi ở 1200 ký
+  // tự nên JSON lớn phải phân bố dài ra NHIỀU field nhỏ, không gộp một chuỗi.
+  function padText(target: number): string {
+    const unit =
+      "Du lieu tham chieu khu vuc duoc tong hop tu cac tin dang cung phuong trong 90 ngay qua, chi mang tinh tham khao va can duoc xac minh bo sung. ";
+    let s = "";
+    while (s.length < target) s += unit;
+    return s.slice(0, target).trimEnd();
+  }
+
+  await check("12. attempt 1 được cấp >= 6000 max_tokens (không còn trần 3000)", async () => {
+    const captured = stubFetch(() => ok(DEEPSEEK));
+    try {
+      await withEnv(env(DEEPSEEK, QWEN_PAID), () => generateProAnalysis(evidence));
+    } finally { globalThis.fetch = realFetch; }
+    assert.ok(captured.length >= 1, "phải có ít nhất 1 request");
+    const t1 = Number(captured[0].body.max_tokens);
+    assert.ok(
+      t1 >= 6000,
+      `attempt 1 phải được cấp >= 6000 tokens để JSON ~5-6k hoàn tất trong một lần gọi, thực tế ${t1}`,
+    );
+    assert.equal(t1, maxOutputTokens({}), "attempt 1 phải đúng maxOutputTokens() (env-aware)");
+  });
+
+  // finish_reason=length nghĩa là content bị cắt ĐUÔI. Cho dù phần đã sinh ra
+  // tình cờ là JSON hợp lệ, phần còn lại của report đã mất vĩnh viễn — phải bị
+  // từ chối ở tầng transport (openrouter.ts), không được coi là success.
+  await check("13. finish_reason=length + JSON hợp lệ vẫn không được coi là success", async () => {
+    stubFetch((model) =>
+      model === DEEPSEEK
+        ? {
+            status: 200,
+            payload: {
+              model: DEEPSEEK,
+              choices: [{ message: { content: JSON.stringify(cleanAnalysis()) }, finish_reason: "length" }],
+              usage: { prompt_tokens: 900, completion_tokens: 6000 },
+            },
+          }
+        : ok(QWEN_PAID),
+    );
+    try {
+      const out = await withEnv(env(DEEPSEEK, QWEN_PAID), () => generateProAnalysis(evidence));
+      assert.equal(out.model, QWEN_PAID, "kết quả phải đến từ model khác, không phải content bị cắt");
+      assert.equal(out.metrics.provider_errors.includes("provider_truncated"), true);
+      assert.equal(out.metrics.fallback_used, false);
+    } finally { globalThis.fetch = realFetch; }
+  });
+
+  // JSON hợp lệ dài (~5-6k output tokens, ca production: 5379) phải được chấp
+  // nhận nguyên vẹn — không có cap kích thước nào được phép từ chối ở downstream.
+  await check("14. JSON hợp lệ ~5-6k tokens (finish_reason=stop) được chấp nhận", async () => {
+    const priceExplanation = padText(1100);
+    const bigAnalysis: ProAnalysis = {
+      ...cleanAnalysis(),
+      summary: {
+        headline: "Căn hộ 72m2 tại Cầu Giấy, giá 7,3 tỷ.",
+        text: padText(1900),
+        confidence: "medium",
+      },
+      highlights: Array.from({ length: 6 }, (_, i) => ({
+        type: (i % 2 === 0 ? "positive" : "warning") as ProAnalysis["highlights"][number]["type"],
+        title: `Điểm đáng chú ý ${i + 1}`,
+        explanation: padText(1100),
+        evidence_source: "listing",
+      })),
+      score_explanation: {
+        summary: padText(950),
+        strengths: Array.from({ length: 3 }, (_, i) => ({
+          title: `Điểm mạnh ${i + 1}`,
+          explanation: padText(1100),
+          evidence_source: "listing",
+        })),
+        weaknesses: Array.from({ length: 2 }, (_, i) => ({
+          title: `Điểm yếu ${i + 1}`,
+          explanation: padText(1100),
+          evidence_source: "listing",
+        })),
+      },
+      next_steps: Array.from({ length: 6 }, (_, i) => ({
+        priority: "medium" as const,
+        title: `Bước kiểm tra ${i + 1}`,
+        reason: padText(1100),
+      })),
+      limitations: [padText(1100), padText(1100), padText(1100)],
+    };
+    bigAnalysis.price_analysis.explanation = priceExplanation;
+    const wire = JSON.stringify(bigAnalysis);
+    // ~4 ký tự/token -> 20000 chars tương đương ~5k output tokens.
+    assert.ok(wire.length >= 20000, `fixture phải tương đương ~5k+ tokens, thực tế ${wire.length} chars`);
+
+    stubFetch(() => ({
+      status: 200,
+      payload: {
+        model: DEEPSEEK,
+        choices: [{ message: { content: wire }, finish_reason: "stop" }],
+        usage: { prompt_tokens: 1000, completion_tokens: 5379 },
+      },
+    }));
+    try {
+      const out = await withEnv(env(DEEPSEEK, QWEN_PAID), () => generateProAnalysis(evidence));
+      assert.equal(out.fromFallback, false, "JSON đúng + đủ dài phải thành công, không rơi fallback");
+      assert.equal(out.model, DEEPSEEK);
+      assert.equal(out.metrics.output_tokens, 5379, "output_tokens phải lấy từ usage thật");
+      assert.equal(
+        out.analysis.price_analysis.explanation,
+        priceExplanation,
+        "nội dung dài phải được giữ nguyên qua parse (schema slice 1200 không đụng chuỗi dưới cap)",
+      );
+      assert.equal(out.analysis.highlights.length, 6);
+    } finally { globalThis.fetch = realFetch; }
+  });
+
+  // ---------------------------------------------------------------
+  // CONTRACT — trần có hạn, env-aware, không phá maxDuration
+  // ---------------------------------------------------------------
+
   // Contract: budget mac dinh phai nho hon maxDuration 60s de con cho DB.
-  await check("contract: budget mac dinh < maxDuration 60s", () => {
+  await check("contract: budget mac dinh < maxDuration 60s va chua room cho DB", () => {
     const b = chainBudgetMs({});
     assert.ok(b > 0 && b < 60000, `budget mac dinh ${b}ms phai nam trong (0, 60000)`);
+    // Trần "không tăng vô hạn": phải chừa ít nhất 10s cho auth + đọc DB +
+    // save snapshot sau chain. 60s - 10s = 50s.
+    assert.ok(b <= 50000, `budget mac dinh ${b}ms khong duoc vuot 50s (chua 10s cho DB trong maxDuration 60s)`);
+    // Và vẫn đủ lớn để mở ít nhất 1 lần gọi.
+    assert.ok(b >= MIN_CALL_BUDGET_MS, `budget mac dinh ${b}ms phai >= MIN_CALL_BUDGET_MS`);
   });
 
   await check("contract: retry budget > lan dau", () => {
     assert.ok(MAX_OUTPUT_TOKENS_RETRY > MAX_OUTPUT_TOKENS, "attempt sau rut phai co nhieu token hon");
+  });
+
+  await check("contract: cap mac dinh >= 6000 tokens (du cho JSON ~5-6k)", () => {
+    assert.ok(
+      maxOutputTokens({}) >= 6000,
+      `cap mac dinh ${maxOutputTokens({})} phai >= 6000, nguoc lai JSON 5-6k bi cat ngay attempt 1`,
+    );
+  });
+
+  await check("contract: env override token cap; retry luon > base ke ca khi env cau hinh nguoc", () => {
+    // Mặc định khi không có env.
+    assert.ok(maxOutputTokensRetry({}) > maxOutputTokens({}), "mac dinh retry > base");
+    // Env hợp lệ.
+    assert.equal(maxOutputTokens({ PRO_ANALYSIS_MAX_OUTPUT_TOKENS: "8000" }), 8000);
+    assert.equal(maxOutputTokensRetry({ PRO_ANALYSIS_MAX_OUTPUT_TOKENS_RETRY: "12000" }), 12000);
+    // Env sai định dạng / <= 0 -> dùng mặc định.
+    assert.equal(maxOutputTokens({ PRO_ANALYSIS_MAX_OUTPUT_TOKENS: "abc" }), maxOutputTokens({}));
+    assert.equal(maxOutputTokens({ PRO_ANALYSIS_MAX_OUTPUT_TOKENS: "-5" }), maxOutputTokens({}));
+    // Env cấu hình NGƯỢC (retry < base) -> clamp để escalation vẫn có nghĩa.
+    assert.equal(
+      maxOutputTokensRetry({ PRO_ANALYSIS_MAX_OUTPUT_TOKENS_RETRY: "3000" }),
+      maxOutputTokens({}) + 1,
+      "retry phai duoc clamp > base khi env cau hinh nguoc",
+    );
   });
 
   console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
