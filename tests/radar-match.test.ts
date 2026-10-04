@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { signalLabels } from "@/lib/radar/format";
-import { getRadarMatches, scanRadar } from "@/lib/radar/data";
+import { getRadarMatches, scanRadar, syncEnrichmentJobs } from "@/lib/radar/data";
+import { materialFingerprint, materialInputFromRow } from "@/lib/radar/auto-enrollment";
 import type { RadarMatch, RadarSummary } from "@/lib/radar/types";
 
 const base: RadarMatch = {
@@ -62,13 +63,14 @@ interface UpsertCall {
  *  số query mỗi bảng để chứng minh batch lookup (không N+1). */
 function fakeDb(
   tables: Record<string, Row[]>,
-  failures: { table: string; op: "select" | "upsert" }[] = [],
+  failures: { table: string; op: "select" | "upsert" | "insert" }[] = [],
 ) {
   const upserts: UpsertCall[] = [];
-  const updates: { table: string; patch: Row }[] = [];
+  const inserts: UpsertCall[] = [];
+  const updates: { table: string; patch: Row; pending?: unknown }[] = [];
   const fromCalls: Record<string, number> = {};
   const store = (t: string): Row[] => (tables[t] ??= []);
-  const forced = (table: string, op: "select" | "upsert") =>
+  const forced = (table: string, op: "select" | "upsert" | "insert") =>
     failures.some((f) => f.table === table && f.op === op)
       ? { code: "XX000", message: `forced_${op}_failure` }
       : null;
@@ -80,18 +82,37 @@ function fakeDb(
     let orderAsc = true;
     let take = Infinity;
     let wantsCount = false;
+    let wanted: string[] = [];
     let pending: Row | null = null;
     const match = (r: Row) =>
       filters.every(([op, c, v]) => {
         if (op === "eq") return r[c] === v;
-        if (op === "gte") return Number(r[c]) >= Number(v);
-        if (op === "lte") return Number(r[c]) <= Number(v);
+        // `is null` / `not null` (giống SQL): undefined và null đều là NULL.
+        if (op === "is") return (r[c] ?? null) === (v ?? null);
+        // NULL không thoả gte/lte (giống SQL); so chuỗi ISO theo thứ tự từ điển.
+        if (op === "gte") {
+          if (r[c] == null) return false;
+          return typeof r[c] === "string" && typeof v === "string" ? (r[c] as string) >= v : Number(r[c]) >= Number(v);
+        }
+        if (op === "lte") {
+          if (r[c] == null) return false;
+          return typeof r[c] === "string" && typeof v === "string" ? (r[c] as string) <= v : Number(r[c]) <= Number(v);
+        }
         if (op === "not") return r[c] !== null && r[c] !== undefined;
         if (op === "in") return Array.isArray(v) && v.includes(r[c]);
         return true;
       });
     const rows = () => {
       let out = store(table).filter(match);
+      // select() chỉ trả về cột được yêu cầu — quan trọng cho fingerprint:
+      // area_v2/is_rent/... KHÔNG nằm trong select của scanRadar.
+      if (wanted.length) {
+        out = out.map((r) => {
+          const projected: Row = {};
+          for (const c of wanted) projected[c] = r[c];
+          return projected;
+        });
+      }
       if (orderCol) {
         const dir = orderAsc ? 1 : -1;
         const col = orderCol;
@@ -102,8 +123,9 @@ function fakeDb(
       return out.slice(0, take);
     };
     const api = {
-      select(_cols?: string, opts?: { count?: string }) {
+      select(cols?: string, opts?: { count?: string }) {
         wantsCount = opts?.count === "exact";
+        if (cols && cols !== "*") wanted = cols.split(",").map((c) => c.trim()).filter(Boolean);
         return api;
       },
       eq(col: string, val: unknown) {
@@ -126,6 +148,10 @@ function fakeDb(
         filters.push(["in", col, val]);
         return api;
       },
+      is(col: string, val: unknown) {
+        filters.push(["is", col, val]);
+        return api;
+      },
       order(col: string, opts?: { ascending?: boolean }) {
         orderCol = col;
         orderAsc = opts?.ascending ?? true;
@@ -137,6 +163,10 @@ function fakeDb(
       },
       then(resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) {
         const forcedError = forced(table, "select");
+        const lastUpdate = updates[updates.length - 1];
+        if (lastUpdate && lastUpdate.table === table && lastUpdate.pending === null) {
+          lastUpdate.pending = filters.map((f) => [...f] as Filter);
+        }
         if (forcedError) return Promise.resolve({ data: null, error: forcedError }).then(resolve, reject);
         if (pending) {
           for (const r of store(table)) if (match(r)) Object.assign(r, pending);
@@ -159,13 +189,41 @@ function fakeDb(
           const i = cur.findIndex(
             (x) => String(x.external_id) === String(row.external_id) && String(x.radar_id ?? "") === String(row.radar_id ?? ""),
           );
-          if (i >= 0) cur[i] = { ...cur[i], ...row };
-          else cur.push({ ...row });
+          if (i >= 0) {
+            const prev = cur[i]!;
+            const next = { ...prev, ...row };
+            // Model trigger 0022 preserve_radar_match_processing. Không phải proof Postgres.
+            if (prev.enrichment_status === "processing" && row.enrichment_status === "pending") {
+              next.enrichment_status = prev.enrichment_status;
+              next.enrichment_source = prev.enrichment_source;
+            }
+            cur[i] = next;
+          } else cur.push({ ...row });
         }
         return { data: null, error: null };
       },
+      async insert(payload: Row[]) {
+        const forcedError = forced(table, "insert");
+        if (forcedError) return { data: null, error: forcedError };
+        inserts.push({ table, rows: payload });
+        const cur = store(table);
+        for (const row of payload) cur.push({ ...row });
+        return { data: null, error: null };
+      },
+      async maybeSingle() {
+        const forcedError = forced(table, "select");
+        if (forcedError) return { data: null, error: forcedError };
+        if (pending) {
+          for (const r of store(table)) if (match(r)) Object.assign(r, pending);
+          pending = null;
+        }
+        return { data: rows()[0] ?? null, error: null };
+      },
       update(patch: Row) {
-        updates.push({ table, patch });
+        // `filters` là mảng dùng chung của chuỗi builder và còn được .push sau
+        // .update() (ví dụ .eq().in()) nên phải chụp lại ở thời điểm await, không
+        // lưu tham chiếu — nếu không, đọc lại sẽ thấy filter của chuỗi khác.
+        updates.push({ table, patch, pending: null });
         pending = patch;
         return api;
       },
@@ -173,7 +231,7 @@ function fakeDb(
     return api;
   }
 
-  return { db: { from } as unknown as SupabaseClient, upserts, updates, tables, fromCalls };
+  return { db: { from } as unknown as SupabaseClient, upserts, inserts, updates, tables, fromCalls };
 }
 
 const listing = (id: string, lastSeen: string): Row => ({
@@ -554,4 +612,558 @@ const storedMatch = (id: string, lastMatchedAt: string): Row => ({
   assert.deepEqual(JSON.parse(JSON.stringify(f.tables.market_listings)), listingsBefore, "input market_listings bị mutate");
   assert.deepEqual(JSON.parse(JSON.stringify(f.tables.checks)), checksBefore, "input checks bị mutate");
   assert.deepEqual(JSON.parse(JSON.stringify(RADAR)), radarBefore, "Radar config bị mutate");
+}
+
+// ------------------------------------------------- auto-enrollment integration
+// MANDATORY 34/35: scan chỉ ENQUEUE job pending — không dispatch AI, không charge,
+// không chờ provider; mọi lỗi enqueue không được làm scan fail.
+const RADAR_PRO: RadarSummary = { ...RADAR, userId: "user-1" };
+const PRO_USER = { id: "user-1", plan: "pro", plan_expires_at: "2099-01-01T00:00:00Z" };
+
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z"), listing("222", "2026-10-02T08:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [],
+  });
+  const res = await scanRadar(f.db, RADAR_PRO);
+
+  assert.equal(res.matches.length, 2, "scan phải xong dù có enqueue job");
+  const jobInserts = f.inserts.filter((i) => i.table === "auto_enrichment_jobs");
+  assert.equal(jobInserts.length, 1, "job enqueue theo batch 1 lần");
+  assert.equal(jobInserts[0]!.rows.length, 2);
+  for (const row of jobInserts[0]!.rows) {
+    assert.equal(row.status, "pending");
+    assert.equal(row.dispatch_started_at, null, "enqueue KHÔNG được dispatch/charge");
+    assert.equal(row.allowance_consumed, false);
+    assert.equal(row.user_id, "user-1");
+    assert.equal(row.radar_id, "radar-1");
+    assert.equal((row.material_input as Row).url, undefined, "material input không được chứa url");
+    assert.equal((row.material_input as Row).original_text, undefined);
+  }
+  assert.equal(f.fromCalls.auto_enrichment_jobs, 3, "2 select (existing + allowance count) + 1 insert batch, không N+1");
+
+  // FIX 1/4: pending phải nằm TRONG payload upsert (row mới chưa tồn tại nên
+  // update trước upsert là no-op -> match mới sẽ mắc default 'not_started').
+  const matchUpsert = f.upserts.find((u) => u.table === "radar_matches")!;
+  for (const row of matchUpsert.rows) {
+    assert.equal(row.enrichment_status, "pending", "row mới phải vào upsert với pending");
+    assert.equal(row.enrichment_source, "auto_enrichment");
+    assert.equal("enrichment_score" in row, false, "không được ghi enrichment_score khi chưa có kết quả");
+    assert.equal("enrichment_deal_type" in row, false);
+    assert.equal("enrichment_is_ngop" in row, false);
+    assert.equal("enrichment_checked_at" in row, false);
+    assert.equal(row.score, null, "không fabricate score");
+    assert.equal(row.deal_type, null);
+    assert.equal(row.is_ngop, null);
+    assert.equal(row.scoring_available, false);
+  }
+}
+
+// FIX 2: job ACTIVE (pending/processing) cùng fingerprint không bị scan ghi đè
+// trạng thái hiển thị (không giật UI về "chờ" khi AI đang chạy).
+for (const activeStatus of ["pending", "processing"] as const) {
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [
+      {
+        id: "job-1",
+        radar_id: "radar-1",
+        external_id: "111",
+        status: activeStatus,
+        // Fingerprint tính từ ĐÚNG shape row scanRadar trả về (9 cột allowlist).
+        material_input_hash: materialFingerprint(
+          materialInputFromRow({
+            external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+            region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+            size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+            last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+          }),
+        ),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  const upsert = f.upserts.find((u) => u.table === "radar_matches")!;
+  assert.equal("enrichment_status" in upsert.rows[0]!, false, `job ${activeStatus}: scan KHÔNG được ghi đè trạng thái của job đang chạy`);
+  assert.equal("enrichment_source" in upsert.rows[0]!, false);
+}
+
+// ------------------------------------------------- FIX 4: end-state của match MỚI
+// Không được chỉ assert "update() được gọi": row mới chưa tồn tại trong
+// radar_matches nên update trước upsert là no-op. Test đọc state cuối từ fake DB
+// rồi đọc lại qua getRadarMatches (đường production của UI).
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  assert.ok(f.inserts.some((i) => i.table === "auto_enrichment_jobs"), "phải enqueue job");
+
+  const rows = f.tables.radar_matches!;
+  assert.equal(rows.length, 1, "row radar_matches phải tồn tại");
+  const row = rows[0]!;
+  assert.equal(row.enrichment_status, "pending", "match MỚI phải kết thúc ở pending");
+  assert.notEqual(row.enrichment_status, "not_started", "không được để default của migration");
+  assert.equal(row.enrichment_source, "auto_enrichment");
+  assert.equal(row.score, null);
+  assert.equal(row.deal_type, null);
+  assert.equal(row.is_ngop, null);
+  assert.equal(row.scoring_available, false);
+
+  const got = await getRadarMatches(f.db, RADAR_PRO);
+  const m = got[0]!;
+  assert.equal(m.auto_enrichment!.status, "pending", "UI phải thấy pending");
+  assert.equal(m.auto_enrichment!.source, "auto_enrichment");
+  assert.equal(m.auto_enrichment!.score, null);
+  assert.equal(m.scoringAvailable, false);
+}
+
+// FIX 5 (đọc state thật từ DB): radar_match đang 'processing' VÌ có job active
+// thì scan KHÔNG được đưa về 'pending'. Job active được đưa vào auto_enrichment_jobs
+// đúng fingerprint (select của scanRadar không có area_v2 -> 9 cột allowlist).
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [
+      { ...storedMatch("111", "2026-10-02T09:00:00Z"), enrichment_status: "processing", enrichment_job_id: "job-1" },
+    ],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [
+      {
+        id: "job-1", radar_id: "radar-1", external_id: "111", status: "processing",
+        material_input_hash: materialFingerprint(
+          materialInputFromRow({
+            external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+            region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+            size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+            last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+          }),
+        ),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  // FIX 5: lớp bảo vệ cuối trong syncEnrichmentJobs (queued.filter) phải giữ
+  // được: dù policy không enqueue job active, nếu mất lớp này thì queued vẫn
+  // có thể chứa id và scan sẽ lật row về pending.
+  assert.equal(f.updates.filter((u) => u.table === "radar_matches").length, 0, "không được update trực tiếp row radar_matches (race với upsert)");
+  const fullUpsert = f.upserts.filter((u) => u.table === "radar_matches").at(-1)!;
+  // Được phép ghi lại 'processing' (giữ đúng state), nhưng TUYỆT ĐỐI không được
+  // ghi 'pending' -> không được lật ngược job đang chạy.
+  assert.notEqual(fullUpsert.rows[0]!.enrichment_status, "pending", "job đang processing: KHÔNG được lật về pending");
+  assert.equal(fullUpsert.rows[0]!.enrichment_status, "processing");
+  assert.equal(f.tables.auto_enrichment_jobs!.length, 1, "không tạo job mới khi đã có job active cùng fingerprint");
+  const row = f.tables.radar_matches![0]!;
+  assert.equal(row.enrichment_status, "processing", "row đang processing phải giữ nguyên");
+  assert.equal(row.enrichment_job_id, "job-1");
+  assert.equal(row.score, null);
+  assert.equal(row.scoring_available, false);
+}
+
+// FIX 5 (trực tiếp): syncEnrichmentJobs KHÔNG được trả về id đang có job
+// processing — đây là lớp bảo vệ cuối, không phụ thuộc policy planner.
+{
+  const hash = materialFingerprint(
+    materialInputFromRow({
+      external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+      region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+      size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+      last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+    }),
+  );
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z"), listing("222", "2026-10-02T08:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [
+      { id: "job-active", radar_id: "radar-1", external_id: "111", status: "processing", material_input_hash: hash, updated_at: new Date().toISOString() },
+    ],
+  });
+  const queued = await syncEnrichmentJobs(f.db, RADAR_PRO, [
+    { external_id: "111", score: null, scoring_available: false },
+    { external_id: "222", score: null, scoring_available: false },
+  ]);
+  const ids = queued.map((q) => q.externalId);
+  assert.equal(ids.includes("111"), false, "id đang có job processing không được xuất hiện trong queue");
+}
+
+// FIX 1 (job terminal quá TTL được tái sử dụng): upsert phải GIỮ kết quả cũ,
+// không ghi đè bằng pending trước khi worker có kết quả mới.
+{
+  const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+  const hash = materialFingerprint(
+    materialInputFromRow({
+      external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+      region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+      size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+      last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+    }),
+  );
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [
+      {
+        ...storedMatch("111", "2026-10-02T09:00:00Z"),
+        enrichment_status: "completed", enrichment_source: "auto_enrichment",
+        enrichment_score: 82, enrichment_deal_type: "ngop_ngon", enrichment_is_ngop: 88,
+        enrichment_confidence: "high", enrichment_checked_at: oldDate,
+      },
+    ],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [
+      { id: "old-job", radar_id: "radar-1", external_id: "111", status: "completed", material_input_hash: hash, updated_at: oldDate },
+    ],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  const recycled = f.updates.find((u) => u.table === "auto_enrichment_jobs");
+  assert.ok(recycled, "job terminal quá TTL phải được tái sử dụng (không tạo job mới)");
+  assert.equal(recycled!.patch.status, "pending");
+  assert.equal(recycled!.patch.attempts, 0);
+  assert.equal(recycled!.patch.dispatch_started_at, null, "tái sử dụng không được charge");
+
+  const stripped = f.upserts.find(
+    (u) => u.table === "radar_matches" && u.rows.every((r) => !("enrichment_status" in r)),
+  );
+  assert.ok(stripped, "phải có 1 upsert bỏ cột enrichment_* cho row đã có kết quả");
+  const row = f.tables.radar_matches![0]!;
+  assert.equal(row.enrichment_status, "completed", "kết quả cũ phải được giữ tới khi worker publish");
+  assert.equal(row.enrichment_score, 82);
+}
+
+// Enqueue lỗi (select jobs lỗi) -> scan vẫn chạy xong, radar_matches + radars ghi bình thường.
+{
+  const f = fakeDb(
+    {
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [],
+      radar_matches: [],
+      radars: [{ id: "radar-1" }],
+      users: [PRO_USER],
+      auto_enrichment_jobs: [],
+    },
+    [{ table: "auto_enrichment_jobs", op: "select" }],
+  );
+  const res = await scanRadar(f.db, RADAR_PRO);
+  assert.equal(res.matches.length, 1, "lỗi enqueue không làm scan fail");
+  assert.equal(f.tables.radar_matches.length, 1, "radar_matches vẫn được ghi");
+  assert.ok(f.updates.some((u) => u.table === "radars"), "radars vẫn được cập nhật");
+}
+
+// Enqueue lỗi (insert jobs lỗi) -> scan vẫn chạy xong.
+{
+  const f = fakeDb(
+    {
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [],
+      radar_matches: [],
+      radars: [{ id: "radar-1" }],
+      users: [PRO_USER],
+      auto_enrichment_jobs: [],
+    },
+    [{ table: "auto_enrichment_jobs", op: "insert" }],
+  );
+  const res = await scanRadar(f.db, RADAR_PRO);
+  assert.equal(res.matches.length, 1, "lỗi insert job không làm scan fail");
+  assert.equal(f.tables.radar_matches.length, 1);
+}
+
+// Allowance đếm theo dispatch_started_at: 199 job đã dispatch hôm nay + 1 pending
+// -> chỉ còn đúng 1 slot, dù có 3 tin eligible.
+{
+  const dispatchedToday = Array.from({ length: 199 }, (_, i) => ({
+    id: "job-" + i,
+    user_id: "user-1",
+    dispatch_started_at: new Date().toISOString(),
+  }));
+  const f = fakeDb({
+    market_listings: [
+      listing("111", "2026-10-02T09:00:00Z"),
+      listing("222", "2026-10-02T08:00:00Z"),
+      listing("333", "2026-10-02T07:00:00Z"),
+    ],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [...dispatchedToday, { id: "job-pending", user_id: "user-1", dispatch_started_at: null }],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  const jobInserts = f.inserts.filter((i) => i.table === "auto_enrichment_jobs");
+  assert.equal(jobInserts.length, 1);
+  assert.equal(jobInserts[0]!.rows.length, 1, "consumed 199/200 -> cap còn 1 slot");
+}
+
+// Free plan: không enqueue, không query bảng jobs.
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [{ id: "user-1", plan: "free", plan_expires_at: "2099-01-01T00:00:00Z" }],
+    auto_enrichment_jobs: [],
+  });
+  await scanRadar(f.db, RADAR_PRO);
+  assert.equal(f.fromCalls.auto_enrichment_jobs ?? 0, 0, "free plan không được chạm bảng jobs");
+  assert.equal(f.inserts.filter((i) => i.table === "auto_enrichment_jobs").length, 0);
+}
+
+// ------------------------------------------------- auto-enrichment read mapping
+// Cột DB đúng tên: enrichment_checked_at + enrichment_fingerprint + enrichment_source
+// (đọc từ DB, không hardcode); null != 0.
+{
+  const f = fakeDb({
+    radar_matches: [
+      {
+        ...storedMatch("111", "2026-10-02T09:00:00Z"),
+        enrichment_status: "completed",
+        enrichment_source: null,
+        enrichment_score: 0,
+        enrichment_deal_type: null,
+        enrichment_is_ngop: null,
+        enrichment_confidence: "high",
+        enrichment_checked_at: "2026-10-03T00:00:00Z",
+        enrichment_fingerprint: "hash-111",
+      },
+      {
+        ...storedMatch("222", "2026-10-02T08:00:00Z"),
+        enrichment_status: "completed",
+        enrichment_source: "manual_check",
+        enrichment_score: 82,
+        enrichment_deal_type: "ngop_ngon",
+        enrichment_is_ngop: 88,
+        enrichment_confidence: "medium",
+        enrichment_checked_at: "2026-10-03T01:00:00Z",
+        enrichment_fingerprint: "hash-222",
+      },
+      {
+        ...storedMatch("333", "2026-10-02T07:00:00Z"),
+        enrichment_status: "insufficient_data",
+        enrichment_source: "auto_enrichment",
+        enrichment_score: null,
+        enrichment_checked_at: null,
+        enrichment_fingerprint: null,
+      },
+    ],
+  });
+  const got = await getRadarMatches(f.db, RADAR);
+  const a = got.find((m: RadarMatch) => m.externalId === "111")!.auto_enrichment!;
+  assert.equal(a.status, "completed");
+  assert.equal(a.score, 0, "enrichment_score 0 phải giữ 0");
+  assert.notEqual(a.score, null);
+  assert.equal(a.dealType, null, "deal_type null giữ null");
+  assert.equal(a.isNgoP, null, "is_ngop null giữ null");
+  assert.equal(a.source, "auto_enrichment", "DB null -> fallback auto");
+  assert.equal(a.confidence, "high");
+  assert.equal(a.checkedAt, "2026-10-03T00:00:00Z", "phải đọc đúng cột enrichment_checked_at");
+  assert.equal(a.fingerprint, "hash-111", "phải đọc đúng cột enrichment_fingerprint");
+
+  const b = got.find((m: RadarMatch) => m.externalId === "222")!.auto_enrichment!;
+  assert.equal(b.source, "manual_check", "source phải đọc từ DB, không hardcode");
+  assert.equal(b.score, 82);
+
+  const c = got.find((m: RadarMatch) => m.externalId === "333")!.auto_enrichment!;
+  assert.equal(c.status, "insufficient_data");
+  assert.equal(c.score, null);
+  assert.notEqual(c.score, 0, "thiếu dữ liệu không được quy về 0");
+  assert.equal(c.checkedAt, null);
+  assert.equal(c.fingerprint, null);
+}
+
+// P2-7: snapshot scan không thấy processing, worker kịp set processing, upsert
+// vẫn gửi pending. Trigger 0022 (model trong fake upsert) phải giữ processing.
+// Không phải proof Postgres — predicate khoá ở auto-enrichment-migration-sql.test.ts.
+{
+  const f = fakeDb({
+    market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+    checks: [],
+    radar_matches: [],
+    radars: [{ id: "radar-1" }],
+    users: [PRO_USER],
+    auto_enrichment_jobs: [],
+  });
+  let raced = false;
+  const rawFrom = f.db.from.bind(f.db);
+  (f.db as { from: typeof rawFrom }).from = (table: string) => {
+    const q = rawFrom(table);
+    if (table !== "radar_matches") return q;
+    const origThen = q.then.bind(q);
+    q.then = ((resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+      origThen((v: unknown) => {
+        if (!raced) {
+          raced = true;
+          f.tables.radar_matches.push({
+            radar_id: "radar-1",
+            external_id: "111",
+            enrichment_status: "processing",
+            enrichment_source: "auto_enrichment",
+            enrichment_job_id: "job-live",
+            enrichment_fingerprint: "hash-live",
+          });
+        }
+        return resolve(v);
+      }, reject)) as typeof q.then;
+    return q;
+  };
+  await scanRadar(f.db, RADAR_PRO);
+  const wrotePending = f.upserts.some(
+    (u) => u.table === "radar_matches" && u.rows.some((r) => r.external_id === "111" && r.enrichment_status === "pending"),
+  );
+  assert.equal(wrotePending, true, "snapshot cũ vẫn gửi pending — guard phải ở DB, không chỉ sửa payload");
+  const row = f.tables.radar_matches.find((r) => String(r.external_id) === "111")!;
+  assert.equal(row.enrichment_status, "processing", "P2-7: không được lật processing về pending");
+  assert.equal(row.enrichment_job_id, "job-live");
+  assert.equal(row.enrichment_fingerprint, "hash-live");
+}
+
+// ------------------------------------------------- P1-2: scan recycle không
+// được charge 2 lần. `existSame`/`isStaleTerminal` đọc từ SNAPSHOT trước khi
+// ghi: job có thể đã được scan khác tái sử dụng về pending và worker claim +
+// charge allowance trong khoảng giữa hai thời điểm. UPDATE chỉ khoá theo id sẽ
+// xoá dispatch_started_at -> guard "charge đúng 1 lần" của
+// begin_auto_enrichment_dispatch bị mở khoá -> cùng (radar, tin, hash) bị charge
+// LẦN THỨ HAI.
+{
+  const oldDate = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString();
+  const hash = materialFingerprint(
+    materialInputFromRow({
+      external_id: "111", url: "/tin/111.htm", title: "Tin 111", area_name: "Quận 6",
+      region_name: "Tp Hồ Chí Minh", category_code: 1000, price_vnd: 5_000_000_000,
+      size_m2: 50, price_per_m2: 100_000_000, listed_at: "2026-10-01T00:00:00Z",
+      last_seen_at: "2026-10-02T09:00:00Z", rooms: 3,
+    }),
+  );
+
+  /** Chạy scanRadar, nhưng NGAY SAU khi scan đọc snapshot job (select đầu trên
+   *  auto_enrichment_jobs) thì worker đã claim + charge job đó: mô phỏng đúng
+   *  thứ tự race, không phụ thuộc timing thật. */
+  function scanWithWorkerRaceBetweenSnapshotAndRecycle() {
+    const f = fakeDb({
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [],
+      radar_matches: [
+        {
+          ...storedMatch("111", "2026-10-02T09:00:00Z"),
+          enrichment_status: "completed", enrichment_source: "auto_enrichment",
+          enrichment_score: 82, enrichment_deal_type: "ngop_ngon", enrichment_is_ngop: 88,
+          enrichment_confidence: "high", enrichment_checked_at: oldDate,
+          enrichment_job_id: "job-old", enrichment_fingerprint: hash,
+        },
+      ],
+      radars: [{ id: "radar-1" }],
+      users: [PRO_USER],
+      auto_enrichment_jobs: [
+        {
+          id: "job-old", radar_id: "radar-1", external_id: "111", user_id: "user-1",
+          status: "completed", material_input_hash: hash, updated_at: oldDate,
+          // Snapshot của scan: job terminal, chưa ai claim, đã từng dispatch.
+          dispatch_started_at: oldDate, attempts: 1, allowance_consumed: true,
+          claim_token: null,
+        },
+      ],
+    });
+    const row = f.tables.auto_enrichment_jobs![0]!;
+    const rawFrom = f.db.from;
+    let raced = false;
+    (f.db as unknown as { from: typeof rawFrom }).from = (table: string) => {
+      const q = rawFrom(table);
+      const origThen = q.then.bind(q);
+      // @ts-expect-error test fake: bọc `then` để chèn race giữa đọc và ghi.
+      q.then = (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) =>
+        origThen((v: unknown) => {
+          if (table === "auto_enrichment_jobs" && !raced) {
+            raced = true;
+            // Worker claim + beginDispatch: charge allowance lần ĐẦU.
+            row.status = "processing";
+            row.claim_token = "token-worker";
+            row.processing_started_at = new Date().toISOString();
+            row.dispatch_started_at = new Date().toISOString();
+            row.attempts = 1;
+            row.allowance_consumed = true;
+          }
+          return resolve(v);
+        }, reject);
+      return q;
+    };
+    return { f, row };
+  }
+
+  {
+    const { f, row } = scanWithWorkerRaceBetweenSnapshotAndRecycle();
+    await scanRadar(f.db, RADAR_PRO);
+
+    assert.equal(row.status, "processing", "P1-2: job worker vừa claim không được bị lật về pending");
+    assert.equal(row.claim_token, "token-worker", "P1-2: claim_token không được bị xoá");
+    assert.ok(row.dispatch_started_at, "P1-2: dispatch_started_at không được xoá -> guard charge-once còn nguyên");
+    assert.equal(row.attempts, 1, "P1-2: attempts không được bị reset về 0");
+    assert.equal(row.allowance_consumed, true, "P1-2: trạng thái allowance không được reset");
+    // Guard của begin_auto_enrichment_dispatch: charge CHỈ khi dispatch_started_at
+    // IS NULL. Cờ còn bật + claim còn giữ -> lần claim tiếp theo KHÔNG charge thêm.
+    assert.equal(row.dispatch_started_at == null, false, "P1-2: cờ bị xoá -> cùng (radar, tin, hash) sẽ bị charge LẦN THỨ HAI");
+    assert.equal(row.claim_token == null, false, "P1-2: job còn đang được worker giữ -> không thể bị claim lại");
+  }
+
+  {
+    const f = fakeDb({
+      market_listings: [listing("111", "2026-10-02T09:00:00Z")],
+      checks: [],
+      radar_matches: [
+        {
+          ...storedMatch("111", "2026-10-02T09:00:00Z"),
+          enrichment_status: "completed", enrichment_source: "auto_enrichment",
+          enrichment_score: 82, enrichment_deal_type: "ngop_ngon", enrichment_is_ngop: 88,
+          enrichment_confidence: "high", enrichment_checked_at: oldDate,
+        },
+      ],
+      radars: [{ id: "radar-1" }],
+      users: [PRO_USER],
+      auto_enrichment_jobs: [
+        {
+          id: "job-old", radar_id: "radar-1", external_id: "111", user_id: "user-1",
+          status: "completed", material_input_hash: hash, updated_at: oldDate,
+          created_at: oldDate,
+          dispatch_started_at: oldDate, attempts: 1, allowance_consumed: true,
+          claim_token: null,
+        },
+      ],
+    });
+    await scanRadar(f.db, RADAR_PRO);
+    const recycled = f.updates.find((u) => u.table === "auto_enrichment_jobs")!;
+    assert.ok(recycled, "P1-2: job terminal quá TTL vẫn phải được tái sử dụng");
+    assert.equal(recycled.patch.status, "pending");
+    assert.equal(recycled.patch.attempts, 0);
+    assert.equal("created_at" in recycled.patch, false, "P1-1 residual: recycle không được reset created_at");
+    assert.equal(f.tables.auto_enrichment_jobs![0]!.created_at, oldDate, "tuổi job phải giữ nguyên");
+    // Guard lúc ghi: chỉ reset job VẪN terminal VÀ chưa ai claim.
+    const guards = recycled.pending!.map(([op, col, val]) => `${op}:${col}=${String(val)}`).sort();
+    assert.ok(guards.includes("in:status=completed,insufficient_data,low_confidence,failed"), `P1-2: phải lọc terminal, có: ${guards.join(" | ")}`);
+    assert.ok(guards.some((g) => g === "is:claim_token=null"), `P1-2: phải lọc claim_token null, có: ${guards.join(" | ")}`);
+    // Phải khoá ĐÚNG job scan vừa quan sát. Chỉ lọc terminal + claim_token mà
+    // không khoá id thì 1 lần scan của radar A reset luôn job terminal của
+    // radar B/user khác -> mutation bỏ `.eq("id")` sẽ sống nếu thiếu assert này.
+    assert.ok(guards.includes("eq:id=job-old"), `P1-2: recycle phải khoá theo id job, có: ${guards.join(" | ")}`);
+    // Và mặc định `dispatch_started_at: null` (tái sử dụng không charge) vẫn giữ.
+    assert.equal(recycled.patch.dispatch_started_at, null, "tái sử dụng không được charge");
+  }
 }

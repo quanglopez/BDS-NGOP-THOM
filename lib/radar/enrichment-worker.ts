@@ -1,0 +1,281 @@
+// Auto-Enrichment worker: nhận job pending -> claim -> charge allowance tại
+// dispatch -> gọi provider -> validate/confidence -> persist -> terminal.
+//
+// Nguyên tắc:
+// - Charge đúng 1 lần khi dispatch ĐẦU TIÊN bắt đầu; retry không charge thêm.
+// - Cap ngày 200 (atomic trong RPC begin_auto_enrichment_dispatch), cap 25/Radar ở enqueue.
+// - Retry tối đa 3 attempt (1 đầu + 2 retry), chỉ với lỗi retryable; backoff + jitter.
+// - Manual Check mới hơn dispatch -> auto không publish signal (guard tại persistence).
+// - Mọi lỗi 1 job không làm sập cả run.
+
+import {
+  backOffMs,
+  isManualCheckWinnerOk,
+  shouldRetry,
+  type AutoProviderOutcome,
+} from "./auto-enrollment";
+import type { EnrichmentProvider } from "./enrichment-provider";
+
+export type EnrichmentTerminalStatus = "completed" | "insufficient_data" | "low_confidence" | "failed";
+
+export interface EnrichmentJobRow {
+  id: string;
+  user_id: string;
+  radar_id: string;
+  external_id: string;
+  material_input: Record<string, unknown>;
+  material_input_hash: string;
+  attempts: number;
+  dispatch_started_at: string | null;
+  claim_token: string | null;
+  /** Thời điểm tạo job (cột created_at, `not null default now()`). Là thứ tự
+   *  "job nào mới hơn": material đổi -> `syncEnrichmentJobs` tạo job MỚI, nên
+   *  job tạo sau luôn phản ánh material mới hơn. Dùng để guard takeover
+   *  ownership của radar_matches (P1-1). RPC claim trả `returning j.*` nên
+   *  luôn có giá trị. */
+  created_at: string;
+}
+
+export interface MatchEnrichmentPatch {
+  status: EnrichmentTerminalStatus;
+  source: "auto_enrichment";
+  score: number | null;
+  dealType: string | null;
+  isNgoP: number | null;
+  confidence: "low" | "medium" | "high" | null;
+  checkedAt: string;
+}
+
+export interface EnrichmentWorkerStore {
+  /** leaseMs là ĐỘ DÀI lease, không phải cutoff. Store/RPC so với now() của DB. */
+  reclaimStaleProcessing(leaseMs: number, maxAttempts: number): Promise<{ requeued: number; failed: number }>;
+  claimPending(limit: number): Promise<EnrichmentJobRow[]>;
+  isPlanPro(userId: string): Promise<boolean>;
+  /** null = hết cap hoặc mất claim. string = dispatch_started_at DB ghi cho lần dispatch này
+   *  (retry trả đúng mốc cũ, không phải now() mới). */
+  beginDispatch(job: EnrichmentJobRow): Promise<string | null>;
+  /** false = CAS không khớp (row do job khác sở hữu / đã có kết quả). */
+  markMatchProcessing(job: EnrichmentJobRow): Promise<boolean>;
+  releaseToPending(
+    job: EnrichmentJobRow,
+    patch: { nextAttemptAt: string; updatedAt: string; errorKind: string; lastError: string },
+  ): Promise<void>;
+  /** false = CAS claim_token không khớp. Caller không được tính là đã ghi terminal. */
+  markTerminal(
+    job: EnrichmentJobRow,
+    status: EnrichmentTerminalStatus,
+    error?: { errorKind: string; lastError: string },
+  ): Promise<boolean>;
+  latestManualCheckAt(externalId: string): Promise<string | null>;
+  persistMatchEnrichment(job: EnrichmentJobRow, patch: MatchEnrichmentPatch): Promise<boolean>;
+}
+
+export interface EnrichmentWorkerResult {
+  ok: boolean;
+  claimed: number;
+  published: number;
+  manualWins: number;
+  insufficient: number;
+  lowConfidence: number;
+  failed: number;
+  retried: number;
+  capBlocked: number;
+  planBlocked: number;
+  lostClaims: number;
+  errors: string[];
+}
+
+export const ENRICHMENT_WORKER_LIMITS = {
+  maxJobs: 5,
+  maxAttempts: 3,
+  leaseMs: 10 * 60 * 1000,
+  capRetryMs: 60 * 60 * 1000,
+};
+
+/** Config mà cron route chạy (1 lần/ngày). Tách riêng để test khoá được giá
+ *  trị production mà không phải export thêm từ route (Next chỉ cho export handler). */
+export const ENRICHMENT_ROUTE_LIMITS = ENRICHMENT_WORKER_LIMITS;
+
+/** Cờ dừng trước khi claim/charge. kill switch dừng hẳn; cost guard chặn dispatch. */
+export function workerSkipReason(env: Record<string, string | undefined>): "kill_switch" | "cost_guard" | null {
+  if (env.AUTO_ENRICHMENT_KILL_SWITCH === "1") return "kill_switch";
+  if (env.AUTO_ENRICHMENT_COST_GUARD === "1") return "cost_guard";
+  return null;
+}
+
+function errName(e: unknown): string {
+  return e instanceof Error ? e.name : "unknown_error";
+}
+
+export async function runEnrichmentWorker(args: {
+  store: EnrichmentWorkerStore;
+  provider: EnrichmentProvider;
+  now?: () => number;
+  limits?: Partial<typeof ENRICHMENT_WORKER_LIMITS>;
+}): Promise<EnrichmentWorkerResult> {
+  const nowFn = args.now ?? Date.now;
+  const limits = { ...ENRICHMENT_WORKER_LIMITS, ...args.limits };
+  const result: EnrichmentWorkerResult = {
+    ok: true,
+    claimed: 0,
+    published: 0,
+    manualWins: 0,
+    insufficient: 0,
+    lowConfidence: 0,
+    failed: 0,
+    retried: 0,
+    capBlocked: 0,
+    planBlocked: 0,
+    lostClaims: 0,
+    errors: [],
+  };
+
+  // Job processing mồ côi (worker crash) -> trả về pending nếu còn lượt, hết lượt -> failed.
+  // Cutoff tính trong DB (now() - lease), không lấy giờ app.
+  try {
+    await args.store.reclaimStaleProcessing(limits.leaseMs, limits.maxAttempts);
+  } catch (e) {
+    result.errors.push("reclaim:" + errName(e));
+  }
+
+  let jobs: EnrichmentJobRow[];
+  try {
+    jobs = await args.store.claimPending(limits.maxJobs);
+  } catch (e) {
+    result.errors.push("claim:" + errName(e));
+    return result;
+  }
+  result.claimed = jobs.length;
+
+  for (const job of jobs) {
+    if (!job.claim_token) continue;
+    try {
+      const firstDispatch = job.dispatch_started_at == null;
+      const startedAt = new Date(nowFn()).toISOString();
+
+      // PRO-only end-to-end: user hết hạn giữa lúc enqueue và dispatch -> không tiêu tiền AI.
+      if (!(await args.store.isPlanPro(job.user_id))) {
+        const closed = await args.store.markTerminal(job, "failed", { errorKind: "plan_inactive", lastError: "plan_inactive" });
+        if (!closed) result.lostClaims++;
+        else result.planBlocked++;
+        continue;
+      }
+
+      // Atomic tại DB: charge allowance (lần đầu) + tăng attempts.
+      // null = cap/mất claim. string = mốc dispatch DB vừa ghi (hoặc mốc cũ nếu retry).
+      const dispatchStartedAt = await args.store.beginDispatch(job);
+      if (dispatchStartedAt == null) {
+        if (firstDispatch) {
+          await args.store.releaseToPending(job, {
+            nextAttemptAt: new Date(nowFn() + limits.capRetryMs).toISOString(),
+            updatedAt: startedAt,
+            errorKind: "daily_cap",
+            lastError: "daily_cap",
+          });
+          result.capBlocked++;
+        } else {
+          result.lostClaims++;
+        }
+        continue;
+      }
+      const attempts = job.attempts + 1;
+
+      // Đã dispatch -> AI đang chạy: đưa radar_matches sang processing để UI báo
+      // "Đang phân tích". false = không chiếm được row (job khác mới hơn, hoặc
+      // row đã có kết quả). Không gọi provider — allowance đã charge, không thiết
+      // kế lại cách tính tiền. Vẫn markTerminal để job không kẹt processing.
+      // Ném lỗi khi ghi processing thì KHÔNG biết ownership: vẫn gọi provider.
+      let ownsRow = false;
+      let ownershipDenied = false;
+      try {
+        ownsRow = await args.store.markMatchProcessing(job);
+        if (!ownsRow) {
+          result.lostClaims++;
+          ownershipDenied = true;
+        }
+      } catch (e) {
+        result.errors.push(job.id + ":mark_processing:" + errName(e));
+      }
+      if (ownershipDenied) {
+        const closed = await args.store.markTerminal(job, "failed", { errorKind: "lost_claim", lastError: "lost_claim" });
+        if (!closed) result.lostClaims++;
+        continue;
+      }
+
+      let outcome: AutoProviderOutcome;
+      try {
+        outcome = await args.provider(job.material_input);
+      } catch {
+        outcome = { kind: "retryable_error" };
+      }
+
+      if (outcome.kind === "published") {
+        const manualAt = await args.store.latestManualCheckAt(job.external_id);
+        // Mốc so sánh là dispatch_started_at DB vừa trả, không phải startedAt local
+        // (chụp trước RPC) và không phải snapshot claim (null ở lần dispatch đầu).
+        const manualWins = isManualCheckWinnerOk(manualAt, dispatchStartedAt);
+        const checkedAt = new Date(nowFn()).toISOString();
+        const wrote = await args.store.persistMatchEnrichment(
+          job,
+          manualWins
+            ? { status: "completed", source: "auto_enrichment", score: null, dealType: null, isNgoP: null, confidence: null, checkedAt }
+            : { status: "completed", source: "auto_enrichment", score: outcome.score, dealType: outcome.dealType, isNgoP: outcome.isNgoP, confidence: outcome.confidence, checkedAt },
+        );
+        // CAS job không khớp -> không được tính publish/terminal từ worker này.
+        const closed = await args.store.markTerminal(job, "completed");
+        if (!wrote || !closed) result.lostClaims++;
+        else if (manualWins) result.manualWins++;
+        else result.published++;
+        continue;
+      }
+
+      if (outcome.kind === "insufficient_data" || outcome.kind === "low_confidence") {
+        const status = outcome.kind;
+        const wrote = await args.store.persistMatchEnrichment(job, {
+          status,
+          source: "auto_enrichment",
+          score: null,
+          dealType: null,
+          isNgoP: null,
+          confidence: status === "low_confidence" ? "low" : null,
+          checkedAt: new Date(nowFn()).toISOString(),
+        });
+        const closed = await args.store.markTerminal(job, status);
+        if (!wrote || !closed) result.lostClaims++;
+        else if (status === "low_confidence") result.lowConfidence++;
+        else result.insufficient++;
+        continue;
+      }
+
+      // Retry không charge thêm. Job mất ownership vẫn terminal bình thường, chỉ là
+      // không ghi được vào radar_matches (CAS chặn) — KHÔNG giả vờ đã ghi.
+      if (outcome.kind === "retryable_error" && shouldRetry(outcome, attempts)) {
+        await args.store.releaseToPending(job, {
+          nextAttemptAt: new Date(nowFn() + backOffMs(attempts)).toISOString(),
+          updatedAt: new Date(nowFn()).toISOString(),
+          errorKind: "retryable_error",
+          lastError: "retryable_error",
+        });
+        result.retried++;
+        continue;
+      }
+
+      const wroteFailed = await args.store.persistMatchEnrichment(job, {
+        status: "failed",
+        source: "auto_enrichment",
+        score: null,
+        dealType: null,
+        isNgoP: null,
+        confidence: null,
+        checkedAt: new Date(nowFn()).toISOString(),
+      });
+      const closed = await args.store.markTerminal(job, "failed", { errorKind: outcome.kind, lastError: outcome.kind });
+      // CAS miss (row hoặc claim_token) -> không tính failed/publish từ worker này.
+      if (!wroteFailed || !closed) result.lostClaims++;
+      else result.failed++;
+    } catch (e) {
+      result.errors.push(job.id + ":" + errName(e));
+    }
+  }
+  return result;
+}
