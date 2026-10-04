@@ -14,6 +14,7 @@ import {
   type MarketListingRepo,
   type PriceStatsRepo,
 } from "../lib/price/pipeline.ts";
+import { isComparableEligible } from "../lib/price/stats.ts";
 import { buildGatewayParams, type FetchScope, type MarketGateway, type RawMarketAd } from "../lib/price/gateway.ts";
 import type { NormalizedListing, PriceScope, PriceStatsRow } from "../lib/price/types.ts";
 import { PricePipelineError, safeErrorCode } from "../lib/price/errors.ts";
@@ -280,6 +281,72 @@ async function main() {
       limit: 6,
     });
     assert.equal(list.length, 6);
+  });
+
+  await check("rent listing KHÔNG được lọt vào comparables", () => {
+    const sale = mkL("sale", 1020, 45, 73_000_000);
+    const rent = { ...mkL("rent", 1020, 45, 73_000_000), is_rent: true };
+    const list = rankComparables({
+      candidates: [rent, sale],
+      scope: SCOPE,
+      targetAreaM2: 45,
+      targetPpm2: 73_333_333,
+      targetLat: null,
+      targetLng: null,
+      limit: 5,
+    });
+    assert.deepEqual(list.map((c) => c.external_id), ["sale"]);
+  });
+
+  await check("promoted listing KHÔNG được lọt vào comparables", () => {
+    const sale = mkL("sale", 1020, 45, 73_000_000);
+    const sticky = { ...mkL("sticky", 1020, 45, 73_000_000), is_promoted: true };
+    const list = rankComparables({
+      candidates: [sticky, sale],
+      scope: SCOPE,
+      targetAreaM2: 45,
+      targetPpm2: 73_333_333,
+      targetLat: null,
+      targetLng: null,
+      limit: 5,
+    });
+    assert.deepEqual(list.map((c) => c.external_id), ["sale"]);
+  });
+
+  await check("sale listing hợp lệ vẫn được rank bình thường", () => {
+    const a = mkL("a", 1020, 44, 72_000_000);
+    const b = mkL("b", 1020, 46, 74_000_000);
+    const list = rankComparables({
+      candidates: [b, a],
+      scope: SCOPE,
+      targetAreaM2: 45,
+      targetPpm2: 73_333_333,
+      targetLat: null,
+      targetLng: null,
+      limit: 5,
+    });
+    assert.equal(list.length, 2);
+    assert.ok(list.some((c) => c.external_id === "a"));
+    assert.ok(list.some((c) => c.external_id === "b"));
+  });
+
+  await check("statistics và comparables dùng CÙNG eligibility (isComparableEligible)", () => {
+    const rent = { ...mkL("rent", 1020, 45, 73_000_000), is_rent: true };
+    const sticky = { ...mkL("sticky", 1020, 45, 73_000_000), is_promoted: true };
+    const sale = mkL("sale", 1020, 45, 73_000_000);
+    // cùng luật loại: rent/promoted bị loại cả ở sample stats
+    const stats = [rent, sticky, sale].filter((l) => isComparableEligible(l, SCOPE));
+    assert.deepEqual(stats.map((l) => l.external_id), ["sale"]);
+    const list = rankComparables({
+      candidates: [rent, sticky, sale],
+      scope: SCOPE,
+      targetAreaM2: 45,
+      targetPpm2: 73_333_333,
+      targetLat: null,
+      targetLng: null,
+      limit: 5,
+    });
+    assert.deepEqual(list.map((c) => c.external_id), ["sale"]);
   });
 
   console.log("\n== generatePriceIntelligence ==");
