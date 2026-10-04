@@ -349,10 +349,10 @@ check("AC10. tín hiệu thật -> có ref, không bịa id ngoài", () => {
   assert.equal(b.refs[0].label, "tranh chấp");
   assert.equal(b.refs[0].type, "listing_text");
   assert.ok(b.refs[0].id.length > 0);
-  assert.ok(b.refs[0].location, "ref luôn có location để mở đúng chỗ");
+  assert.strictEqual(b.refs[0].location, null, "backend chưa lưu span thật -> location phải null, không bịa");
 });
 
-check("AC10. mọi ref đều có id + location + excerpt (không field bỏ trống)", () => {
+check("AC10. mọi ref đều có id + excerpt; location null khi chưa có span thật", () => {
   const b = buildEvidenceBoard({
     signals: [
       { signal: "hẻm nhỏ", detail: "Nội dung có hẻm nhỏ", source: "listing_text" },
@@ -361,9 +361,9 @@ check("AC10. mọi ref đều có id + location + excerpt (không field bỏ tr�
   });
   for (const r of b.refs) {
     assert.ok(r.id, "ref phải có id");
-    assert.ok(r.location, "ref phải có location");
-    assert.ok(r.excerpt !== undefined, "excerpt phải được set (null nếu chưa có)");
     assert.ok(r.label.length > 0);
+    assert.ok("excerpt" in r, "excerpt phải được set (null nếu chưa có)");
+    assert.strictEqual(r.location, null, "chưa có span thật thì location null, không bịa chuỗi");
   }
   assert.equal(new Set(b.refs.map((r) => r.id)).size, b.refs.length, "id phải là duy nhất");
 });

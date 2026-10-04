@@ -229,10 +229,8 @@ export type EvidenceLocation =
 /**
  * Tham chiếu bằng chứng MỘT tới một nguồn thật.
  *
- * `id` và `location` là thứ Evidence Board dùng để mở đúng chỗ. Vì backend
- * hiện chưa lưu span/index nào, adapter KHÔNG bịa: không có nguồn thật thì
- * `evidenceRefs = []` và UI hiện unavailable. Field `id`/`location` không phải
- * optional — có nghĩa là "đã tồn tại và dùng được", không phải "chưa điền".
+ * Không có nguồn thật thì `evidenceRefs = []` và UI hiện unavailable.
+ * `location` null khi backend chưa ghi span thật — thà để null còn hơn giả.
  */
 export interface EvidenceRef {
   id: string;
@@ -241,7 +239,9 @@ export interface EvidenceRef {
   source: EvidenceSource;
   /** Trích đoạn nguyên văn. null = chưa có trích đoạn để hiển thị. */
   excerpt: string | null;
-  location: EvidenceLocation;
+  /** Vị trí TẬT YẾU của nguồn trong nội dung gốc. null = backend chưa lưu
+   *  span/index thật — TUYỆT ĐỐI không tự bịa chuỗi giả để hiện. */
+  location: EvidenceLocation | null;
 }
 
 export interface EvidenceInput {
@@ -266,10 +266,11 @@ const EVIDENCE_UNAVAILABLE_REASON =
  * Dựng EvidenceRef từ tín hiệu backend — CHỈ VỚI NHỮNG TÍN HIỆU THẬT.
  *
  * `source: "missing"` không phải bằng chứng (nó là thông tin về sự thiếu), nên
- * không sinh ref cho nó. Tín hiệu `listing_text` chỉ sinh ref "calculated"
- * khi evidence.ts đã đi kèm độ dài span trong `location`; hiện tại evidence.ts
- * chưa lưu span, nên tín hiệu đó xuống dưới thành unavailable thay vì bịa
- * điểm bắt đầu. Đây là điểm cần backend bổ sung (xem báo cáo).
+ * không sinh ref cho nó.
+ *
+ * `location` = null khi backend chưa lưu span/index thật. Đây là khoảng trống
+ * contract đã biết, KHÔNG phải chỗ để điền giả: cần `span` (start/end trong
+ * `checks.original_text`) hoặc `market_statistic` mới mở được đúng chỗ.
  */
 export function buildEvidenceBoard(input: EvidenceInput = {}): EvidenceBoard {
   const signals = Array.isArray(input.signals) ? input.signals : [];
@@ -287,8 +288,9 @@ export function buildEvidenceBoard(input: EvidenceInput = {}): EvidenceBoard {
       label,
       source: s.source,
       excerpt: typeof s.detail === "string" && s.detail.trim() ? s.detail : null,
-      // Không có span thật -> KHÔNG gắn location giả.
-      location: { kind: "calculation", formula: label },
+      // Chưa có span thật -> null. UI hiện "chưa định vị được", KHÔNG gắn
+      // công thức giả làm vị trí.
+      location: null,
     });
   });
 

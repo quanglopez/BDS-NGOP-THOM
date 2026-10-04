@@ -66,6 +66,30 @@ export function classifyListing(
   return null;
 }
 
+/**
+ * Eligibility cho COMPARABLES — cùng nguồn luật với `classifyListing`, chỉ bỏ
+ * các kiểm tra band (size/rooms) vì xếp hạng theo độ gần nghĩa là CỐ Ý nhìn ra
+ * ngoài band; lọc band ở đây sẽ giết chính những tin so sánh đáng nhất.
+ *
+ * Giữ lại: rent, promoted, giá/diện tích không hợp lệ, khác loại BĐS. Khớp với
+ * những gì `computeStats` đã loại khỏi sample — nếu không, danh sách "tin đăng
+ * tương đồng" sẽ hiện tin cho thuê / quảng cáo mà số liệu đã loại.
+ */
+export function isComparableEligible(
+  listing: NormalizedListing,
+  scope: PriceScope,
+): boolean {
+  return (
+    classifyListing(listing, {
+      ...scope,
+      size_min_m2: null,
+      size_max_m2: null,
+      rooms_min: null,
+      rooms_max: null,
+    }) === null
+  );
+}
+
 export interface FilterResult {
   kept: NormalizedListing[];
   excluded: ExclusionCounts;

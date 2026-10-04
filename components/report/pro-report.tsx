@@ -10,6 +10,12 @@ import {
   type ReportViewModel,
 } from "@/lib/report/view-model";
 
+export interface FactorContribution {
+  label: string;
+  delta: number;
+  note: string;
+}
+
 export interface ReportSeed {
   score: number | null;
   dealType: string | null;
@@ -21,6 +27,8 @@ export interface ReportSeed {
   ward: string | null;
   region: string | null;
   listingUrl: string | null;
+  confidence?: number | null;
+  factorContributions?: FactorContribution[] | null;
 }
 
 interface ApiOk {
@@ -64,6 +72,19 @@ function Skeleton() {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="text-[15px] font-black text-navy">{children}</h3>;
+}
+
+function factorDelta(
+  factorName: string,
+  contributions: FactorContribution[] | null | undefined,
+): number | null {
+  if (!contributions || contributions.length === 0) return null;
+  const needle = factorName.trim().toLowerCase();
+  const c = contributions.find((c) => {
+    const lbl = c.label.trim().toLowerCase();
+    return lbl === needle || lbl.includes(needle) || needle.includes(lbl);
+  });
+  return c ? c.delta : null;
 }
 
 // Report Pro: Free thấy locked list (không gọi AI). Pro fetch /api/pro-analysis 1 lần.
@@ -288,25 +309,35 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
         <section className="rounded-[18px] border border-slate-200 bg-white p-5 md:p-6">
           <SectionTitle>Phân tích các yếu tố</SectionTitle>
           <p className="mt-1 text-[11px] text-slate-400">
-            CheckBDS Score là điểm đánh giá tổng hợp của mô hình. Các điểm thành phần thể hiện đánh
-            giá riêng từng yếu tố và không phải phép cộng trực tiếp tạo thành điểm tổng.
+            Mỗi yếu tố kèm số điểm cộng/trừ mô hình CheckBDS đã áp dụng (nguồn: scoring snapshot
+            của lần check, không tự suy ra). Nếu không đọc được delta — không tự điền con số.
           </p>
           <div className="mt-4 space-y-3">
-            {a.factor_analysis.map((f, i) => (
-              <div key={i}>
-                <div className="flex items-center justify-between gap-2 text-[13px]">
-                  <span className="font-bold text-navy">{f.factor}</span>
-                  <span className="font-black tabular-nums text-slate-700">{f.score}/100</span>
+            {a.factor_analysis.map((f, i) => {
+              const delta = factorDelta(f.factor, seed.factorContributions ?? null);
+              const deltaLabel = delta === null ? null : `${delta > 0 ? "+" : ""}${delta} điểm`;
+              return (
+                <div key={i}>
+                  <div className="flex items-center justify-between gap-2 text-[13px]">
+                    <span className="font-bold text-navy">{f.factor}</span>
+                    {delta !== null && (
+                      <span
+                        className={`font-black tabular-nums rounded px-1.5 py-0.5 ${
+                          delta > 0
+                            ? "bg-emerald-50 text-emerald-700"
+                            : delta < 0
+                              ? "bg-red-50 text-red-700"
+                              : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {deltaLabel}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-[12px] text-slate-500">{f.explanation}</p>
                 </div>
-                <div className="mt-1 h-2 rounded-full bg-slate-100 overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${f.score >= 70 ? "bg-emerald-500" : f.score >= 50 ? "bg-amber-400" : "bg-red-400"}`}
-                    style={{ width: `${Math.max(0, Math.min(100, f.score))}%` }}
-                  />
-                </div>
-                <p className="mt-1 text-[12px] text-slate-500">{f.explanation}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       )}

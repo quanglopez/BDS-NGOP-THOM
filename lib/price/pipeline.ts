@@ -2,7 +2,7 @@
 // chọn comparable -> snapshot. MọI I/O đi qua interface để test không cần DB/mạng.
 
 import { haversineKm } from "@/lib/geo/distance";
-import { calcPpm2, computeStats, confidenceFrom, differencePercent, filterSample } from "./stats";
+import { calcPpm2, computeStats, confidenceFrom, differencePercent, filterSample, isComparableEligible } from "./stats";
 import { buildDistrictScope, detectCategoryCode, resolveScope, type WardIndex } from "./scope";
 import type { GeoResolver } from "./geo-resolver";
 import { PricePipelineError } from "./errors";
@@ -178,7 +178,11 @@ export function normalizeAd(ad: RawMarketAd, source: string): NormalizedListing 
  *   2. gần diện tích
  *   3. gần price/m²
  *   4. gần vị trí địa lý (nếu có tọa độ ở cả hai đầu)
- * Cùng scope level + cùng category là điều kiện đã bảo đảm khi lấy từ cache.
+ *
+ * Eligibility dùng CHUNG với statistics (`isComparableEligible`): loại tin
+ * cho thuê + quảng cáo + giá/diện tích hỏng + khác loại. Không band-filter
+ * vì xếp hạng theo độ gần là cố ý nhìn ra ngoài band. Cùng scope level +
+ * cùng category là điều kiện đã bảo đảm khi lấy từ cache.
  */
 export function rankComparables(args: {
   candidates: NormalizedListing[];
@@ -191,8 +195,9 @@ export function rankComparables(args: {
 }): PriceComparable[] {
   const { candidates, scope, targetAreaM2, targetPpm2, targetLat, targetLng, limit } = args;
 
-  const sameCategory = candidates.filter((c) => c.category_code === scope.category_code);
-  const pool = sameCategory.length > 0 ? sameCategory : candidates;
+  const eligible = candidates.filter((c) => isComparableEligible(c, scope));
+  const sameCategory = eligible.filter((c) => c.category_code === scope.category_code);
+  const pool = sameCategory.length > 0 ? sameCategory : eligible;
 
   const rel = (a: number, b: number) => (b > 0 ? Math.abs(a - b) / b : Math.abs(a - b));
 
