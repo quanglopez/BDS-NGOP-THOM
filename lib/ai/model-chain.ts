@@ -127,6 +127,12 @@ export function structuredModeFor(model: string): StructuredMode {
   if (id.startsWith("inclusionai/ling-3.0-flash-vl")) return "json_schema";
   if (id.startsWith("google/gemma-4-31b")) return "json_object";
   if (id.startsWith("nvidia/nemotron-3.5-lightning")) return "none";
+  // Audit /api/v1/models 2026-10-04: qwen/qwen3.7-flash KHÔNG có
+  // structured_outputs, chỉ hỗ trợ response_format. json_schema bị từ chối,
+  // json_object chỉ ép valid JSON -> parseProAnalysis không thấy headline
+  // (runtime: check hip07u/ainr21 validation_failed missing_headline).
+  // mode none để model nhận PRO_ANALYSIS_STRICT_JSON_INSTRUCTION chứa schema.
+  if (id.startsWith("qwen/qwen3.7-flash")) return "none";
   return "json_object";
 }
 
