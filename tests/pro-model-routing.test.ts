@@ -22,6 +22,9 @@ import { planAllowsProAnalysis } from "../lib/quota.ts";
 import { buildEvidencePack } from "../lib/ai/evidence.ts";
 import { analyzeListing } from "../lib/scoring.ts";
 import type { ProAnalysis } from "../lib/ai/schema.ts";
+import { PRO_ANALYSIS_STRICT_JSON_INSTRUCTION } from "../lib/ai/prompts.ts";
+
+const realFetch = globalThis.fetch;
 
 let pass = 0;
 let fail = 0;
@@ -57,6 +60,10 @@ const QWEN_PAID = "qwen/qwen3.8-27b";
 // cả 2 attempt đều provider_truncated, finish_reason=length, output=3000
 // (đúng max_tokens), content bị cắt giữa chừng -> phải tắt reasoning.
 const DEEPSEEK = "deepseek/deepseek-v4.1-flash";
+
+// Slug Qwen 3.7 Flash (ĐANG chạy production): không có structured_outputs.
+// json_object -> validation_failed missing_headline; none -> provider_truncated.
+const QWEN37 = "qwen/qwen3.7-flash";
 
 const SAMPLE_TEXT =
   "Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng, hẻm xe hơi";
@@ -912,11 +919,11 @@ async function main() {
     assert.equal(structuredModeFor(NEMO), "none");
   });
 
-  await check("capability: Qwen 3.7 Flash không hỗ trợ structured_outputs -> none, không json_schema", () => {
+  await check("capability: Qwen 3.7 Flash -> json_object_with_instruction (có schema + response_format)", () => {
     // Audit /api/v1/models 2026-10-04: qwen/qwen3.7-flash thiếu structured_outputs.
-    // json_object khiến parseProAnalysis thiếu headline (hip07u, ainr21).
-    assert.equal(structuredModeFor("qwen/qwen3.7-flash"), "none");
-    assert.equal(structuredModeFor("qwen/qwen3.7-flash:free"), "none", "biến thể :free cũng none");
+    // json_object trần -> missing_headline; none -> provider_truncated ở 6000.
+    assert.equal(structuredModeFor("qwen/qwen3.7-flash"), "json_object_with_instruction");
+    assert.equal(structuredModeFor("qwen/qwen3.7-flash:free"), "json_object_with_instruction", "biến thể :free giữ nguyên");
     // Model hỗ trợ json_schema phải giữ nguyên json_schema
     assert.equal(structuredModeFor("qwen/qwen3.8-27b"), "json_schema");
     assert.equal(structuredModeFor("qwen/qwen3.8-27b:free"), "json_schema");
@@ -925,6 +932,44 @@ async function main() {
     assert.equal(structuredModeFor(GEMMA), "json_object");
     assert.equal(structuredModeFor(NEMO), "none");
     assert.equal(structuredModeFor("some/unknown-model"), "json_object");
+  });
+
+  await check("runtime: Qwen 3.7 Flash gửi response_format json_object VÀ schema trong system prompt", async () => {
+    const captured = stubFetch((m) => ok(m));
+    try {
+      const out = await withEnv(
+        { OPENROUTER_API_KEY: "test-key", PRO_ANALYSIS_MODEL: QWEN37, PRO_ANALYSIS_FALLBACK_MODELS: GEMMA },
+        () => generateProAnalysis(sampleEvidence()),
+      );
+      assert.equal(captured().length, 1);
+      assert.deepEqual(captured()[0].body.response_format, { type: "json_object" }, "vẫn gửi response_format json_object");
+      const sys = (captured()[0].body.messages as { role: string; content: string }[])[0].content;
+      assert.ok(
+        sys.includes(PRO_ANALYSIS_STRICT_JSON_INSTRUCTION),
+        "system prompt phải kèm PRO_ANALYSIS_STRICT_JSON_INSTRUCTION chứa schema",
+      );
+      assert.ok(sys.includes('"headline"'), "schema inline phải có summary.headline");
+      // Parser vẫn nhận được report đúng schema (không fallback)
+      assert.equal(out.fromFallback, false);
+      assert.equal(out.metrics.validation_failed, false);
+      assert.ok(out.analysis.summary.headline.length > 0, "summary.headline phải có nội dung");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  await check("runtime: model KHÔNG phải Qwen 3.7 -> system prompt không bị chèn schema", async () => {
+    const captured = stubFetch((m) => ok(m));
+    try {
+      await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+      const sys = (captured()[0].body.messages as { role: string; content: string }[])[0].content;
+      assert.ok(
+        !sys.includes(PRO_ANALYSIS_STRICT_JSON_INSTRUCTION),
+        "model json_schema không được chèn strict instruction (không đổi behavior cũ)",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   console.log("\n== 1. Qwen success ==");

@@ -17,7 +17,11 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 // Trần tổng của cả chain do pro-analysis.ts quản lý (chainBudgetMs).
 const DEFAULT_TIMEOUT_MS = 15000;
 
-export type StructuredMode = "json_schema" | "json_object" | "none";
+// "json_object_with_instruction": provider chỉ hỗ trợ response_format json_object
+// (không có structured_outputs) nhưng model cần schema trong prompt thì mới
+// bám hình dạng. Gửi response_format như json_object + nối
+// PRO_ANALYSIS_STRICT_JSON_INSTRUCTION vào system prompt (pro-analysis.ts).
+export type StructuredMode = "json_schema" | "json_object" | "json_object_with_instruction" | "none";
 
 export interface OpenRouterUsage {
   promptTokens: number | null;
@@ -181,7 +185,7 @@ export async function callOpenRouter(opts: {
     if (reasoning) body.reasoning = reasoning;
     if (structuredMode === "json_schema" && jsonSchema) {
       body.response_format = { type: "json_schema", json_schema: jsonSchema };
-    } else if (structuredMode === "json_object") {
+    } else if (structuredMode === "json_object" || structuredMode === "json_object_with_instruction") {
       body.response_format = { type: "json_object" };
     }
 
