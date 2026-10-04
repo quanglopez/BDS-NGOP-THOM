@@ -30,14 +30,19 @@ export const PRO_ANALYSIS_VERSION_FALLBACK = "pro-v1";
 // Mỗi model tối đa 2 request: attempt 1 theo capability, attempt 2 là recovery
 // (hạ structured output xuống prompt-only, hoặc ép sửa JSON). Không loop vô hạn.
 const MAX_ATTEMPTS_PER_MODEL = 2;
-// Ngân sách output cho 1 lần gọi. 1500 làm Ling bị cắt giữa chừng
-// (finish_reason=length) -> JSON dở -> không validate được.
+// Ngân sách output cho 1 lần gọi. JSON Pro thật cần ~5-6k output tokens
+// (production từng thành công ở output_tokens=5379). Trần 3000 khiến mọi
+// report đủ dài bị cắt ngay attempt 1 (finish_reason=length ->
+// provider_truncated), còn attempt 2 dù được cấp thêm cũng không kịp: phần
+// còn lại của ngân sách chain không đủ sinh xong 6k token (evidence
+// 2026-10-04: retry 6000 tokens bị cắt bởi chain budget 42s). Nâng attempt 1
+// lên 6000 để JSON 5-6k hoàn tất trong MỘT lần gọi.
 //
 // Lưu ý: ngân sách này CHỈ còn ý nghĩa sau khi đã tắt reasoning cho model
 // reasoning-on (xem reasoningConfigFor ở model-chain.ts). Reasoning token
-// tính vào max_tokens, nên nếu để bật, 3000 token bị suy luận ăn hết và
-// content về rỗng — tăng con số này cũng không sửa được, chỉ tăng chi phí.
-export const MAX_OUTPUT_TOKENS = 3000;
+// tính vào max_tokens, nên nếu để bật, token bị suy luận ăn hết và content
+// về rỗng — tăng con số này cũng không sửa được, chỉ tăng chi phí.
+export const MAX_OUTPUT_TOKENS = 6000;
 
 // Attempt SAU một lần bị CẮT (finish_reason=length) thì cấp thêm ngân sách
 // thay vì lặp lại y hệt. Đây là fix cho lỗi production
@@ -46,10 +51,11 @@ export const MAX_OUTPUT_TOKENS = 3000;
 // ~8-17s rồi vẫn fail. Evidence 2026-09-30 (11 provider_truncated / 5 user):
 // DeepSeek trả cắt ở CẢ HAI attempt với output đúng 3000 = max_tokens.
 //
-// Tăng có trần, không phải lặp vô hạn: MAX_ATTEMPTS_PER_MODEL vẫn = 2, và
+// Trần này hiếm khi chạm: chỉ bật khi attempt 1 (cap 6000) vẫn bị cắt, tức
+// model muốn sinh > 6000 token. MAX_ATTEMPTS_PER_MODEL vẫn = 2, và
 // chainBudgetMs vẫn chặn tổng thời gian nên attempt 2 không thể kéo dài quá
 // budget. Nếu vẫn cắt, Jev đổi model — chain luôn kết thúc.
-export const MAX_OUTPUT_TOKENS_RETRY = 6000;
+export const MAX_OUTPUT_TOKENS_RETRY = 9000;
 
 // Ngân sách TỔNG cho cả chain (mọi model, mọi attempt, mọi lần hỏi Jev).
 //
@@ -59,9 +65,15 @@ export const MAX_OUTPUT_TOKENS_RETRY = 6000;
 // = 135s > 60s -> Vercel Runtime Timeout, user mất trắng cả request.
 // Đây là lỗi production đã ghi nhận (5 occurrence / 2 user).
 //
-// Số này là TỔNG cho tới khi hết, không phải trần mỗi lần gọi. Phần còn lại
-// (60 - 42 = 18s) dành cho auth + đọc DB + save snapshot sau khi chain xong.
-export const DEFAULT_CHAIN_BUDGET_MS = 42000;
+// 42s cũ được định cỡ cho pattern "attempt 1 cắt ở 3000 (~8-17s) + attempt 2
+// đầy đủ". Nay attempt 1 = 6000 tokens, path chính là MỘT call dài ~16-40s tùy
+// tốc độ provider — 42s chỉ vừa khít. 48s đủ chứa call 6k token chậm nhất
+// từng đo mà vẫn chừa 12s cho auth + đọc DB + save snapshot.
+//
+// Trần cứng an toàn: mọi call được clamp vào phần còn lại của budget
+// (totalTimeoutMs), nên AI không bao giờ vượt con số này bất kể provider
+// chậm thế nào — tăng budget KHÔNG làm tăng rủi ro Vercel maxDuration.
+export const DEFAULT_CHAIN_BUDGET_MS = 48000;
 
 // Không mở lần gọi mới nếu phần còn lại nhỏ hơn ngưỡng này: một request cần
 // thời gian tối thiểu để trả kết quả, mở ra chỉ để bị cắt giữa chừng thì
@@ -72,6 +84,23 @@ export const MIN_CALL_BUDGET_MS = 3000;
 export function chainBudgetMs(env: Record<string, string | undefined> = process.env): number {
   const raw = Number(env.PRO_ANALYSIS_CHAIN_BUDGET_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CHAIN_BUDGET_MS;
+}
+
+// Trần token đọc từ env (PRO_ANALYSIS_MAX_OUTPUT_TOKENS[_RETRY]) — cùng pattern
+// với chainBudgetMs để chỉnh không cần đụng code. Giá trị <= 0 hoặc sai định
+// dạng -> dùng mặc định.
+export function maxOutputTokens(env: Record<string, string | undefined> = process.env): number {
+  const raw = Number(env.PRO_ANALYSIS_MAX_OUTPUT_TOKENS);
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : MAX_OUTPUT_TOKENS;
+}
+
+export function maxOutputTokensRetry(env: Record<string, string | undefined> = process.env): number {
+  const raw = Number(env.PRO_ANALYSIS_MAX_OUTPUT_TOKENS_RETRY);
+  const configured = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : MAX_OUTPUT_TOKENS_RETRY;
+  // Attempt sau lần bị cắt phải có trần LỚN HƠN attempt trước, kể cả khi env
+  // cấu hình ngược — nếu không escalation trở thành "gửi lại đúng cap đã cắt",
+  // chắc chắn bị cắt lần nữa (lỗi 2026-09-30).
+  return Math.max(configured, maxOutputTokens(env) + 1);
 }
 
 export interface ProAnalysisMetrics {
@@ -359,13 +388,16 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
       }
       // Clamp deadline của call này vào phần còn lại của budget chung.
       const callTimeoutMs = Math.min(timeoutMsFor(model), remainingMs);
+      // Cố ý đọc MỖI attempt: env override có hiệu lực ngay cả giữa chừng chain
+      // trong test, và log `max_tokens` luôn khớp với giá trị đã gửi đi.
+      const attemptMaxTokens = escalateTokens ? maxOutputTokensRetry() : maxOutputTokens();
 
       const res = await callOpenRouter({
         apiKey,
         model,
         systemPrompt: baseSystemPrompt(mode, isRetry),
         userPayload,
-        maxTokens: escalateTokens ? MAX_OUTPUT_TOKENS_RETRY : MAX_OUTPUT_TOKENS,
+        maxTokens: attemptMaxTokens,
         temperature: 0.2,
         siteUrl: process.env.NEXT_PUBLIC_SITE_URL,
         siteName: "CheckBDS",
@@ -401,7 +433,7 @@ export async function generateProAnalysis(evidence: EvidencePack): Promise<ProAn
             `structured_mode=${mode} finish_reason=${res.finishReason ?? "-"} ` +
             `timeout_ms=${callTimeoutMs} model_timeout_ms=${timeoutMsFor(model)} ` +
             `chain_budget_ms=${budgetMs} chain_elapsed_ms=${Date.now() - startedAt} ` +
-            `max_tokens=${escalateTokens ? MAX_OUTPUT_TOKENS_RETRY : MAX_OUTPUT_TOKENS} ` +
+            `max_tokens=${attemptMaxTokens} ` +
             `latency_ms=${res.latencyMs} response_body_safe=${res.errorMessage ?? "-"}`,
         );
       }

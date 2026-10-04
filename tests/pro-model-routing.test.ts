@@ -16,7 +16,7 @@ import {
 } from "../lib/ai/model-chain.ts";
 import type { ProAnalysisOutcome } from "../lib/ai/pro-analysis.ts";
 import { jsonResponse, sseResponse } from "./openrouter-sse.ts";
-import { generateProAnalysis, formatProAnalysisMetrics } from "../lib/ai/pro-analysis.ts";
+import { generateProAnalysis, formatProAnalysisMetrics, maxOutputTokens } from "../lib/ai/pro-analysis.ts";
 import { buildSnapshotUpdate, isFreshSnapshot, shouldPersistSnapshot } from "../lib/ai/report-cache.ts";
 import { planAllowsProAnalysis } from "../lib/quota.ts";
 import { buildEvidencePack } from "../lib/ai/evidence.ts";
@@ -984,14 +984,18 @@ async function main() {
     );
   });
 
-  await check("max_tokens=3000 để Gemma không bị cắt JSON (fix provider_truncated)", async () => {
+  await check("max_tokens đủ cho JSON ~5-6k (fix provider_truncated), áp dụng chung mọi model", async () => {
     const captured = stubFetch((m) => (m === QWEN ? rateLimited() : ok(m)));
     await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
     const gemma = captured().find((c) => c.model === GEMMA);
     assert.ok(gemma, "phải có request tới Gemma");
-    assert.equal(gemma!.body.max_tokens, 3000, "phải yêu cầu 3000 token");
+    assert.equal(gemma!.body.max_tokens, maxOutputTokens(), "phải yêu cầu đủ trần maxOutputTokens");
+    assert.ok(
+      Number(gemma!.body.max_tokens) >= 6000,
+      `trần phải >= 6000 để JSON ~5-6k token không bị cắt, thấy ${gemma!.body.max_tokens}`,
+    );
     const qwen = captured().find((c) => c.model === QWEN);
-    assert.equal(qwen!.body.max_tokens, 3000, "áp dụng chung cho mọi model");
+    assert.equal(qwen!.body.max_tokens, maxOutputTokens(), "áp dụng chung cho mọi model");
   });
 
   await check("Gemma success -> đủ điều kiện lưu analysis_json", async () => {
