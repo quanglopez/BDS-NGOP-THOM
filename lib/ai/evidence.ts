@@ -31,7 +31,10 @@ export interface EvidencePack {
   property: EvidenceProperty;
   scoring: {
     overall_score: number;
-    deal_type: string;
+    /** null = chưa ai phân loại. AI phải nói "chưa đủ cơ sở" thay vì tự suy
+     *  ra là bình thường — nếu pack ghi sẵn "binh_thuong" thì prompt sẽ dẫn
+     *  model đi sai. */
+    deal_type: string | null;
     contributions: { label: string; delta: number; note: string }[];
     reasoning: string;
     action: string;
@@ -69,7 +72,8 @@ export interface EvidenceInput {
   listingText?: string | null;
   // Kết quả scoring tại thời điểm check (đã merge Jev)
   result: AnalysisResult;
-  dealType: string;
+  /** null = chưa ai phân loại (xem EvidencePack.scoring.deal_type). */
+  dealType: string | null;
   scoringVersion: string;
   analysisVersion: string;
   // Tầng ưu tiên cao nhất: snapshot đầy đủ lúc check (check mới)

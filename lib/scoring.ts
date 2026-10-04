@@ -288,7 +288,11 @@ export function fromApiResponse(data: CheckApiResponse, local: AnalysisResult): 
     return local;
   }
   const score = typeof data.investment_score === "number" ? data.investment_score : local.overall;
-  const deal = data.deal_type || "binh_thuong";
+  // deal_type null (chưa ai phân loại) là hợp lệ. Quy về "binh_thuong" sẽ biến
+  // tin chưa phân loại thành tin an toàn. Các nhánh tag bên dưới so sánh với
+  // "ngop_ngon"/"gia_cao"/"rui_ro_phap_ly" nên null cho ra ĐÚNG CÙNG tag — bỏ
+  // default này không đổi hành vi, chỉ bỏ được giá trị giả.
+  const deal = data.deal_type ?? null;
 
   let tag: string;
   let tagColor: TagColor;

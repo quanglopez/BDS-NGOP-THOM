@@ -1,9 +1,14 @@
 // Chống regression: null contract cho score / deal_type.
 // Case gốc: tin chưa chấm điểm (score null) bị render thành "0",
 // badge đỏ, nhãn "BÌNH THƯỜNG" — tức giả dữ liệu. Null phải hiện
-// "CHƯA CHẤM" và badge trung tính (lib/radar/signals.ts: null ≠ 0/false).
+// "CHƯA CÓ NHẬN ĐỊNH" và badge trung tính (lib/radar/signals.ts: null ≠ 0/false).
+//
+// Cập nhật: `DEAL_LABELS[deal] ?? "BÌNH THƯỜNG"` cũng từng là dữ liệu giả —
+// giá trị lạ (model đổi nhãn, dữ liệu cũ) hiện ra thành "BÌNH THƯỜNG",
+// tức tin CHƯA được ai phân loại lại hiện như tin đã phân loại là bình thường.
+// Cả null lẫn giá trị lạ giờ đều về cùng nhãn "CHƯA CÓ NHẬN ĐỊNH".
 import { strict as assert } from "node:assert";
-import { dealBadgeClass, dealLabel, scoreBadgeClass } from "../lib/format.ts";
+import { dealBadgeClass, dealLabel, DEAL_UNKNOWN_LABEL, scoreBadgeClass } from "../lib/format.ts";
 
 let pass = 0;
 let fail = 0;
@@ -33,18 +38,30 @@ check("binh_thuong -> 'BÌNH THƯỜNG'", () => {
   assert.equal(dealLabel("binh_thuong"), "BÌNH THƯỜNG");
 });
 
-check("chuoi khong biet -> 'BÌNH THƯỜNG'", () => {
-  assert.equal(dealLabel("anything_else"), "BÌNH THƯỜNG");
+check("chuoi khong biet -> 'CHƯA CÓ NHẬN ĐỊNH' (KHÔNG phải BÌNH THƯỜNG)", () => {
+  // Giá trị lạ = chưa ai phân loại, KHÁC "bình thường". Rơi về "BÌNH THƯỜNG"
+  // là bịa kết luận cho tin chưa được đánh giá.
+  assert.equal(dealLabel("anything_else"), DEAL_UNKNOWN_LABEL);
+  assert.notEqual(dealLabel("anything_else"), "BÌNH THƯỜNG");
 });
 
-console.log("\n== dealLabel: null = chưa chấm, không phải BÌNH THƯỜNG ==");
+console.log("\n== dealLabel: null = chưa có nhận định, không phải BÌNH THƯỜNG ==");
 
-check("null -> 'CHƯA CHẤM'", () => {
-  assert.equal(dealLabel(null), "CHƯA CHẤM");
+check("null -> 'CHƯA CÓ NHẬN ĐỊNH'", () => {
+  assert.equal(dealLabel(null), DEAL_UNKNOWN_LABEL);
+  assert.equal(dealLabel(null), "CHƯA CÓ NHẬN ĐỊNH");
 });
 
-check("undefined -> 'CHƯA CHẤM'", () => {
-  assert.equal(dealLabel(undefined), "CHƯA CHẤM");
+check("undefined -> 'CHƯA CÓ NHẬN ĐỊNH'", () => {
+  assert.equal(dealLabel(undefined), DEAL_UNKNOWN_LABEL);
+});
+
+check("chuoi rong -> 'CHƯA CÓ NHẬN ĐỊNH'", () => {
+  assert.equal(dealLabel(""), DEAL_UNKNOWN_LABEL);
+});
+
+check("null và giá trị lạ cho CÙNG nhãn (cùng nghĩa: chưa biết)", () => {
+  assert.equal(dealLabel(null), dealLabel("gia_tri_la"));
 });
 
 console.log("\n== scoreBadgeClass: 0 là điểm thật, không phải null ==");

@@ -10,7 +10,12 @@ export const SCORING_SNAPSHOT_SOURCE = "checkbds-snapshot-v1";
 
 export interface ScoringSnapshot {
   overall_score: number;
-  deal_type: string;
+  /**
+   * Phân loại tại thời điểm check. `null` = chưa ai phân loại được. Snapshot
+   * phải ghi đúng như lúc chấm (kể cả null) — đây là bản chụp để audit, ghi
+   * "binh_thuong" vào ô null là ghi sai lịch sử.
+   */
+  deal_type: string | null;
   tag: string;
   tag_color: TagColor;
   action_type: ActionType;
@@ -66,7 +71,7 @@ export function parseScoringSnapshot(raw: unknown): ScoringSnapshot | null {
 
   return {
     overall_score: raw.overall_score,
-    deal_type: str(raw.deal_type, 50) || "binh_thuong",
+    deal_type: str(raw.deal_type, 50) || null,
     tag: str(raw.tag, 200),
     tag_color: (["green", "yellow", "red"] as const).includes(raw.tag_color as TagColor)
       ? (raw.tag_color as TagColor)
@@ -99,7 +104,7 @@ export function parseScoringSnapshot(raw: unknown): ScoringSnapshot | null {
 // Chụp snapshot từ AnalysisResult đã merge Jev (tức là đúng bộ số client hiển thị).
 export function buildScoringSnapshot(args: {
   result: AnalysisResult;
-  dealType: string;
+  dealType: string | null;
   nowIso?: string;
 }): ScoringSnapshot {
   const { result } = args;

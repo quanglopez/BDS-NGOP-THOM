@@ -5,6 +5,10 @@ import Link from "next/link";
 import { trackEvent } from "@/lib/analytics";
 import type { ProAnalysis } from "@/lib/ai/schema";
 import { fmtPpm2, fmtVnd } from "@/lib/price/format";
+import {
+  buildReportViewModel,
+  type ReportViewModel,
+} from "@/lib/report/view-model";
 
 export interface ReportSeed {
   score: number | null;
@@ -65,9 +69,13 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 // Report Pro: Free thấy locked list (không gọi AI). Pro fetch /api/pro-analysis 1 lần.
 export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: boolean; seed: ReportSeed }) {
   const [data, setData] = useState<ApiOk | null>(null);
-  const [failed, setFailed] = useState(false);
   const startedRef = useRef(false);
   const viewedRef = useRef({ analysis: false, breakdown: false, redflag: false, price: false });
+  // View model dùng chung cho cả 3 trạng thái loading / xong / lỗi: component
+  // không tự quyết "câu nào hiện khi nào", mà đọc trạng thái đã chuẩn hoá.
+  const [vm, setVm] = useState<ReportViewModel>(() =>
+    buildReportViewModel({ loading: true, plan: isPro ? "pro" : "free" }),
+  );
 
   useEffect(() => {
     if (!isPro) {
@@ -88,10 +96,26 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
         const json = (await res.json().catch(() => null)) as ApiOk | { error?: string } | null;
         if (cancelled) return;
         if (!res.ok || !json || !("analysis" in json)) {
-          setFailed(true);
+          setVm(
+            buildReportViewModel({
+              check: { id: checkId },
+              plan: isPro ? "pro" : "free",
+              failed: true,
+              // Chỉ lỗi tạm thời phía server mới retry được. 429 (hết lượt),
+              // 401/403 (sai sở hữu), 404 (không còn tin) thì retry vô nghĩa.
+              retrySupported: res.status >= 500,
+            }),
+          );
           return;
         }
         setData(json as ApiOk);
+        setVm(
+          buildReportViewModel({
+            check: { id: checkId, score: seed.score, deal_type: seed.dealType },
+            plan: isPro ? "pro" : "free",
+            proAnalysis: (json as ApiOk).analysis,
+          }),
+        );
         // Section-view events khi dữ liệu AI đã về
         if (!viewedRef.current.analysis) {
           viewedRef.current.analysis = true;
@@ -103,13 +127,25 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
         trackEvent("price_intelligence_view", { checkId });
         viewedRef.current.price = true;
       } catch {
-        if (!cancelled) setFailed(true);
+        // Lỗi mạng/offline: có thể thử lại.
+        if (!cancelled) {
+          setVm(
+            buildReportViewModel({
+              check: { id: checkId },
+              plan: "pro",
+              failed: true,
+              retrySupported: true,
+            }),
+          );
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [checkId, isPro]);
+    // seed.score/seed.dealType là props server render 1 lần cho đúng checkId;
+    // startedRef chặn chạy lại nên thêm vào deps không gây fetch lần 2.
+  }, [checkId, isPro, seed.score, seed.dealType]);
 
   if (!isPro) {
     return (
@@ -145,10 +181,12 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
     );
   }
 
-  if (failed || (data && data.fromFallback && !data.analysis)) {
+  if (vm.status === "failed" || (data && data.fromFallback && !data.analysis)) {
     return (
       <div className="rounded-[16px] border border-amber-200 bg-amber-50 p-5 text-[13px] text-amber-800">
-        Phân tích AI tạm thời chưa khả dụng. Các dữ liệu và chỉ số CheckBDS vẫn được hiển thị bên dưới.
+        {vm.retry.supported
+          ? "Phân tích AI tạm thời chưa khả dụng. Các dữ liệu và chỉ số CheckBDS vẫn được hiển thị bên dưới."
+          : "Không tạo được phân tích AI cho lần xem này (lỗi không tạm thời — thử lại cũng không khác). Các dữ liệu và chỉ số CheckBDS vẫn được hiển thị bên dưới."}
       </div>
     );
   }
@@ -156,6 +194,9 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
   if (!data) return <Skeleton />;
 
   const a = data.analysis;
+  // Câu chữ lấy từ view model (đã chuẩn hoá), không đọc thẳng `a.summary`.
+  const headline = vm.proSummary?.headline ?? a.summary.headline;
+  const summaryText = vm.proSummary?.text ?? a.summary.text;
 
   return (
     <div className="space-y-5">
@@ -184,8 +225,8 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
             AI hỗ trợ phân tích
           </span>
         </div>
-        <h3 className="relative mt-2 text-[17px] font-black leading-snug">{a.summary.headline}</h3>
-        <p className="relative mt-2 text-[13px] leading-[1.7] text-slate-200">{a.summary.text}</p>
+        <h3 className="relative mt-2 text-[17px] font-black leading-snug">{headline}</h3>
+        <p className="relative mt-2 text-[13px] leading-[1.7] text-slate-200">{summaryText}</p>
       </section>
 
       {/* 4. Highlights */}

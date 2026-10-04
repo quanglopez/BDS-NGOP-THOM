@@ -3,9 +3,9 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { effectivePlan } from "@/lib/quota";
-import { dealLabel } from "@/lib/format";
 import { fmtVnd } from "@/lib/price/format";
 import { parseReportRef } from "@/lib/report/slug";
+import { buildReportViewModel } from "@/lib/report/view-model";
 import { ProReport, type ReportSeed } from "@/components/report/pro-report";
 import { PriceIntelligenceSection } from "@/components/report/price-intelligence-section";
 
@@ -25,6 +25,7 @@ interface ReportRow {
   original_text: string | null;
   score: number | null;
   deal_type: string | null;
+  is_ngop: number | null;
   province: string | null;
   price_billion: number | null;
   area_m2: number | null;
@@ -52,7 +53,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   // không tồn tại, mà select cột lạ làm hỏNG MỌI report — kể cả URL UUID.
   // Nhánh slug mới cần cột đó và được bọc riêng để hỏng cục bộ.
   const BASE_COLUMNS =
-    "id, user_id, original_text, score, deal_type, province, price_billion, area_m2, bedrooms, listing_url, created_at";
+    "id, user_id, original_text, score, deal_type, is_ngop, province, price_billion, area_m2, bedrooms, listing_url, created_at";
 
   let row: ReportRow | null = null;
   if (ref.kind === "uuid") {
@@ -105,7 +106,24 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     .eq("id", user.id)
     .single();
   const plan = effectivePlan(profile?.plan, profile?.plan_expires_at);
-  const isPro = plan !== "free";
+
+  // UI KHÔNG đọc cột `checks` trực tiếp — mọi giá trị hiển thị đều đi qua
+  // adapter (lib/report/view-model.ts) để null không bao giờ bị hiện thành 0
+  // hay thành "BÌNH THƯỜNG". Ở đây mới có `seed` (giá/diện tích) vì 2 field đó
+  // không phải kết luận AI mà là thuộc tính bất động sản, adapter không quyết.
+  const vm = buildReportViewModel({
+    check: {
+      id: row.id,
+      score: row.score,
+      deal_type: row.deal_type,
+      is_ngop: row.is_ngop,
+      province: row.province,
+      original_text: row.original_text,
+      listing_url: row.listing_url,
+      created_at: row.created_at,
+    },
+    plan,
+  });
 
   const price =
     typeof row.price_billion === "number" && row.price_billion > 0 ? row.price_billion * 1e9 : null;
@@ -114,8 +132,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const title = (row.original_text ?? "").split("\n")[0]?.slice(0, 200) || "Tin bất động sản";
 
   const seed: ReportSeed = {
-    score: row.score,
-    dealType: row.deal_type,
+    score: vm.score.value,
+    dealType: vm.dealType.value,
     title,
     price,
     area,
@@ -125,6 +143,9 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     region: row.province,
     listingUrl: row.listing_url,
   };
+
+  // Entitlement quyết định quyền xem, thay vì so sánh plan tại từng component.
+  const canViewPro = vm.entitlement.canViewFullReport;
 
   return (
     <main className="min-h-screen bg-cream">
@@ -164,31 +185,32 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </div>
         </section>
 
-        {/* 2. CheckBDS Score — render server */}
+        {/* 2. CheckBDS Score — render server. Nhãn/điểm lấy từ adapter:
+            score null hiện "—", deal_type null hiện "CHƯA CÓ NHẬN ĐỊNH". */}
         <section className="mt-4 rounded-[20px] bg-navy text-white p-5 md:p-6 flex items-center gap-5 relative overflow-hidden">
           <div className="absolute -top-16 right-0 w-[220px] h-[220px] bg-gold/15 rounded-full blur-[60px]" />
-          <div className={`w-[84px] h-[84px] shrink-0 rounded-full bg-white border-[6px] flex items-center justify-center relative ${seed.score !== null ? "border-emerald-500 text-emerald-700" : "border-slate-300 text-slate-500"}`}>
+          <div className={`w-[84px] h-[84px] shrink-0 rounded-full bg-white border-[6px] flex items-center justify-center relative ${vm.score.known ? "border-emerald-500 text-emerald-700" : "border-slate-300 text-slate-500"}`}>
             <div className="text-center leading-none">
-              <div className="text-[26px] font-black tracking-tight">{seed.score !== null ? seed.score : "—"}</div>
+              <div className="text-[26px] font-black tracking-tight">{vm.score.known ? vm.score.value : "—"}</div>
               <div className="text-[10px] font-bold tracking-widest mt-0.5 opacity-70">/100</div>
             </div>
           </div>
           <div className="relative">
             <div className="text-[10px] tracking-[0.18em] font-bold text-slate-400">CHECKBDS SCORE</div>
             <div className="mt-1 inline-flex px-3 py-1 rounded-full text-[12px] font-black tracking-wide bg-gold text-navy">
-              {dealLabel(seed.dealType)}
+              {vm.dealType.display}
             </div>
           </div>
         </section>
 
         {/* 3-10. AI sections (Pro) hoặc locked list (Free) — client */}
         <div className="mt-4">
-          <ProReport checkId={row.id} isPro={isPro} seed={seed} />
+          <ProReport checkId={row.id} isPro={canViewPro} seed={seed} />
         </div>
 
         {/* Phân tích giá tham chiếu — lazy, độc lập với AI, tự gọi API khi mở */}
         <div className="mt-4">
-          <PriceIntelligenceSection checkId={row.id} isPro={isPro} />
+          <PriceIntelligenceSection checkId={row.id} isPro={vm.entitlement.canViewPriceIntelligence} />
         </div>
       </div>
     </main>

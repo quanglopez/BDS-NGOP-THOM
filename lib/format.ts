@@ -8,9 +8,18 @@ export const DEAL_LABELS: Record<string, string> = {
   binh_thuong: "BÌNH THƯỜNG",
 };
 
+/**
+ * Chưa có phân loại. Áp dụng cho CẢ null lẫn giá trị lạ: cả hai đều là "chưa ai
+ * biết tin này thuộc loại nào", và đều KHÁC hẳn "bình thường".
+ * Trước đây `DEAL_LABELS[deal] ?? "BÌNH THƯỜNG"` khiến 1 giá trị lạ (model đổi
+ * nhãn, dữ liệu cũ) hiện thành "BÌNH THƯỜNG" — tức tin chưa được đánh giá lại
+ * hiện ra như tin đã đánh giá là bình thường.
+ */
+export const DEAL_UNKNOWN_LABEL = "CHƯA CÓ NHẬN ĐỊNH";
+
 export function dealLabel(deal: string | null | undefined): string {
-  if (deal === null || deal === undefined) return "CHƯA CHẤM";
-  return DEAL_LABELS[deal] ?? "BÌNH THƯỜNG";
+  if (deal === null || deal === undefined || deal === "") return DEAL_UNKNOWN_LABEL;
+  return DEAL_LABELS[deal] ?? DEAL_UNKNOWN_LABEL;
 }
 
 // Màu badge theo loại kèo
