@@ -912,6 +912,21 @@ async function main() {
     assert.equal(structuredModeFor(NEMO), "none");
   });
 
+  await check("capability: Qwen 3.7 Flash không hỗ trợ structured_outputs -> none, không json_schema", () => {
+    // Audit /api/v1/models 2026-10-04: qwen/qwen3.7-flash thiếu structured_outputs.
+    // json_object khiến parseProAnalysis thiếu headline (hip07u, ainr21).
+    assert.equal(structuredModeFor("qwen/qwen3.7-flash"), "none");
+    assert.equal(structuredModeFor("qwen/qwen3.7-flash:free"), "none", "biến thể :free cũng none");
+    // Model hỗ trợ json_schema phải giữ nguyên json_schema
+    assert.equal(structuredModeFor("qwen/qwen3.8-27b"), "json_schema");
+    assert.equal(structuredModeFor("qwen/qwen3.8-27b:free"), "json_schema");
+    assert.equal(structuredModeFor("deepseek/deepseek-v4.1-flash"), "json_schema");
+    // Model mặc định khác không bị ảnh hưởng
+    assert.equal(structuredModeFor(GEMMA), "json_object");
+    assert.equal(structuredModeFor(NEMO), "none");
+    assert.equal(structuredModeFor("some/unknown-model"), "json_object");
+  });
+
   console.log("\n== 1. Qwen success ==");
 
   await check("Qwen trả JSON hợp lệ -> dùng luôn, 1 request, lưu actual model", async () => {
