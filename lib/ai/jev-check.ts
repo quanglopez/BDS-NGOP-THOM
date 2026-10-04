@@ -57,6 +57,49 @@ export function investmentScore100(value: unknown): number | null {
   return n <= 4 ? Math.round((n / 4) * 100) : Math.round(n);
 }
 
+/** Deal type hợp lệ — chốt với `criteria` của CHECK_QUESTIONS.deal_type.
+ *  Nguồn DUY NHẤT: /api/check và Auto-Enrichment cùng dùng danh sách này. */
+export const DEAL_TYPES = new Set([
+  "ngop_ngon",
+  "thom_dau_tu",
+  "gia_cao",
+  "rui_ro_phap_ly",
+  "binh_thuong",
+]);
+
+/** Phân loại kèo từ provider. Trả null khi provider KHÔNG trả classification hợp
+ *  lệ — KHÔNG quy về "binh_thuong". "Chưa ai phân loại" và "bình thường" là hai
+ *  kết luận khác nhau; gộp chúng làm tin không phân loại trông như tin an toàn. */
+export function normalizeDealType(value: unknown): string | null {
+  return typeof value === "string" && DEAL_TYPES.has(value) ? value : null;
+}
+
+/** Noul của Jev (0..1) -> thang 100. null = provider không trả noul.
+ *  0 là giá trị THẬT và phải giữ nguyên 0, không phải null. */
+export function noulPercent(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.round(value * 100);
+}
+
+/** Noul của câu is_ngop. Tách riêng khỏi noulPercent() để tên gọi đúng ý nghĩa
+ *  tại call-site: "ngộp" là kết luận, thiếu noul là chưa biết. */
+export function ngopPercent(value: unknown): number | null {
+  return noulPercent(value);
+}
+
+/** Score 0..4 của Jev -> thang 100 (0..4 nhân 25). null = provider không trả.
+ *  Giữ đúng quy tắc cũ: số >4 coi như đã ở thang 100 rồi. */
+export function score0to4ToHundred(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return value <= 4 ? Math.round((value / 4) * 100) : Math.round(value);
+}
+
+/** Số thực sự có, ngược lại null. Không có default 0/0.7 — số mặc định là dữ
+ *  liệu bịa, và 0/0.7 đều mang nghĩa riêng cho người đọc report. */
+export function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 /** Điểm investment cho luồng Check thủ công. Trả null khi Jev trả score hỏng —
  *  KHÔNG bao giờ quy về 0: 0 là điểm thật và sẽ được persist thành Radar signal. */
 export function manualInvestmentScore(raw: unknown): number | null {

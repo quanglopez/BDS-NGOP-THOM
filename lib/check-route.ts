@@ -14,7 +14,7 @@ import { extractPhone } from "@/lib/phone";
 import { extractBedrooms } from "@/lib/bedrooms";
 import { resolveAreaM2 } from "@/lib/area";
 import { analyzeListing, fromApiResponse, SCORING_CODE_VERSION } from "@/lib/scoring";
-import { CHECK_QUESTIONS, callJev, checkInvestmentVerdict } from "@/lib/ai/jev-check";
+import { CHECK_QUESTIONS, callJev, checkInvestmentVerdict, finiteOrNull, ngopPercent, normalizeDealType, noulPercent, score0to4ToHundred } from "@/lib/ai/jev-check";
 import type { JevAnswer } from "@/lib/ai/jev-check";
 import { buildScoringSnapshot } from "@/lib/score-snapshot";
 import { resolveListingGeo } from "@/lib/geo/url-parser";
@@ -235,8 +235,33 @@ export async function handleCheck(req: NextRequest, deps: CheckDeps): Promise<Ne
       );
     }
     const invest100 = decided.score;
-    const dealType = ans.deal_type?.choice || "binh_thuong";
-    const isNgop = Math.round((ans.is_ngop?.noul ?? 0) * 100);
+
+    // --- Ngữ nghĩa Unknown ---------------------------------------------
+    // Ba field dưới đây PHẢI phân biệt "provider không trả" với "provider trả
+    // giá trị X". Quy chuẩn về 0/"binh_thuong" tạo dữ liệu giả: tin chưa ai
+    // phân loại sẽ hiện "BÌNH THƯỜNG" và tin không có tín hiệu ngộp sẽ hiện
+    // điểm ngộp 0 (= kết luận chắc chắn không ngộp).
+    //   deal_type  -> chỉ dùng khi provider trả đúng 1 giá trị trong criteria.
+    //   is_ngop    -> null khi không có noul; 0 là giá trị THẬT của provider.
+    //   confidence -> null khi provider không trả; 0.7 là số bịa.
+    // Cột DB (score/deal_type/is_ngop) vốn nullable nên không cần migration.
+    const rawDealChoice = ans.deal_type?.choice;
+    const dealType = normalizeDealType(rawDealChoice);
+    if (dealType === null && typeof rawDealChoice === "string" && rawDealChoice.trim() !== "") {
+      // Provider trả choice lạ (model đổi nhãn / dữ liệu cũ): persist null
+      // ("chưa phân loại") nhưng giữ giá trị thô trong log — không nuốt mất
+      // chứng cứ để đối chiếu khi provider đổi vocabulary.
+      console.warn(`[check:${requestId}] DEAL_TYPE_UNKNOWN raw=${rawDealChoice.slice(0, 64)}`);
+    }
+    const isNgop = ngopPercent(ans.is_ngop?.noul);
+    const dealConfidence = finiteOrNull(ans.deal_type?.confidence);
+
+    // Sub-score Jev: giữ nguyên quy tắc quy đổi đã có, nhưng KHÔNG quy về 0 khi
+    // thiếu. applyJevSubScores() đã xử lý null bằng cách giữ điểm local, nên
+    // truyền null là an toàn và không đổi công thức chấm điểm.
+    const legalSafety = noulPercent(ans.legal_safety?.noul);
+    const locationGrowth = score0to4ToHundred(ans.location_growth?.score);
+    const liquidity = score0to4ToHundred(ans.liquidity?.score);
 
     // Lưu lịch sử (không chặn response nếu ghi DB lỗi).
     // Lấy lại id để client mở được /bao-cao/[id] và Pro Analysis có cache key.
@@ -250,11 +275,11 @@ export async function handleCheck(req: NextRequest, deps: CheckDeps): Promise<Ne
       {
         investment_score: invest100,
         deal_type: dealType,
-        confidence: ans.deal_type?.confidence || 0.7,
+        confidence: dealConfidence,
         is_ngop: isNgop,
-        legal_safety: Math.round((ans.legal_safety?.noul ?? 0) * 100),
-        location_growth: ans.location_growth?.score ?? 0,
-        liquidity: ans.liquidity?.score ?? 0,
+        legal_safety: legalSafety,
+        location_growth: locationGrowth,
+        liquidity: liquidity,
         province: detectedProvince,
       },
       localResult,
@@ -359,11 +384,11 @@ export async function handleCheck(req: NextRequest, deps: CheckDeps): Promise<Ne
         seo_slug: seoSlug,
         investment_score: invest100,
         deal_type: dealType,
-        confidence: ans.deal_type?.confidence || 0.7,
+        confidence: dealConfidence,
         is_ngop: isNgop,
-        legal_safety: Math.round((ans.legal_safety?.noul ?? 0) * 100),
-        location_growth: ans.location_growth?.score ?? 0,
-        liquidity: ans.liquidity?.score ?? 0,
+        legal_safety: legalSafety,
+        location_growth: locationGrowth,
+        liquidity: liquidity,
         province: detectedProvince,
         price_billion: priceBillion,
         area_m2: areaM2,

@@ -2,13 +2,13 @@
 // (lib/ai/jev-check.ts). Chỉ gọi 1 lần / attempt — retry do worker quyết định
 // (shouldRetry + backOffMs), không retry ngầm ở đây.
 
-import { CHECK_QUESTIONS, callJevOnce, investmentScore100 } from "@/lib/ai/jev-check";
+import { CHECK_QUESTIONS, callJevOnce, investmentScore100, noulPercent, normalizeDealType } from "@/lib/ai/jev-check";
 import { publishedConfidence, type AutoProviderOutcome } from "./auto-enrollment";
 
 export type EnrichmentProvider = (input: Record<string, unknown>) => Promise<AutoProviderOutcome>;
 
-/** Deal type hợp lệ — chốt với bộ criteria của Jev; giá trị lạ coi như unknown (null). */
-const DEAL_TYPES = new Set(["ngop_ngon", "thom_dau_tu", "gia_cao", "rui_ro_phap_ly", "binh_thuong"]);
+/** Deal type hợp lệ + noul 0..1 -> 0..100 dùng CHUNG với /api/check
+ *  (lib/ai/jev-check.ts). Không để 2 luồng lệch nhau về nghĩa của "chưa biết". */
 
 /** Text trạng thái gửi Jev, dựng TỪ material input đã đóng băng lúc enqueue.
  *  Không đọc URL, không refetch, không đụng original_text. */
@@ -46,11 +46,8 @@ export function mapEnrichmentAnswers(data: unknown): AutoProviderOutcome {
   const invest100 = investmentScore100(investRaw);
   if (invest100 != null && (invest100 < 0 || invest100 > 100)) return { kind: "retryable_error" };
 
-  const choice = root.deal_type?.choice;
-  const dealType = typeof choice === "string" && DEAL_TYPES.has(choice) ? choice : null;
-
-  const noul = root.is_ngop?.noul;
-  const isNgoP = typeof noul === "number" && Number.isFinite(noul) ? Math.round(noul * 100) : null;
+  const dealType = normalizeDealType(root.deal_type?.choice);
+  const isNgoP = noulPercent(root.is_ngop?.noul);
   if (isNgoP != null && (isNgoP < 0 || isNgoP > 100)) return { kind: "retryable_error" };
 
   if (invest100 == null && dealType == null && isNgoP == null) return { kind: "insufficient_data" };

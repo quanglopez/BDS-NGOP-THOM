@@ -166,7 +166,9 @@ export async function POST(req: NextRequest) {
   // Nguồn scoring: snapshot > jev_* > local. dealType/overall/score_explanation
   // đều lấy theo đúng nguồn đó để không lệch với breakdown đã hiển thị.
   const scoringResult = snapshot ? resultFromSnapshot(snapshot) : local;
-  const dealType = snapshot ? snapshot.deal_type : (row.deal_type ?? "binh_thuong");
+  // deal_type null (chưa ai phân loại) phải đi thẳng vào evidence để AI biết là
+  // thiếu căn cứ, không phải tự nhận về "bình thường".
+  const dealType = snapshot ? snapshot.deal_type : (row.deal_type ?? null);
   const localScore = typeof row.score === "number" ? row.score : scoringResult.overall;
 
   const evidence = buildEvidencePack({
