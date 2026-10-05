@@ -1,7 +1,9 @@
 // Regression: radar scan error logging phải có radar_id + area_v2 + stack,
 // nhưng response route KHÔNG được thay đổi: vẫn 500 JSON như cũ.
 import { strict as assert } from "node:assert";
-
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 // Mô phỏng contract log — giữ đúng thứ tự và không có secret.
 function radarScanErrorLine(radar: { id: string; areaV2: number; regionName: string | null }, e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
@@ -43,6 +45,20 @@ check("response behavior không đổi: vẫn 500 JSON", () => {
   // Route mock: log xong vẫn trả 500 với message cố định, không throw thêm.
   const json = { error: "Không quét được dữ liệu Radar. Thử lại sau." };
   assert.deepEqual(json, { error: "Không quét được dữ liệu Radar. Thử lại sau." });
+});
+
+check("route: mọi [radar:scan:mark-failed] phải đi qua describeScanError, không log raw error object", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(path.join(here, "..", "app", "api", "radars", "[id]", "scan", "route.ts"), "utf8");
+  const occurrences = src.match(/\[radar:scan:mark-failed\]/g) ?? [];
+  assert.ok(occurrences.length >= 2, `phải có ít nhất 2 log mark-failed, thấy: ${occurrences.length}`);
+  const calls = src.match(/console\.error\([^)]*\[radar:scan:mark-failed\][^)]*\)/g) ?? [];
+  assert.equal(calls.length, occurrences.length, "mọi log mark-failed phải nằm trong console.error");
+  for (const c of calls) {
+    assert.ok(c.includes("describeScanError("), `mark-failed phải qua describeScanError: ${c}`);
+    assert.ok(!/,\s*markError\s*\)/.test(c), `không log raw markError: ${c}`);
+    assert.ok(!/,\s*mark\.error\s*\)/.test(c), `không log raw mark.error: ${c}`);
+  }
 });
 
 console.log(`\nKết quả: ${pass} pass, ${fail} fail`);
