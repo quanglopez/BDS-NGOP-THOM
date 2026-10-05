@@ -176,9 +176,28 @@ export default function PricingPage() {
           </div>
         </div>
 
-        <div id="thanh-toan" className="mt-10 scroll-mt-24">
-          <PaymentBox months={months} onMonthsChange={setMonths} />
-        </div>
+        {!isProPlan(currentPlan) && (
+          <div id="thanh-toan" className="mt-10 scroll-mt-24">
+            <PaymentBox months={months} onMonthsChange={setMonths} />
+          </div>
+        )}
+        {isProPlan(currentPlan) && (
+          <div className="mt-10 rounded-[18px] border border-emerald-700/40 bg-emerald-950/40 p-5">
+            <div className="text-[15px] font-black text-emerald-300">
+              Bạn đang dùng gói {(currentPlan ?? "pro").toUpperCase()} rồi.
+            </div>
+            <p className="mt-1 text-[12px] text-emerald-200">
+              Không cần mua lại giao dịch mới — quản lý gói hiện có trong
+              Dashboard sau khi đăng nhập.
+            </p>
+            <Link
+              href="/dashboard"
+              className="mt-3 inline-flex h-9 px-4 rounded-[10px] bg-emerald-600 text-white text-[12px] font-bold items-center hover:bg-emerald-500 transition"
+            >
+              Mở Dashboard →
+            </Link>
+          </div>
+        )}
 
         <div className="mt-12 rounded-[18px] border border-slate-200 bg-white p-6">
           <h2 className="text-[18px] font-black text-navy">Câu hỏi thường gặp</h2>
