@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { DURATIONS, quotePrice, vietQrImageUrl, type PlanKey } from "@/lib/payments";
+import { DURATIONS, quotePrice, vietQrImageUrl, isPaymentConfirmed, type PlanKey } from "@/lib/payments";
 import { trackEvent } from "@/lib/analytics";
 
-type PaymentInfo = { content: string; amount: number };
+type PaymentInfo = { id?: string; content: string; amount: number };
 
 const TRUST = [
   "🔒 Thanh toán an toàn",
@@ -61,7 +61,7 @@ export function PaymentBox({ months, onMonthsChange }: { months: number; onMonth
         return;
       }
       trackEvent("checkout_started", { months: m, amount: data.amount });
-      setPayment({ content: data.content, amount: data.amount });
+      setPayment({ id: data.payment?.id, content: data.content, amount: data.amount });
       setQrUrl(vietQrImageUrl(data.amount, data.content));
     } catch {
       setError("Lỗi mạng, bấm lại để thử.");
@@ -77,16 +77,19 @@ export function PaymentBox({ months, onMonthsChange }: { months: number; onMonth
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll trạng thái: khi webhook nâng gói thì báo thành công
+  // Poll trạng thái: khi webhook nâng gói thì báo thành công.
+  // CHỈ success khi đúng payment intent vừa tạo có status paid — không dựa vào
+  // data.plan === "pro", vì user có thể đã PRO từ trước (không tạo giao dịch mới).
   useEffect(() => {
     if (!payment || upgraded) return;
     timer.current = setInterval(async () => {
-      const res = await fetch("/api/payments/status");
+      const url = payment.id ? `/api/payments/status?id=${encodeURIComponent(payment.id)}` : "/api/payments/status";
+      const res = await fetch(url);
       if (!res.ok) return;
       const data = await res.json();
       setPlanName(data.plan);
       setExpiresAt(data.plan_expires_at ?? null);
-      if (data.plan === plan) {
+      if (isPaymentConfirmed(data.payment)) {
         setUpgraded(true);
         trackEvent("payment_completed", { months, amount: payment.amount });
         if (timer.current) clearInterval(timer.current);
