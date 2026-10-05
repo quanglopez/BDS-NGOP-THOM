@@ -107,6 +107,20 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
     startedRef.current = true;
     trackEvent("pro_analysis_view", { checkId });
     let cancelled = false;
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      if (cancelled) return;
+      timedOut = true;
+      trackEvent("pro_analysis_timeout", { checkId });
+      setVm(
+        buildReportViewModel({
+          check: { id: checkId },
+          plan: "pro",
+          failed: true,
+          retrySupported: true,
+        }),
+      );
+    }, 20000);
     (async () => {
       try {
         const res = await fetch("/api/pro-analysis", {
@@ -115,7 +129,8 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
           body: JSON.stringify({ checkId }),
         });
         const json = (await res.json().catch(() => null)) as ApiOk | { error?: string } | null;
-        if (cancelled) return;
+        if (cancelled || timedOut) return;
+        clearTimeout(timeoutId);
         if (!res.ok || !json || !("analysis" in json)) {
           setVm(
             buildReportViewModel({
@@ -148,8 +163,9 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
         trackEvent("price_intelligence_view", { checkId });
         viewedRef.current.price = true;
       } catch {
+        clearTimeout(timeoutId);
         // Lỗi mạng/offline: có thể thử lại.
-        if (!cancelled) {
+        if (!cancelled && !timedOut) {
           setVm(
             buildReportViewModel({
               check: { id: checkId },
@@ -163,6 +179,7 @@ export function ProReport({ checkId, isPro, seed }: { checkId: string; isPro: bo
     })();
     return () => {
       cancelled = true;
+      clearTimeout(timeoutId);
     };
     // seed.score/seed.dealType là props server render 1 lần cho đúng checkId;
     // startedRef chặn chạy lại nên thêm vào deps không gây fetch lần 2.

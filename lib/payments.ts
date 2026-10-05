@@ -92,3 +92,14 @@ export function planFromAmount(amount: number): PlanKey | null {
   if (amount >= PLANS.pro.price) return "pro";
   return null;
 }
+
+// User đã có gói trả phí hay chưa (Free/null = chưa)
+export function isProPlan(plan: string | null | undefined): boolean {
+  return plan === "pro" || plan === "team";
+}
+
+// Trạng thái payment xác nhận thành công. Chỉ có status === "paid" là xác nhận
+// thật — không dựa vào plan hiện tại của user, tránh success giả khi user đã PRO.
+export function isPaymentConfirmed(payment: { status?: unknown } | null | undefined): boolean {
+  return payment != null && payment.status === "paid";
+}

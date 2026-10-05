@@ -17,6 +17,7 @@ export type FunnelEvent =
   | "checkout_started"
   | "payment_completed"
   | "pro_analysis_view"
+  | "pro_analysis_timeout"
   | "score_breakdown_view"
   | "red_flag_view"
   | "price_intelligence_view"

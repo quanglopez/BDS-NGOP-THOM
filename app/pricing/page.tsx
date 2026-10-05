@@ -1,17 +1,32 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { SiteHeader } from "@/components/site/header";
 import { SiteFooter } from "@/components/site/footer";
 import { PaymentBox } from "@/components/pricing/payment-box";
 import { PricingTracker } from "@/components/pricing/pricing-tracker";
-import { quotePrice } from "@/lib/payments";
+import { quotePrice, isProPlan } from "@/lib/payments";
 import { trackEvent } from "@/lib/analytics";
 
 export default function PricingPage() {
   const [months, setMonths] = useState(3);
   const q = quotePrice(months);
+  // Entitlement hiện tại: PRO user thấy plan + hạn dùng, KHÔNG hiển thị CTA nâng cấp giả.
+  const [currentPlan, setCurrentPlan] = useState<string | null>(null);
+  const [planExpiresAt, setPlanExpiresAt] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void fetch("/api/payments/status")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!alive || !data) return;
+        setCurrentPlan(typeof data.plan === "string" ? data.plan : null);
+        setPlanExpiresAt(typeof data.plan_expires_at === "string" ? data.plan_expires_at : null);
+      })
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
 
   const FREE = [
     "20 tin/ngày",
@@ -127,13 +142,33 @@ export default function PricingPage() {
                 </li>
               ))}
             </ul>
-            <a
-              href="#thanh-toan"
-              onClick={() => trackEvent("upgrade_clicked", { from: "pricing_pro", months })}
-              className="relative mt-6 h-[48px] rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[14px] font-black flex items-center justify-center hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
-            >
-              Nâng cấp PRO
-            </a>
+            {isProPlan(currentPlan) ? (
+              <div className="relative mt-6 rounded-[14px] bg-emerald-950/50 border border-emerald-700/50 p-4">
+                <div className="text-[14px] font-black text-emerald-300">
+                  Gói hiện tại: {(currentPlan ?? "pro").toUpperCase()}
+                </div>
+                <p className="mt-1 text-[12px] text-emerald-200">
+                  {planExpiresAt
+                    ? `Hết hạn ${new Date(planExpiresAt).toLocaleDateString("vi-VN")}`
+                    : "Đã kích hoạt"}
+                  . Bạn đang dùng gói này rồi, không cần thanh toán lại.
+                </p>
+                <Link
+                  href="/dashboard"
+                  className="mt-3 inline-flex h-10 px-4 rounded-[10px] bg-emerald-600 text-white text-[13px] font-bold items-center hover:bg-emerald-500 transition"
+                >
+                  Mở Dashboard →
+                </Link>
+              </div>
+            ) : (
+              <a
+                href="#thanh-toan"
+                onClick={() => trackEvent("upgrade_clicked", { from: "pricing_pro", months })}
+                className="relative mt-6 h-[48px] rounded-[12px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[14px] font-black flex items-center justify-center hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
+              >
+                Nâng cấp PRO
+              </a>
+            )}
             <div className="relative mt-3 space-y-1 text-[11px] text-slate-300 text-center">
               <div>✓ Hoàn tiền 100% trong 3 ngày nếu không phù hợp</div>
               <div>✓ Có thể hủy bất kỳ lúc nào</div>
