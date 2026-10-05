@@ -22,6 +22,12 @@ import { planAllowsProAnalysis } from "../lib/quota.ts";
 import { buildEvidencePack } from "../lib/ai/evidence.ts";
 import { analyzeListing } from "../lib/scoring.ts";
 import type { ProAnalysis } from "../lib/ai/schema.ts";
+import { PRO_ANALYSIS_STRICT_JSON_INSTRUCTION, PRO_ANALYSIS_SYSTEM_PROMPT } from "../lib/ai/prompts.ts";
+
+// fetch gốc, để restore sau mỗi stub. Không được shadow bằng biến cục bộ
+// trong stubFetch — nếu có, `finally { globalThis.fetch = realFetch }` sẽ
+// gán lại chính cái stub đang chạy và làm hỏng test kế tiếp.
+const realFetch = globalThis.fetch;
 
 let pass = 0;
 let fail = 0;
@@ -57,6 +63,10 @@ const QWEN_PAID = "qwen/qwen3.8-27b";
 // cả 2 attempt đều provider_truncated, finish_reason=length, output=3000
 // (đúng max_tokens), content bị cắt giữa chừng -> phải tắt reasoning.
 const DEEPSEEK = "deepseek/deepseek-v4.1-flash";
+
+// Slug Qwen 3.7 Flash (ĐANG chạy production): không có structured_outputs.
+// json_object -> validation_failed missing_headline; none -> provider_truncated.
+const QWEN37 = "qwen/qwen3.7-flash";
 
 const SAMPLE_TEXT =
   "Bán gấp! Nhà mặt tiền Thùy Vân 80m2, 4 tầng, ngân hàng thanh lý, giá 5.5 tỷ, sổ hồng riêng, hẻm xe hơi";
@@ -130,7 +140,6 @@ type Responder = (model: string, attempt: number) => { status: number; payload: 
 function stubFetch(responder: Responder): () => Captured[] {
   const captured: Captured[] = [];
   const attemptByModel = new Map<string, number>();
-  const realFetch = globalThis.fetch;
   globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     const model = String(body.model);
@@ -140,7 +149,6 @@ function stubFetch(responder: Responder): () => Captured[] {
     const r = responder(model, n);
     return r.status === 200 ? sseResponse(r.payload, model) : jsonResponse(r.status, r.payload);
   }) as typeof fetch;
-  void realFetch;
   return () => captured;
 }
 
@@ -619,6 +627,10 @@ async function reasoningBudgetTests() {
     assert.deepEqual(reasoningConfigFor(QWEN), { enabled: false });
     assert.deepEqual(reasoningConfigFor(`${QWEN}:free`), { enabled: false });
     assert.deepEqual(reasoningConfigFor(DEEPSEEK), { enabled: false });
+    // Audit 2026-10-04: qwen3.7-flash reasoning.default_enabled=true,
+    // mandatory=false -> phải tắt, nếu không nuốt max_tokens=6000.
+    assert.deepEqual(reasoningConfigFor(QWEN37), { enabled: false }, "Qwen 3.7 Flash reasoning mặc định BẬT -> phải tắt");
+    assert.deepEqual(reasoningConfigFor(`${QWEN37}:free`), { enabled: false }, "biến thể :free cũng tắt");
     assert.equal(reasoningConfigFor(GEMMA), undefined);
     assert.equal(reasoningConfigFor("nvidia/nemotron-3.5-lightning"), undefined);
   });
@@ -912,11 +924,11 @@ async function main() {
     assert.equal(structuredModeFor(NEMO), "none");
   });
 
-  await check("capability: Qwen 3.7 Flash không hỗ trợ structured_outputs -> none, không json_schema", () => {
+  await check("capability: Qwen 3.7 Flash -> json_object_with_instruction (có schema + response_format)", () => {
     // Audit /api/v1/models 2026-10-04: qwen/qwen3.7-flash thiếu structured_outputs.
-    // json_object khiến parseProAnalysis thiếu headline (hip07u, ainr21).
-    assert.equal(structuredModeFor("qwen/qwen3.7-flash"), "none");
-    assert.equal(structuredModeFor("qwen/qwen3.7-flash:free"), "none", "biến thể :free cũng none");
+    // json_object trần -> missing_headline; none -> provider_truncated ở 6000.
+    assert.equal(structuredModeFor("qwen/qwen3.7-flash"), "json_object_with_instruction");
+    assert.equal(structuredModeFor("qwen/qwen3.7-flash:free"), "json_object_with_instruction", "biến thể :free giữ nguyên");
     // Model hỗ trợ json_schema phải giữ nguyên json_schema
     assert.equal(structuredModeFor("qwen/qwen3.8-27b"), "json_schema");
     assert.equal(structuredModeFor("qwen/qwen3.8-27b:free"), "json_schema");
@@ -925,6 +937,72 @@ async function main() {
     assert.equal(structuredModeFor(GEMMA), "json_object");
     assert.equal(structuredModeFor(NEMO), "none");
     assert.equal(structuredModeFor("some/unknown-model"), "json_object");
+  });
+
+  await check("runtime: Qwen 3.7 Flash gửi response_format json_object VÀ schema trong system prompt", async () => {
+    // Chỉ assert REQUEST gửi đi và việc prompt được parse được. `ok()` trả
+    // cleanAnalysis() pre-built nên KHÔNG chứng minh model thật bám schema.
+    const captured = stubFetch(() => badJson());
+    try {
+      await withEnv(
+        { OPENROUTER_API_KEY: "test-key", PRO_ANALYSIS_MODEL: QWEN37, PRO_ANALYSIS_FALLBACK_MODELS: GEMMA },
+        () => generateProAnalysis(sampleEvidence()),
+      );
+      assert.ok(captured().length >= 1, "phải có ít nhất 1 request tới Qwen 3.7");
+      const req = captured().find((c) => c.model === QWEN37);
+      assert.ok(req, "phải có request tới qwen/qwen3.7-flash");
+      assert.deepEqual(req.body.response_format, { type: "json_object" }, "vẫn gửi response_format json_object");
+      const sys = (req.body.messages as { role: string; content: string }[]).find((m) => m.role === "system")!.content;
+      assert.ok(
+        sys.includes(PRO_ANALYSIS_STRICT_JSON_INSTRUCTION),
+        "system prompt phải kèm PRO_ANALYSIS_STRICT_JSON_INSTRUCTION chứa schema",
+      );
+      assert.ok(sys.includes('"headline"'), "schema inline phải có summary.headline");
+      assert.ok(
+        sys.startsWith(PRO_ANALYSIS_SYSTEM_PROMPT),
+        "business prompt phải vẫn nằm nguyên vẹn ở đầu system prompt",
+      );
+      assert.deepEqual(
+        req.body.reasoning,
+        { enabled: false },
+        "reasoning phải tắt để không ăn vào max_tokens=6000",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  await check("runtime: mode json_schema (Qwen 3.8) KHÔNG bị chèn strict instruction", async () => {
+    // json_schema đã ép shape qua response_format nên không cần instruction.
+    const captured = stubFetch(() => badJson());
+    try {
+      await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+      const sys = (captured()[0].body.messages as { role: string; content: string }[]).find((m) => m.role === "system")!.content;
+      assert.ok(
+        !sys.includes(PRO_ANALYSIS_STRICT_JSON_INSTRUCTION),
+        "model json_schema không được chèn strict instruction (không đổi behavior cũ)",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  await check("runtime: mode json_object (Gemma) KHÔNG bị chèn strict instruction", async () => {
+    // Gemma chỉ nhận PRO_ANALYSIS_SYSTEM_PROMPT trần — regression của contract
+    // cũ, đừng gộp với 3.7-flash.
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : badJson()));
+    try {
+      await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+      const gemma = captured().find((c) => c.model === GEMMA);
+      assert.ok(gemma, "phải có request tới Gemma");
+      const sys = (gemma.body.messages as { role: string; content: string }[]).find((m) => m.role === "system")!.content;
+      assert.ok(
+        !sys.includes(PRO_ANALYSIS_STRICT_JSON_INSTRUCTION),
+        "Gemma (json_object) giữ prompt trần như trước",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
   });
 
   console.log("\n== 1. Qwen success ==");

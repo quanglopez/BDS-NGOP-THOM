@@ -265,8 +265,12 @@ export function formatProAnalysisMetrics(m: ProAnalysisMetrics): string {
 
 function baseSystemPrompt(mode: StructuredMode, retry: boolean): string {
   // Model không hỗ trợ response_format -> ép strict JSON bằng prompt.
+  // Model json_object_with_instruction cũng cần schema trong prompt — chỉ ép
+  // "là JSON" thì model free-form hình dạng (validation_failed missing_headline).
   const base =
-    mode === "none" ? `${PRO_ANALYSIS_SYSTEM_PROMPT}\n\n${PRO_ANALYSIS_STRICT_JSON_INSTRUCTION}` : PRO_ANALYSIS_SYSTEM_PROMPT;
+    mode === "none" || mode === "json_object_with_instruction"
+      ? `${PRO_ANALYSIS_SYSTEM_PROMPT}\n\n${PRO_ANALYSIS_STRICT_JSON_INSTRUCTION}`
+      : PRO_ANALYSIS_SYSTEM_PROMPT;
   return retry ? `${base}\n\n${PRO_ANALYSIS_RETRY_INSTRUCTION}` : base;
 }
 

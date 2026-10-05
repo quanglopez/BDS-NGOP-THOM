@@ -100,8 +100,11 @@ Return ONLY valid JSON matching the requested schema.`;
 // Instruction kèm khi retry vì JSON hỏng — chỉ yêu cầu sửa định dạng
 export const PRO_ANALYSIS_RETRY_INSTRUCTION = `Your previous response was not valid JSON. Return ONLY the corrected valid JSON object matching the requested schema, with no explanation, no markdown, and no code fences.`;
 
-// Dùng cho model KHÔNG hỗ trợ response_format (Ling, Nemotron):
-// ép strict JSON bằng prompt, sau đó parse -> validate -> guard như mọi model.
+// Dùng cho structured mode nào không gửi schema ở request body: "none"
+// (model không hỗ trợ response_format — hiện là nemotron-3.5-lightning) và
+// "json_object_with_instruction" (model chỉ hỗ trợ response_format nhưng cần
+// schema trong prompt — hiện là qwen3.7-flash). Rồi parse -> validate -> guard
+// như mọi model.
 export const PRO_ANALYSIS_STRICT_JSON_INSTRUCTION = `Return your answer as a single raw JSON object and nothing else.
 
 Rules:
