@@ -32,6 +32,7 @@ check("plain PostgREST object KHÔNG còn [object Object]", () => {
   assert.ok(out.includes("market_price_stats"), `phải giữ message: ${out}`);
 });
 
+
 check("Error thật vẫn giữ name + message + stack", () => {
   const err = new TypeError("boom");
   const out = describeScanError(err);
