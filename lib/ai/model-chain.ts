@@ -165,8 +165,13 @@ export function structuredModeFor(model: string): StructuredMode {
 // report, tốn 2 attempt + ~20s. Không có "none" trong supported_efforts
 // ([max, high, low]) nên cũng phải tắt bằng enabled:false.
 // Tham chiếu: https://openrouter.ai/docs/guides/reasoning-tokens
+// qwen/qwen3.7-flash: cùng lớp lỗi. Audit /api/v1/models 2026-10-04
+// (reasoning): default_enabled=true, mandatory=false, supports_max_tokens=true.
+// Nên phải tắt, nếu không reasoning ăn vào max_tokens=6000 và phần content
+// bị cắt giữa chừng (provider_truncated, runtime 7qk1tf).
 const REASONING_DISABLED: readonly string[] = [
   "qwen/qwen3.8-27b",
+  "qwen/qwen3.7-flash",
   "deepseek/deepseek-v4.1-flash",
 ];
 

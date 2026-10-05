@@ -22,8 +22,11 @@ import { planAllowsProAnalysis } from "../lib/quota.ts";
 import { buildEvidencePack } from "../lib/ai/evidence.ts";
 import { analyzeListing } from "../lib/scoring.ts";
 import type { ProAnalysis } from "../lib/ai/schema.ts";
-import { PRO_ANALYSIS_STRICT_JSON_INSTRUCTION } from "../lib/ai/prompts.ts";
+import { PRO_ANALYSIS_STRICT_JSON_INSTRUCTION, PRO_ANALYSIS_SYSTEM_PROMPT } from "../lib/ai/prompts.ts";
 
+// fetch gốc, để restore sau mỗi stub. Không được shadow bằng biến cục bộ
+// trong stubFetch — nếu có, `finally { globalThis.fetch = realFetch }` sẽ
+// gán lại chính cái stub đang chạy và làm hỏng test kế tiếp.
 const realFetch = globalThis.fetch;
 
 let pass = 0;
@@ -137,7 +140,6 @@ type Responder = (model: string, attempt: number) => { status: number; payload: 
 function stubFetch(responder: Responder): () => Captured[] {
   const captured: Captured[] = [];
   const attemptByModel = new Map<string, number>();
-  const realFetch = globalThis.fetch;
   globalThis.fetch = (async (_url: unknown, init: RequestInit) => {
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     const model = String(body.model);
@@ -147,7 +149,6 @@ function stubFetch(responder: Responder): () => Captured[] {
     const r = responder(model, n);
     return r.status === 200 ? sseResponse(r.payload, model) : jsonResponse(r.status, r.payload);
   }) as typeof fetch;
-  void realFetch;
   return () => captured;
 }
 
@@ -626,6 +627,10 @@ async function reasoningBudgetTests() {
     assert.deepEqual(reasoningConfigFor(QWEN), { enabled: false });
     assert.deepEqual(reasoningConfigFor(`${QWEN}:free`), { enabled: false });
     assert.deepEqual(reasoningConfigFor(DEEPSEEK), { enabled: false });
+    // Audit 2026-10-04: qwen3.7-flash reasoning.default_enabled=true,
+    // mandatory=false -> phải tắt, nếu không nuốt max_tokens=6000.
+    assert.deepEqual(reasoningConfigFor(QWEN37), { enabled: false }, "Qwen 3.7 Flash reasoning mặc định BẬT -> phải tắt");
+    assert.deepEqual(reasoningConfigFor(`${QWEN37}:free`), { enabled: false }, "biến thể :free cũng tắt");
     assert.equal(reasoningConfigFor(GEMMA), undefined);
     assert.equal(reasoningConfigFor("nvidia/nemotron-3.5-lightning"), undefined);
   });
@@ -935,37 +940,65 @@ async function main() {
   });
 
   await check("runtime: Qwen 3.7 Flash gửi response_format json_object VÀ schema trong system prompt", async () => {
-    const captured = stubFetch((m) => ok(m));
+    // Chỉ assert REQUEST gửi đi và việc prompt được parse được. `ok()` trả
+    // cleanAnalysis() pre-built nên KHÔNG chứng minh model thật bám schema.
+    const captured = stubFetch(() => badJson());
     try {
-      const out = await withEnv(
+      await withEnv(
         { OPENROUTER_API_KEY: "test-key", PRO_ANALYSIS_MODEL: QWEN37, PRO_ANALYSIS_FALLBACK_MODELS: GEMMA },
         () => generateProAnalysis(sampleEvidence()),
       );
-      assert.equal(captured().length, 1);
-      assert.deepEqual(captured()[0].body.response_format, { type: "json_object" }, "vẫn gửi response_format json_object");
-      const sys = (captured()[0].body.messages as { role: string; content: string }[])[0].content;
+      assert.ok(captured().length >= 1, "phải có ít nhất 1 request tới Qwen 3.7");
+      const req = captured().find((c) => c.model === QWEN37);
+      assert.ok(req, "phải có request tới qwen/qwen3.7-flash");
+      assert.deepEqual(req.body.response_format, { type: "json_object" }, "vẫn gửi response_format json_object");
+      const sys = (req.body.messages as { role: string; content: string }[]).find((m) => m.role === "system")!.content;
       assert.ok(
         sys.includes(PRO_ANALYSIS_STRICT_JSON_INSTRUCTION),
         "system prompt phải kèm PRO_ANALYSIS_STRICT_JSON_INSTRUCTION chứa schema",
       );
       assert.ok(sys.includes('"headline"'), "schema inline phải có summary.headline");
-      // Parser vẫn nhận được report đúng schema (không fallback)
-      assert.equal(out.fromFallback, false);
-      assert.equal(out.metrics.validation_failed, false);
-      assert.ok(out.analysis.summary.headline.length > 0, "summary.headline phải có nội dung");
+      assert.ok(
+        sys.startsWith(PRO_ANALYSIS_SYSTEM_PROMPT),
+        "business prompt phải vẫn nằm nguyên vẹn ở đầu system prompt",
+      );
+      assert.deepEqual(
+        req.body.reasoning,
+        { enabled: false },
+        "reasoning phải tắt để không ăn vào max_tokens=6000",
+      );
     } finally {
       globalThis.fetch = realFetch;
     }
   });
 
-  await check("runtime: model KHÔNG phải Qwen 3.7 -> system prompt không bị chèn schema", async () => {
-    const captured = stubFetch((m) => ok(m));
+  await check("runtime: mode json_schema (Qwen 3.8) KHÔNG bị chèn strict instruction", async () => {
+    // json_schema đã ép shape qua response_format nên không cần instruction.
+    const captured = stubFetch(() => badJson());
     try {
       await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
-      const sys = (captured()[0].body.messages as { role: string; content: string }[])[0].content;
+      const sys = (captured()[0].body.messages as { role: string; content: string }[]).find((m) => m.role === "system")!.content;
       assert.ok(
         !sys.includes(PRO_ANALYSIS_STRICT_JSON_INSTRUCTION),
         "model json_schema không được chèn strict instruction (không đổi behavior cũ)",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  await check("runtime: mode json_object (Gemma) KHÔNG bị chèn strict instruction", async () => {
+    // Gemma chỉ nhận PRO_ANALYSIS_SYSTEM_PROMPT trần — regression của contract
+    // cũ, đừng gộp với 3.7-flash.
+    const captured = stubFetch((m) => (m === QWEN ? rateLimited() : badJson()));
+    try {
+      await withEnv(CHAIN_ENV, () => generateProAnalysis(sampleEvidence()));
+      const gemma = captured().find((c) => c.model === GEMMA);
+      assert.ok(gemma, "phải có request tới Gemma");
+      const sys = (gemma.body.messages as { role: string; content: string }[]).find((m) => m.role === "system")!.content;
+      assert.ok(
+        !sys.includes(PRO_ANALYSIS_STRICT_JSON_INSTRUCTION),
+        "Gemma (json_object) giữ prompt trần như trước",
       );
     } finally {
       globalThis.fetch = realFetch;
