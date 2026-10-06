@@ -50,13 +50,16 @@ export function formatAiGeneratedAt(iso: string | null | undefined): string | nu
   const t = Date.parse(iso);
   if (!Number.isFinite(t)) return null;
   try {
-    return new Intl.DateTimeFormat("vi-VN", {
+    const parts = new Intl.DateTimeFormat("vi-VN", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric",
       hour: "2-digit",
       minute: "2-digit",
-    }).format(new Date(t));
+      hour12: false,
+    }).formatToParts(new Date(t));
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    return `${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")}`;
   } catch {
     return null;
   }
