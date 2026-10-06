@@ -1,11 +1,21 @@
 "use client";
 
+import { useState } from "react";
+import { Play } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 
 // Hero: lợi ích thực tế cho môi giới + CTA chính duy nhất.
 // Giữ nguyên wording CTA, id neo (#kiem-tra / #demo) và tên sự kiện đo lường —
 // đổi một trong ba là mất dữ liệu phễu hoặc gãy liên kết.
+const YOUTUBE_INTRO_ID = "C14TG2CZxDQ";
+
 export function Hero() {
+  const [playing, setPlaying] = useState(false);
+
+  const start = () => {
+    setPlaying(true);
+    trackEvent("demo_started", { from: "hero_video" });
+  };
   return (
     <section className="relative overflow-hidden bg-navy-900">
       <div className="absolute inset-0 bg-gradient-to-br from-navy-800 via-navy-700 to-navy-900" />
@@ -71,6 +81,31 @@ export function Hero() {
           <p className="mt-3 text-small text-slate-400">
             Không cần thẻ • Đăng nhập Google trong 10 giây • Quét 100 tin/lần là tính năng PRO
           </p>
+
+          <div className="mt-8 overflow-hidden rounded-panel border border-white/15 bg-navy-800/60 shadow-navy">
+            <div className="relative w-full" style={{ aspectRatio: "16 / 9" }}>
+              {playing ? (
+                <iframe
+                  src={`https://www.youtube.com/embed/${YOUTUBE_INTRO_ID}?autoplay=1&rel=0`}
+                  title="Giới thiệu CheckBDS.online"
+                  allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+                  allowFullScreen
+                  className="absolute inset-0 h-full w-full border-0"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={start}
+                  aria-label="Phát video giới thiệu CheckBDS"
+                  className="group absolute inset-0 flex items-center justify-center bg-gradient-to-br from-navy-800 via-navy-700 to-navy-900"
+                >
+                  <span className="flex h-[64px] w-[64px] items-center justify-center rounded-full bg-gold-base shadow-lift transition-transform duration-micro ease-cb group-hover:scale-105">
+                    <Play size={24} strokeWidth={1.75} aria-hidden="true" className="translate-x-[2px] fill-navy-900 text-navy-900" />
+                  </span>
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </section>
