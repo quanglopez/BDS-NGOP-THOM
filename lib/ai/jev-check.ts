@@ -146,14 +146,55 @@ export async function callJev(key: string, body: unknown, requestId: string, log
   let lastError = "";
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
+      const startedAt = Date.now();
       const res = await callJevOnce(key, body, TIMEOUT_MS);
-      if (res.ok || (res.status >= 400 && res.status < 500)) return res;
-      lastError = `status=${res.status} body=${(await res.text()).slice(0, 300)}`;
-      console.warn(`[check:${requestId}] JEV_RETRY attempt=${attempt} ${lastError} ${logPrefix}`);
+      const latencyMs = Date.now() - startedAt;
+      if (res.ok || (res.status >= 400 && res.status < 500)) {
+        // FORENSICS (Phase 7): log metadata để đối chiếu score variance.
+        // KHÔNG log raw response body, request body, Authorization, key,
+        // original text hay contact — chỉ hash + metadata an toàn.
+        // Mỗi provider attempt được phân biệt bởi attempt=1/2 trong log.
+        const cloned = res.clone();
+        const rawText = await cloned.text().catch(() => "");
+        const rawHash = rawText ? await sha256Hex(rawText) : "";
+        const inputHash = await sha256Hex(JSON.stringify(body ?? {}));
+        // Provider có thể trả model version / provider request ID trong
+        // headers — chỉ log nếu an toàn (chữ-số/gạch/chấm, ≤128 ký tự).
+        const providerModel = safeHeader(res.headers.get("x-model") ?? res.headers.get("x-model-version"));
+        const providerRequestId = safeHeader(
+          res.headers.get("x-request-id") ?? res.headers.get("request-id"),
+        );
+        console.warn(
+          `[jev:forensics] attempt=${attempt} request_id=${requestId} ` +
+            `input_hash=${inputHash} raw_response_hash=${rawHash} ` +
+            `model=jev-latest scoring_code_version=jev-v1 ` +
+            `latency_ms=${latencyMs} response_bytes=${rawText.length} ` +
+            `provider_model=${providerModel ?? "NOT_AVAILABLE"} ` +
+            `provider_request_id=${providerRequestId ?? "NOT_AVAILABLE"} ` +
+            `${logPrefix}`,
+        );
+      }
+      return res;
     } catch (e) {
       lastError = e instanceof Error ? e.name : "fetch_error";
       console.warn(`[check:${requestId}] JEV_RETRY attempt=${attempt} error=${lastError} ${logPrefix}`);
     }
   }
   throw new Error(`Jev không phản hồi sau 2 lần thử (${lastError})`);
+}
+
+// SHA-256 hex (Web Crypto API — async, an toàn trong Node 18+/edge).
+// Dùng cho forensic hash: input canonical + raw response.
+export async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Chỉ nhận header value an toàn: chữ-số/gạch/chấm/thước.
+// Chứa ký tự lạ (có thể là token/PII) -> NOT_AVAILABLE.
+export function safeHeader(value: string | null): string | null {
+  if (!value) return null;
+  if (!/^[A-Za-z0-9._\-]{1,128}$/.test(value)) return null;
+  return value;
 }
