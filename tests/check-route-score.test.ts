@@ -42,9 +42,13 @@ function recordingSupabase() {
     select: () => checksQuery,
     eq: () => checksQuery,
     gte: () => checksQuery,
+    order: () => checksQuery,
+    limit: () => checksQuery,
+    // Cache lookup mặc định MISS — test cache riêng có fake riêng.
+    maybeSingle: async () => ({ data: null, error: null }),
     single: async () => ({ data: { id: "check-1" }, error: null }),
     insert: (payload: Record<string, unknown>) => {
-      inserts.push(payload);
+      inserts.push({ table: "checks", ...payload });
       return checksQuery;
     },
     update: (patch: Record<string, unknown>) => {

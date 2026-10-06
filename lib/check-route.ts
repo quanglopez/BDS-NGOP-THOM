@@ -14,7 +14,8 @@ import { extractPhone } from "@/lib/phone";
 import { extractBedrooms } from "@/lib/bedrooms";
 import { resolveAreaM2 } from "@/lib/area";
 import { analyzeListing, fromApiResponse, SCORING_CODE_VERSION } from "@/lib/scoring";
-import { CHECK_QUESTIONS, callJev, checkInvestmentVerdict, finiteOrNull, ngopPercent, normalizeDealType, noulPercent, score0to4ToHundred } from "@/lib/ai/jev-check";
+import { callJev, checkInvestmentVerdict, finiteOrNull, ngopPercent, normalizeDealType, noulPercent, safeHeader, score0to4ToHundred } from "@/lib/ai/jev-check";
+import { canonicalJevRequest, scoringCacheKey } from "@/lib/scoring-cache";
 import type { JevAnswer } from "@/lib/ai/jev-check";
 import { buildScoringSnapshot } from "@/lib/score-snapshot";
 import { resolveListingGeo } from "@/lib/geo/url-parser";
@@ -178,18 +179,154 @@ export async function handleCheck(req: NextRequest, deps: CheckDeps): Promise<Ne
     const bedrooms = extractBedrooms(text);
 
     let jevRes: Response;
-    try {
-      jevRes = await deps.callJev(
-        JEV_KEY,
+    // --- Score cache read-through ------------------------------------------
+    // Key = SHA-256(JSON canonical Jev request + SCORING_CODE_VERSION).
+    // Cùng tin + cùng version code chấm = reuse score đã có, KHÔNG gọi
+    // Jev lần hai. Scope theo user_id để không rò report/PII giữa account.
+    // Hit: reuse score, KHÔNG gọi Jev — nhưng vẫn tạo 1 history row
+    // (key NULL) nên vẫn tính 1 lượt quota/credit như check thường.
+    const jevState = `Khu vực: ${provinceLabel(detectedProvince)}\n${text.slice(0, 5900)}`;
+    const canonical = canonicalJevRequest(jevState);
+    const cacheKey = await scoringCacheKey(jevState);
+
+    const lookupCacheRow = async (): Promise<Record<string, unknown> | null> => {
+      try {
+        const { data, error } = await supabase
+          .from("checks")
+          .select("id, seo_slug, score, deal_type, is_ngop, province, price_billion, area_m2, bedrooms, created_at, jev_deal_confidence, jev_is_ngop, jev_legal_safety, jev_location_growth, jev_liquidity, scoring_snapshot, scoring_code_version, original_text, phone, contact_name, listing_url, provider_model_id")
+          .eq("user_id", user.id)
+          .eq("scoring_cache_key", cacheKey)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (error) {
+          console.warn(`[check:${requestId}] CACHE_LOOKUP_ERROR code=${error.code ?? "unknown"}`);
+          return null;
+        }
+        return (data as Record<string, unknown> | null) ?? null;
+      } catch {
+        // Cache lỗi KHÔNG được làm hỏng check — fail-open sang Jev.
+        return null;
+      }
+    };
+
+    // Geo + slug + trừ credit + quota counter dùng chung cho MISS và HIT:
+    // mỗi lần check thành công (dù hit cache) phải có 1 history row = 1 lượt.
+    const persistExtrasAndMeter = async (checkId: string): Promise<string | null> => {
+      try {
+        const geoResult = await persistCheckGeo(deps.adminClient(), checkId, geo);
+        if (!geoResult.ok) {
+          console.warn(`[check-geo-warning] check=${checkId} error_code=${geoResult.errorCode}`);
+        }
+      } catch (e) {
+        console.warn(`[check-geo-warning] check=${checkId} error_code=${safeErrorCode(e)}`);
+      }
+      let seoSlug: string | null = null;
+      try {
+        seoSlug = buildReportSlug({
+          id: checkId,
+          title: text.split("\n")[0] ?? "",
+          province: detectedProvince,
+          price: typeof priceBillion === "number" && priceBillion > 0 ? priceBillion * 1e9 : null,
+        });
+        const { error: slugError } = await deps.adminClient()
+          .from("checks")
+          .update({ seo_slug: seoSlug })
+          .eq("id", checkId);
+        if (slugError) {
+          seoSlug = null;
+          console.warn(`[check-slug-warning] check=${checkId} error_code=${slugError.code ?? "unknown"}`);
+        }
+      } catch (e) {
+        seoSlug = null;
+        console.warn(`[check-slug-warning] check=${checkId} error_code=${safeErrorCode(e)}`);
+      }
+      if (usingCredit) {
+        await supabase
+          .from("users")
+          .update({ credits: quota.credits - 1 })
+          .eq("id", user.id);
+        quota.credits -= 1;
+      }
+      quota.used += 1;
+      quota.remaining = Math.max(0, limit - quota.used) + quota.credits;
+      return seoSlug;
+    };
+
+    // HIT: reuse scoring result, KHÔNG gọi Jev, nhưng vẫn chèn 1 history
+    // row (scoring_cache_key = NULL → không phá partial unique index,
+    // không tạo cache entry mới) + trừ credit/quota y nhu MISS.
+    const historyRowFromCache = (row: Record<string, unknown>) => ({
+      user_id: user.id,
+      original_text: (row.original_text as string | null) ?? text.slice(0, 6000),
+      score: row.score,
+      deal_type: row.deal_type ?? null,
+      is_ngop: row.is_ngop ?? null,
+      province: row.province ?? detectedProvince,
+      price_billion: row.price_billion ?? priceBillion,
+      area_m2: row.area_m2 ?? areaM2,
+      bedrooms: row.bedrooms ?? bedrooms,
+      phone: row.phone ?? contactPhone,
+      contact_name: row.contact_name ?? contactName,
+      listing_url: row.listing_url ?? listingUrl,
+      scoring_snapshot: row.scoring_snapshot ?? null,
+      scoring_code_version: (row.scoring_code_version as string | null) ?? SCORING_CODE_VERSION,
+      jev_is_ngop: row.jev_is_ngop ?? null,
+      jev_legal_safety: row.jev_legal_safety ?? null,
+      jev_location_growth: row.jev_location_growth ?? null,
+      jev_liquidity: row.jev_liquidity ?? null,
+      jev_deal_confidence: row.jev_deal_confidence ?? null,
+      scoring_cache_key: null,
+      provider_model_id: (row.provider_model_id as string | null) ?? null,
+    });
+
+    const cachedHistoryResponse = async (row: Record<string, unknown>) => {
+      const { data: insertedHit, error: hitError } = await supabase
+        .from("checks")
+        .insert(historyRowFromCache(row))
+        .select("id")
+        .single();
+      if (hitError || !insertedHit?.id) {
+        console.warn(`[check:${requestId}] CHECK_INSERT_ERROR code=${hitError?.code ?? "unknown"}`);
+        return NextResponse.json(
+          { error: "Không lưu được lịch sử check." },
+          { status: 500, headers: CORS },
+        );
+      }
+      const checkId = insertedHit.id as string;
+      const seoSlug = await persistExtrasAndMeter(checkId);
+      return NextResponse.json(
         {
-          model: "jev-latest",
-          // Chèn hint khu vực để AI chấm vị trí/tăng giá đúng tỉnh
-          state: `Khu vực: ${provinceLabel(detectedProvince)}\n${text.slice(0, 5900)}`,
-          questions: CHECK_QUESTIONS,
+          check_id: checkId,
+          seo_slug: seoSlug,
+          investment_score: row.score,
+          deal_type: row.deal_type ?? null,
+          confidence: finiteOrNull(row.jev_deal_confidence),
+          is_ngop: finiteOrNull(row.is_ngop),
+          legal_safety: row.jev_legal_safety == null ? null : noulPercent(row.jev_legal_safety),
+          location_growth: row.jev_location_growth == null ? null : score0to4ToHundred(row.jev_location_growth),
+          liquidity: row.jev_liquidity == null ? null : score0to4ToHundred(row.jev_liquidity),
+          province: (row.province as string | null) ?? detectedProvince,
+          price_billion: (row.price_billion as number | null) ?? priceBillion,
+          area_m2: (row.area_m2 as number | null) ?? areaM2,
+          bedrooms: (row.bedrooms as number | null) ?? bedrooms,
+          analyzed_at: new Date().toISOString(),
+          quota,
+          cached: true,
+          raw: null,
         },
-        requestId,
-        `ip=${ip}`,
+        { headers: CORS },
       );
+    };
+
+    const cachedRow = await lookupCacheRow();
+    if (cachedRow) {
+      console.log(`[check:${requestId}] CACHE_HIT user=${user.id} check=${cachedRow.id} score=${cachedRow.score}`);
+      return cachedHistoryResponse(cachedRow);
+    }
+
+    try {
+      jevRes = await deps.callJev(JEV_KEY, canonical, requestId, `ip=${ip}`);
     } catch (e) {
       console.error(`[check:${requestId}] JEV_UNAVAILABLE ip=${ip}`, e);
       return NextResponse.json(
@@ -286,7 +423,13 @@ export async function handleCheck(req: NextRequest, deps: CheckDeps): Promise<Ne
     );
     const scoringSnapshot = buildScoringSnapshot({ result: mergedResult, dealType });
 
-    const { data: inserted } = await supabase
+    // provider_model_id: model provider thật sự trả (body.model, fallback
+    // header x-model) — audit sau này thấy Jev drift alias mà không cần log.
+    const providerModelId =
+      safeHeader(typeof data.model === "string" ? data.model : null) ??
+      safeHeader(jevRes.headers.get("x-model")) ??
+      null;
+    const { data: inserted, error: insertError } = await supabase
       .from("checks")
       .insert({
         user_id: user.id,
@@ -311,66 +454,26 @@ export async function handleCheck(req: NextRequest, deps: CheckDeps): Promise<Ne
         jev_location_growth: ans.location_growth?.score ?? null,
         jev_liquidity: ans.liquidity?.score ?? null,
         jev_deal_confidence: ans.deal_type?.confidence ?? null,
+        scoring_cache_key: cacheKey,
+        provider_model_id: providerModelId,
       })
       .select("id")
       .single();
+    if (insertError) {
+      console.warn(`[check:${requestId}] CHECK_INSERT_ERROR code=${insertError.code ?? "unknown"}`);
+      if (insertError.code === "23505") {
+        // Request song song cùng tin vừa thắng race insert. Vẫn tạo 1
+        // history-copy row (key NULL) cho request thua: 2 user actions =
+        // 2 quota rows, cache source giữ 1 row duy nhất.
+        const winner = await lookupCacheRow();
+        if (winner) {
+          console.log(`[check:${requestId}] CACHE_RACE_WINNER check=${winner.id}`);
+          return cachedHistoryResponse(winner);
+        }
+      }
+    }
     const checkId: string | null = inserted?.id ?? null;
-
-    // Ghi địa lý RIÊNG, sau khi đã có checkId. Tách khỏi insert chính để thiếu
-    // cột (chưa chạy migration 0014) chỉ mất dữ liệu địa lý, không làm hỏng check.
-    // Cần service role vì bảng checks không có update policy cho user.
-    if (checkId) {
-      try {
-        const geoResult = await persistCheckGeo(deps.adminClient(), checkId, geo);
-        if (!geoResult.ok) {
-          // Log chỉ check id + mã lỗi. KHÔNG log tên/giá/URL/SĐT.
-          console.warn(`[check-geo-warning] check=${checkId} error_code=${geoResult.errorCode}`);
-        }
-      } catch (e) {
-        console.warn(`[check-geo-warning] check=${checkId} error_code=${safeErrorCode(e)}`);
-      }
-    }
-
-    // Slug SEO cho URL /bao-cao/{slug}. Ghi TÁCH RIÊNG, sau khi đã có id
-    // (shortId cần uuid). Bọc try/catch + catch lỗi cột: nếu migration
-    // 0018 chưa chạy, check vẫn tạo bình thường, chỉ mất URL SEO.
-    let seoSlug: string | null = null;
-    if (checkId) {
-      try {
-        seoSlug = buildReportSlug({
-          id: checkId,
-          title: text.split("\n")[0] ?? "",
-          province: detectedProvince,
-          price: typeof priceBillion === "number" && priceBillion > 0 ? priceBillion * 1e9 : null,
-        });
-        const { error: slugError } = await deps.adminClient()
-          .from("checks")
-          .update({ seo_slug: seoSlug })
-          .eq("id", checkId);
-        if (slugError) {
-          // Bất kỳ lỗi ghi nào (thiếu cột, trùng UNIQUE, hết quyền) đều
-          // phải trả null: slug KHÔNG nằm trong DB thì URL đó sẽ 404, và
-          // nếu trùng slug mà vẫn trả thì còn mở NHẦM report người khác.
-          seoSlug = null;
-          // KHÔNG log nội dung tin (PII). Chỉ log id + mã lỗi.
-          console.warn(`[check-slug-warning] check=${checkId} error_code=${slugError.code ?? "unknown"}`);
-        }
-      } catch (e) {
-        seoSlug = null;
-        console.warn(`[check-slug-warning] check=${checkId} error_code=${safeErrorCode(e)}`);
-      }
-    }
-
-    // Nếu check bằng credits thưởng thì trừ 1
-    if (usingCredit) {
-      await supabase
-        .from("users")
-        .update({ credits: quota.credits - 1 })
-        .eq("id", user.id);
-      quota.credits -= 1;
-    }
-    quota.used += 1;
-    quota.remaining = Math.max(0, limit - quota.used) + quota.credits;
+    const seoSlug = checkId ? await persistExtrasAndMeter(checkId) : null;
 
     console.log(
       `[check:${requestId}] OK user=${user.id} score=${invest100} deal=${dealType} ms=${Date.now() - startedAt}`,
@@ -395,6 +498,7 @@ export async function handleCheck(req: NextRequest, deps: CheckDeps): Promise<Ne
         bedrooms,
         analyzed_at: new Date().toISOString(),
         quota,
+        cached: false,
         raw: data,
       },
       { headers: CORS },
