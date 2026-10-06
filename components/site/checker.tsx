@@ -201,7 +201,7 @@ export function Checker() {
                     onClick={() => runExample(i)}
                     disabled={loading}
                     aria-label={`Chạy phân tích bằng tin mẫu ${i + 1}`}
-                    className="inline-flex h-11 items-center gap-1.5 rounded-sm border-2 border-navy-600/25 bg-white px-4 text-small font-bold text-navy transition-colors duration-micro ease-cb hover:border-navy-600 hover:bg-navy-600 hover:text-white disabled:opacity-50"
+                    className="inline-flex h-12 items-center gap-1.5 rounded-sm border-2 border-navy-600/25 bg-white px-4 text-small font-bold text-navy transition-colors duration-micro ease-cb hover:border-navy-600 hover:bg-navy-600 hover:text-white disabled:opacity-50"
                   >
                     <Zap size={14} strokeWidth={1.75} aria-hidden="true" />
                     Thử mẫu {i + 1}
