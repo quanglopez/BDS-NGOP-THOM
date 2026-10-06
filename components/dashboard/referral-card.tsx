@@ -50,7 +50,7 @@ export function ReferralCard() {
             <Button
               type="button"
               onClick={copy}
-              className="h-9 px-4 rounded-full bg-gold text-navy text-[12px] font-bold"
+              className="h-12 px-4 rounded-full bg-gold text-navy text-[12px] font-bold"
             >
               {copied ? "Đã copy" : "Copy link"}
             </Button>
@@ -60,7 +60,7 @@ export function ReferralCard() {
             type="button"
             onClick={load}
             disabled={loading}
-            className="h-10 px-5 rounded-full bg-gold text-navy text-[13px] font-bold"
+            className="h-12 px-5 rounded-full bg-gold text-navy text-[13px] font-bold"
           >
             {loading ? "Đang tạo..." : "Lấy link giới thiệu"}
           </Button>

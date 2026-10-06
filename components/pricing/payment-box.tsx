@@ -241,7 +241,7 @@ export function PaymentBox({ months, onMonthsChange }: { months: number; onMonth
                 type="button"
                 variant="outline"
                 onClick={() => copy("stk", bankAccount)}
-                className="h-10 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
+                className="h-12 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
               >
                 {copied === "stk" ? "Đã copy" : "Sao chép"}
               </Button>
@@ -255,7 +255,7 @@ export function PaymentBox({ months, onMonthsChange }: { months: number; onMonth
                 type="button"
                 variant="outline"
                 onClick={() => copy("amount", String(payment.amount))}
-                className="h-10 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
+                className="h-12 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
               >
                 {copied === "amount" ? "Đã copy" : "Sao chép"}
               </Button>
@@ -268,7 +268,7 @@ export function PaymentBox({ months, onMonthsChange }: { months: number; onMonth
                   type="button"
                   variant="outline"
                   onClick={() => copy("content", payment.content)}
-                  className="h-10 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
+                  className="h-12 px-4 rounded-[10px] shrink-0 text-[12px] font-bold"
                 >
                   {copied === "content" ? "Đã copy" : "Sao chép"}
                 </Button>
@@ -304,7 +304,7 @@ export function PaymentBox({ months, onMonthsChange }: { months: number; onMonth
           </p>
           <Link
             href="/dashboard"
-            className="mt-3 inline-flex h-9 px-4 rounded-full bg-emerald-600 text-white text-[12px] font-bold items-center"
+            className="mt-3 inline-flex h-12 px-4 rounded-full bg-emerald-600 text-white text-[12px] font-bold items-center"
           >
             Mở Dashboard →
           </Link>

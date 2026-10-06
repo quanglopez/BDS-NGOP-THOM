@@ -257,7 +257,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   return (
     <main className="min-h-screen bg-cream">
       <div className="mx-auto max-w-[880px] px-5 md:px-8 py-8 md:py-10">
-        <Link href="/dashboard" className="text-[13px] font-bold text-navy hover:underline">
+        <Link href="/dashboard" className="inline-flex h-12 items-center text-[13px] font-bold text-navy hover:underline">
           ← Về Dashboard
         </Link>
 
@@ -285,7 +285,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label="Mở tin đăng gốc trong tab mới"
-                className="inline-flex min-h-[32px] items-center px-2.5 py-1 rounded-full bg-white border border-slate-200 font-semibold text-navy hover:underline"
+                className="inline-flex min-h-[48px] items-center px-2.5 py-1.5 rounded-full bg-white border border-slate-200 font-semibold text-navy hover:underline"
               >
                 Link nguồn ↗
               </a>

@@ -44,7 +44,7 @@ export function SiteFooter() {
               <div className="text-micro font-bold tracking-widest text-ink-on-navy-faint mb-3">SẢN PHẨM</div>
               <div className="flex flex-col gap-6">
                 {SẢN_PHẨM.map((l) => (
-                  <Link key={l.label} href={l.href} className="-my-3 py-3 hover:text-white transition">
+                  <Link key={l.label} href={l.href} className="-my-3 py-3.5 hover:text-white transition">
                     {l.label}
                   </Link>
                 ))}
@@ -54,7 +54,7 @@ export function SiteFooter() {
               <div className="text-micro font-bold tracking-widest text-ink-on-navy-faint mb-3">HỖ TRỢ</div>
               <div className="flex flex-col gap-6">
                 {HỖ_TRỢ.map((l) => (
-                  <Link key={l.label} href={l.href} className="-my-3 py-3 hover:text-white transition">
+                  <Link key={l.label} href={l.href} className="-my-3 py-3.5 hover:text-white transition">
                     {l.label}
                   </Link>
                 ))}
@@ -64,7 +64,7 @@ export function SiteFooter() {
               <div className="text-micro font-bold tracking-widest text-ink-on-navy-faint mb-3">PHÁP LÝ</div>
               <div className="flex flex-col gap-6">
                 {PHÁP_LÝ.map((l) => (
-                  <Link key={l.label} href={l.href} className="-my-3 py-3 hover:text-white transition">
+                  <Link key={l.label} href={l.href} className="-my-3 py-3.5 hover:text-white transition">
                     {l.label}
                   </Link>
                 ))}

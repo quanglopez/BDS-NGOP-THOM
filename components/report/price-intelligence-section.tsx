@@ -77,7 +77,7 @@ export function PriceIntelligenceSection({ checkId, isPro }: { checkId: string; 
             <Link
               href="/pricing#thanh-toan"
               onClick={() => trackEvent("pro_unlock_click", { checkId, from: "price_intelligence" })}
-              className="mt-3 inline-flex h-10 items-center rounded-[10px] bg-navy px-4 text-[13px] font-black text-white hover:bg-[#112a5a] transition"
+              className="mt-3 inline-flex h-12 items-center rounded-[10px] bg-navy px-4 text-[13px] font-black text-white hover:bg-[#112a5a] transition"
             >
               Mở khóa Pro
             </Link>
