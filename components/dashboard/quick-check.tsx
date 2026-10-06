@@ -208,7 +208,7 @@ export function QuickCheck() {
                   <button
                     type="button"
                     onClick={() => setUpgradeOpen(true)}
-                    className="h-9 px-4 rounded-[10px] bg-navy text-white text-[12px] font-bold"
+                    className="h-12 px-4 rounded-[10px] bg-navy text-white text-[12px] font-bold"
                   >
                     Nâng cấp PRO
                   </button>

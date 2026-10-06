@@ -155,7 +155,7 @@ export default function PricingPage() {
                 </p>
                 <Link
                   href="/dashboard"
-                  className="mt-3 inline-flex h-10 px-4 rounded-[10px] bg-emerald-600 text-white text-[13px] font-bold items-center hover:bg-emerald-500 transition"
+                  className="mt-3 inline-flex h-12 px-4 rounded-[10px] bg-emerald-600 text-white text-[13px] font-bold items-center hover:bg-emerald-500 transition"
                 >
                   Mở Dashboard →
                 </Link>
@@ -192,7 +192,7 @@ export default function PricingPage() {
             </p>
             <Link
               href="/dashboard"
-              className="mt-3 inline-flex h-9 px-4 rounded-[10px] bg-emerald-600 text-white text-[12px] font-bold items-center hover:bg-emerald-500 transition"
+              className="mt-3 inline-flex h-12 px-4 rounded-[10px] bg-emerald-600 text-white text-[12px] font-bold items-center hover:bg-emerald-500 transition"
             >
               Mở Dashboard →
             </Link>

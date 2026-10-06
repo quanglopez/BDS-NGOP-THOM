@@ -126,7 +126,7 @@ export default async function DashboardPage() {
               </div>
               <Link
                 href="/pricing#thanh-toan"
-                className="h-10 px-4 rounded-[10px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[13px] font-bold flex items-center whitespace-nowrap hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
+                className="h-12 px-4 rounded-[10px] bg-gradient-to-r from-[#C9A86A] to-[#d8ba7f] text-navy text-[13px] font-bold flex items-center whitespace-nowrap hover:from-[#d8ba7f] hover:to-[#e3ca92] transition"
               >
                 Nâng cấp ngay →
               </Link>

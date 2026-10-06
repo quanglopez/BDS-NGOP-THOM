@@ -193,7 +193,7 @@ export function CategoryScan({ url }: { url: string }) {
     router.refresh();
   };
 
-  const selCls = "h-10 w-full rounded-[10px] bg-white border border-slate-200 px-2.5 text-[13px]";
+  const selCls = "h-12 w-full rounded-[10px] bg-white border border-slate-200 px-2.5 text-[13px]";
 
   return (
     <div className="mt-4">
@@ -218,7 +218,7 @@ export function CategoryScan({ url }: { url: string }) {
                   onChange={(e) => setPriceMin(e.target.value)}
                   inputMode="decimal"
                   placeholder="vd 2"
-                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                  className="mt-1 h-12 rounded-[10px] bg-white border-slate-200 text-[13px]"
                 />
               </label>
               <label className="text-[11px] font-semibold text-slate-500">
@@ -228,7 +228,7 @@ export function CategoryScan({ url }: { url: string }) {
                   onChange={(e) => setPriceMax(e.target.value)}
                   inputMode="decimal"
                   placeholder="vd 5"
-                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                  className="mt-1 h-12 rounded-[10px] bg-white border-slate-200 text-[13px]"
                 />
               </label>
               <label className="text-[11px] font-semibold text-slate-500">
@@ -238,7 +238,7 @@ export function CategoryScan({ url }: { url: string }) {
                   onChange={(e) => setAreaMin(e.target.value)}
                   inputMode="decimal"
                   placeholder="vd 50"
-                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                  className="mt-1 h-12 rounded-[10px] bg-white border-slate-200 text-[13px]"
                 />
               </label>
               <label className="text-[11px] font-semibold text-slate-500">
@@ -248,7 +248,7 @@ export function CategoryScan({ url }: { url: string }) {
                   onChange={(e) => setAreaMax(e.target.value)}
                   inputMode="decimal"
                   placeholder="vd 120"
-                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                  className="mt-1 h-12 rounded-[10px] bg-white border-slate-200 text-[13px]"
                 />
               </label>
               <label className="text-[11px] font-semibold text-slate-500">
@@ -279,7 +279,7 @@ export function CategoryScan({ url }: { url: string }) {
                   value={wardPick}
                   onChange={(e) => setWardPick(e.target.value)}
                   placeholder="vd Gò Vấp, hoặc để trống theo link"
-                  className="mt-1 h-10 rounded-[10px] bg-white border-slate-200 text-[13px]"
+                  className="mt-1 h-12 rounded-[10px] bg-white border-slate-200 text-[13px]"
                 />
               </label>
             </div>
@@ -288,7 +288,7 @@ export function CategoryScan({ url }: { url: string }) {
                 type="button"
                 onClick={() => void handleScan()}
                 disabled={phase === "scanning" || phase === "checking"}
-                className="h-9 px-4 rounded-[10px] bg-navy text-white text-[12px] font-bold"
+                className="h-12 px-4 rounded-[10px] bg-navy text-white text-[12px] font-bold"
               >
                 Quét lại với bộ lọc
               </Button>
@@ -359,7 +359,7 @@ export function CategoryScan({ url }: { url: string }) {
                   <button
                     type="button"
                     onClick={() => trackEvent("upgrade_clicked", { from: "scan_cap" })}
-                    className="h-8 px-3 rounded-[8px] bg-navy text-white text-[11px] font-bold"
+                    className="h-12 px-3 rounded-[8px] bg-navy text-white text-[11px] font-bold"
                   >
                     Nâng cấp PRO — quét {SCAN_LIMITS.pro} tin/lần
                   </button>
@@ -382,7 +382,7 @@ export function CategoryScan({ url }: { url: string }) {
               type="button"
               onClick={handleCheck}
               disabled={selected.size === 0 || phase === "checking"}
-              className="h-10 px-5 rounded-[10px] bg-gradient-to-r from-navy to-[#16305f] text-white text-[13px] font-bold disabled:opacity-50"
+              className="h-12 px-5 rounded-[10px] bg-gradient-to-r from-navy to-[#16305f] text-white text-[13px] font-bold disabled:opacity-50"
             >
               {phase === "checking"
                 ? `Đang check ${doneCount}/${rows.length}...`

@@ -178,7 +178,7 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <label className="h-9 px-4 rounded-full border border-slate-200 bg-white text-[12px] font-bold text-slate-700 flex items-center cursor-pointer hover:bg-slate-50">
+          <label className="h-12 px-4 rounded-full border border-slate-200 bg-white text-[12px] font-bold text-slate-700 flex items-center cursor-pointer hover:bg-slate-50">
             📁 Chọn file
             <input
               type="file"
@@ -196,7 +196,7 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
             type="button"
             onClick={runBulk}
             disabled={running || rows.length === 0 || (quota?.remaining ?? 1) <= 0}
-            className="h-9 px-5 rounded-full text-[12px] font-bold"
+            className="h-12 px-5 rounded-full text-[12px] font-bold"
           >
             {running ? `Đang check ${doneCount}/${rows.length}...` : `Check ${rows.length} tin`}
           </Button>
@@ -206,7 +206,7 @@ export function BulkCheck({ isPro }: { isPro: boolean }) {
             variant="outline"
             onClick={exportCsv}
             disabled={rows.every((r) => r.score === null)}
-            className="h-9 px-4 rounded-full text-[12px] font-bold"
+            className="h-12 px-4 rounded-full text-[12px] font-bold"
           >
             📊 Xuất Excel (CSV)
           </Button>

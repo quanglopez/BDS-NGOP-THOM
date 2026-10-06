@@ -69,7 +69,7 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
   }, [rows, search, deal, band, province]);
 
   const hasFilter = search.trim() || deal !== "all" || band !== "all" || province !== "all";
-  const sel = "h-9 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-700";
+  const sel = "h-12 rounded-[10px] border border-slate-200 bg-white px-2.5 text-[12px] font-semibold text-slate-700";
 
   return (
     <div className="mt-8">
@@ -86,7 +86,7 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Tìm trong nội dung tin..."
-          className="h-9 w-full sm:w-[240px] rounded-[10px] border border-slate-200 bg-white px-3 text-[12px]"
+          className="h-12 w-full sm:w-[240px] rounded-[10px] border border-slate-200 bg-white px-3 text-[12px]"
         />
         <select value={deal} onChange={(e) => setDeal(e.target.value)} className={sel}>
           <option value="all">Tất cả loại kèo</option>
@@ -120,7 +120,7 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
               setBand("all");
               setProvince("all");
             }}
-            className="h-9 px-3 rounded-[10px] text-[12px] font-bold text-navy hover:bg-slate-100"
+            className="h-12 px-3 rounded-[10px] text-[12px] font-bold text-navy hover:bg-slate-100"
           >
             Xoá lọc
           </button>
@@ -210,7 +210,7 @@ export function HistoryTable({ rows }: { rows: CheckRow[] }) {
                       <td className="px-3 py-3.5 whitespace-nowrap">
                         <a
                           href={reportUrl(r.id, r.seo_slug)}
-                          className="inline-flex h-8 px-3 rounded-[10px] bg-navy text-white text-[11px] font-bold items-center hover:bg-[#112a5a] transition"
+                          className="inline-flex h-12 px-3 rounded-[10px] bg-navy text-white text-[11px] font-bold items-center hover:bg-[#112a5a] transition"
                         >
                           Xem phân tích →
                         </a>

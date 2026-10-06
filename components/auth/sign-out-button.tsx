@@ -19,7 +19,7 @@ export function SignOutButton() {
       type="button"
       variant="outline"
       onClick={handleSignOut}
-      className="h-9 px-4 rounded-full text-[12px] font-bold"
+      className="h-12 px-4 rounded-full text-[12px] font-bold"
     >
       Đăng xuất
     </Button>
