@@ -37,6 +37,9 @@ export function Hero() {
               1 phút
             </span>
           </h1>
+          <p className="mt-2 inline-flex items-center rounded-full border border-gold-base/40 bg-gold-base/10 px-3 py-1 text-[12px] font-bold text-gold-base">
+            Tính năng PRO — Bulk Check và quét cả trang danh mục
+          </p>
 
           <p className="mt-4 font-display text-h3 font-bold text-slate-100">
             Biết tin nào đáng gọi chủ nhà trước.

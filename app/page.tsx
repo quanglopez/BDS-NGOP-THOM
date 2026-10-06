@@ -16,7 +16,7 @@ import { SiteFooter } from "@/components/site/footer";
 import { HomePageTracker } from "@/components/site/home-tracker";
 
 export const metadata: Metadata = {
-  title: "CheckBDS.online – Lọc 100 tin BĐS trong 1 phút",
+  title: "CheckBDS.online – Lọc 100 tin BĐS trong 1 phút (PRO)",
   description:
     "Biết tin nào đáng gọi chủ nhà trước. CheckBDS phân tích giá, vị trí, pháp lý, thanh khoản và dấu hiệu bán gấp từ link Nhà Tốt/Chợ Tốt hoặc nội dung tin rao. Miễn phí 20 tin/ngày.",
   // Canonical khai ở từng route, không đặt ở root layout — xem `app/layout.tsx`.
