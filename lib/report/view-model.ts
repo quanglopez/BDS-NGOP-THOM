@@ -495,6 +495,8 @@ export interface CheckRecord {
   original_text?: string | null;
   listing_url?: string | null;
   created_at?: string | null;
+  /** Mốc AI tạo report (checks.ai_generated_at). null = chưa biết. */
+  ai_generated_at?: string | null;
 }
 
 export interface ReportViewModel {
@@ -512,6 +514,9 @@ export interface ReportViewModel {
   price: PriceIntelligenceView;
   images: ImageBoard;
   entitlement: Entitlement;
+  /** Mốc AI tạo report (checks.ai_generated_at). null = chưa biết —
+   *  UI không tự tạo timestamp, chỉ hiện khi backend ghi thật. */
+  aiGeneratedAt: string | null;
   /** Câu chữ đã sẵn sàng cho AI section, null = chưa có. */
   proSummary: { headline: string; text: string; confidence: ConfidenceView } | null;
   limitations: string[];
@@ -610,6 +615,12 @@ export function buildReportViewModel(input: ReportViewModelInput = {}): ReportVi
     missingData,
     evidence,
     price,
+    aiGeneratedAt:
+      typeof check?.ai_generated_at === "string" &&
+      check.ai_generated_at.trim() !== "" &&
+      Number.isFinite(Date.parse(check.ai_generated_at))
+        ? check.ai_generated_at
+        : null,
     images: buildImageBoard(input.images),
     entitlement: buildEntitlement({ plan: input.plan }),
     proSummary: input.proAnalysis

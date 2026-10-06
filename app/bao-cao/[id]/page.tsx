@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { effectivePlan } from "@/lib/quota";
 import { fmtVnd } from "@/lib/price/format";
+import { formatAiGeneratedAt } from "@/lib/format";
 import { parseReportRef } from "@/lib/report/slug";
 import { buildReportViewModel } from "@/lib/report/view-model";
 import { parseScoringSnapshot } from "@/lib/score-snapshot";
@@ -37,6 +38,7 @@ interface ReportRow {
   jev_deal_confidence?: number | null;
   scoring_snapshot?: unknown;
   analysis_json?: unknown;
+  ai_generated_at?: string | null;
 }
 
 // Cột numeric của Postgres trả về string qua PostgREST — ép về number.
@@ -123,6 +125,7 @@ const FRESHNESS_DISPLAY: Record<string, string> = {
   stale: "Dữ liệu đã cũ (> 14 ngày)",
   unknown: "Chưa có mốc thời gian",
 };
+
 // MỘT route duy nhất cho cả hai dạng URL:
 //   /bao-cao/{uuid}       — URL cũ, report tạo trước migration 0018
 //   /bao-cao/{seo_slug}   — URL SEO, report mới
@@ -217,6 +220,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       original_text: row.original_text,
       listing_url: row.listing_url,
       created_at: row.created_at,
+      ai_generated_at: (row.ai_generated_at ?? null) as string | null,
     },
     evidenceSignals,
     plan,
@@ -285,6 +289,17 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               >
                 Link nguồn ↗
               </a>
+            )}
+            {/* AI timestamp: chỉ hiện khi backend ghi thật mốc
+                checks.ai_generated_at. null -> không render gì
+                (không crash, không tự tạo mốc). */}
+            {formatAiGeneratedAt(vm.aiGeneratedAt) && (
+              <span
+                className="inline-flex min-h-[32px] items-center px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 font-semibold text-slate-600"
+                title="Mốc AI tạo phân tích cho report này"
+              >
+                🤖 {formatAiGeneratedAt(vm.aiGeneratedAt)}
+              </span>
             )}
             {/* Freshness: chỉ hiện khi có mốc thời gian thật. "unknown" = chưa
                 có dữ liệu nào để nói tuổi, KHÔNG coi là "vừa cập nhật". */}
