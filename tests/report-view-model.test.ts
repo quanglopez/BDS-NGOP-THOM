@@ -11,6 +11,7 @@ import { strict as assert } from "node:assert";
 import {
   buildEntitlement,
 } from "../lib/report/entitlement.ts";
+import { formatAiGeneratedAt } from "../lib/format.ts";
 import {
   buildEvidenceBoard,
   buildImageBoard,
@@ -581,6 +582,45 @@ check("thiếu / sai định dạng -> unknown (KHÔNG coi là mới)", () => {
   assert.equal(normalizeFreshness(null), "unknown");
   assert.equal(normalizeFreshness("", 1000), "unknown");
   assert.equal(normalizeFreshness("khong-phai-ngay", 1000), "unknown");
+});
+
+console.log("\n== ai_generated_at: mốc AI thật, null = chưa biết ==");
+
+check("ai_generated_at có -> vm.aiGeneratedAt giữ nguyên chuỗi", () => {
+  const vm = buildReportViewModel({
+    check: { id: "c5", score: 70, deal_type: "ngop_ngon", is_ngop: 60, ai_generated_at: "2026-10-05T09:30:00Z" },
+  });
+  assert.equal(vm.aiGeneratedAt, "2026-10-05T09:30:00Z");
+});
+
+check("ai_generated_at null/empty/rỗng -> null (KHÔNG tự tạo mốc)", () => {
+  for (const bad of [null, undefined, "", "   "]) {
+    const vm = buildReportViewModel({
+      check: { id: "c6", score: 70, deal_type: "ngop_ngon", is_ngop: 60, ai_generated_at: bad as string | null },
+    });
+    assert.equal(vm.aiGeneratedAt, null, `input ${JSON.stringify(bad)} phải cho null`);
+  }
+});
+
+check("ai_generated_at không có field -> null", () => {
+  const vm = buildReportViewModel({ check: { id: "c7", score: 70, deal_type: "ngop_ngon", is_ngop: 60 } });
+  assert.equal(vm.aiGeneratedAt, null);
+});
+
+check("ai_generated_at invalid not-a-date -> null, không throw, không tự tạo mốc", () => {
+  const vm = buildReportViewModel({
+    check: { id: "c8", score: 70, deal_type: "ngop_ngon", is_ngop: 60, ai_generated_at: "not-a-date" },
+  });
+  assert.equal(vm.aiGeneratedAt, null);
+});
+
+check("formatAiGeneratedAt: valid -> dd/mm/yyyy hh:mm; null/invalid -> null", () => {
+  const out = formatAiGeneratedAt("2026-10-06T08:31:00Z");
+  assert.ok(out, "valid phải render");
+  assert.ok(out.includes("06/10/2026"), `thiếu ngày: ${out}`);
+  assert.match(out, /\d{2}:\d{2}/, `thiếu giờ:phút: ${out}`);
+  assert.equal(formatAiGeneratedAt(null), null);
+  assert.equal(formatAiGeneratedAt("not-a-date"), null);
 });
 
 console.log("\n== entitlement ==");

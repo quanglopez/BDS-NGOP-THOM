@@ -42,3 +42,22 @@ export function scoreBadgeClass(score: number | null | undefined): string {
   if (score >= 50) return "bg-amber-400 text-amber-950";
   return "bg-red-500 text-white";
 }
+
+/** Mốc AI tạo report, format vi-VN "dd/mm/yyyy hh:mm". null/invalid -> null
+ *  (UI KHÔNG render, không bao giờ tự tạo mốc). */
+export function formatAiGeneratedAt(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  try {
+    return new Intl.DateTimeFormat("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(t));
+  } catch {
+    return null;
+  }
+}
