@@ -446,7 +446,10 @@ check("AC12. mọi field thiếu đều được liệt kê trong missingData", 
   assert.ok(fields.includes("score"));
   assert.ok(fields.includes("deal_type"));
   assert.ok(fields.includes("is_ngop"));
-  assert.ok(fields.includes("evidence"));
+  // Lý do evidence thiếu chỉ hiện 1 lần qua evidence.reason,
+  // KHÔNG push trùng vào missingData (tránh UI liệt kê 2 lần).
+  assert.ok(!fields.includes("evidence"));
+  assert.ok(vm.evidence.reason && vm.evidence.reason.length > 0, "evidence.reason vẫn phải nói vì sao thiếu");
   for (const m of vm.missingData) {
     assert.ok(m.display.length > 0, "mỗi mục thiếu phải có câu hiển thị");
   }

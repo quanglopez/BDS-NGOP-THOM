@@ -576,9 +576,10 @@ export function buildReportViewModel(input: ReportViewModelInput = {}): ReportVi
   if (price.state === "not_enough_data") {
     missingData.push(missingField("price_reference", price.message ?? "Chưa đủ dữ liệu tham chiếu"));
   }
-  if (!evidence.available) {
-    missingData.push(missingField("evidence", EVIDENCE_UNAVAILABLE_REASON));
-  }
+  // Lý do evidence chưa có chỉ hiển thị 1 lần qua `evidence.reason`
+  // (source hiển thị chính). Không push trùng vào missingData để UI
+  // không liệt kê cùng câu đó 2 lần trong "CHƯA CÓ DỮ LIỆU CHO".
+  // Các field thiếu thật sự khác vẫn được giữ nguyên.
 
   const hasPro = !!input.proAnalysis;
   const incomplete = !score.known || !hasPro || !price.available;
