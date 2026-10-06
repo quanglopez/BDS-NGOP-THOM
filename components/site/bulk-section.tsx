@@ -58,6 +58,10 @@ export function BulkSection() {
               ))}
             </ul>
 
+            <p className="mt-3 text-[12px] text-slate-400">
+              Giới hạn thật: Quét danh mục Free 10 tin/lần, PRO 50 tin/lần — Bulk Check PRO 100 tin/lần.
+            </p>
+
             <div className="mt-7">
               <Link
                 href="/pricing"

@@ -353,7 +353,7 @@ export function CategoryScan({ url }: { url: string }) {
             {scan.truncated && (
               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-[10px] bg-white border border-slate-200 px-3 py-2">
                 <span className="text-[12px] text-slate-600">
-                  Lần quét này chỉ lấy <b className="text-navy">{scan.limit}</b> tin mới nhất theo gói của bạn.
+                  Giới hạn quét: Free {SCAN_LIMITS.free} tin/lần • PRO {SCAN_LIMITS.pro} tin/lần • Bulk Check PRO 100 tin/lần. Lần này lấy <b className="text-navy">{scan.limit}</b> tin mới nhất theo gói của bạn.
                 </span>
                 {scan.limit < SCAN_LIMITS.pro && (
                   <button

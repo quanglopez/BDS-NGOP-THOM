@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Logo } from "@/components/site/logo";
 import { MobileNav, type NavLink } from "@/components/site/mobile-nav";
+import { SignOutButton } from "@/components/auth/sign-out-button";
 import { trackEvent } from "@/lib/analytics";
 
 const NAV: NavLink[] = [
@@ -15,6 +17,16 @@ const NAV: NavLink[] = [
 // Header: nav gọn + CTA chính thống nhất "Dùng miễn phí".
 // Mobile: menu trượt xuống (MobileNav) vì nav desktop bị ẩn dưới `md`.
 export function SiteHeader() {
+  const [loggedIn, setLoggedIn] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    void fetch("/api/payments/status")
+      .then((res) => { if (alive) setLoggedIn(res.ok); })
+      .catch(() => { if (alive) setLoggedIn(false); });
+    return () => { alive = false; };
+  }, []);
+
   return (
     <header className="sticky top-0 z-30 border-b border-line-navy bg-navy-900/90 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between gap-4 px-5 md:px-8">
@@ -35,20 +47,34 @@ export function SiteHeader() {
         </nav>
 
         <div className="flex items-center gap-2 sm:gap-3">
-          <Link
-            href="/login"
-            className="hidden h-11 items-center px-3 text-small font-semibold text-slate-200 transition-colors duration-micro ease-cb hover:text-white sm:inline-flex"
-          >
-            Đăng nhập
-          </Link>
+          {loggedIn ? (
+            <>
+              <Link
+                href="/dashboard"
+                className="hidden h-11 items-center px-3 text-small font-semibold text-slate-200 transition-colors duration-micro ease-cb hover:text-white sm:inline-flex"
+              >
+                Dashboard
+              </Link>
+              <SignOutButton />
+            </>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="hidden h-11 items-center px-3 text-small font-semibold text-slate-200 transition-colors duration-micro ease-cb hover:text-white sm:inline-flex"
+              >
+                Đăng nhập
+              </Link>
 
-          <Link
-            href="/#kiem-tra"
-            onClick={() => trackEvent("cta_clicked", { cta: "header_primary" })}
-            className="flex h-11 items-center rounded-md bg-gold-base px-5 text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
-          >
-            Dùng miễn phí
-          </Link>
+              <Link
+                href="/#kiem-tra"
+                onClick={() => trackEvent("cta_clicked", { cta: "header_primary" })}
+                className="flex h-11 items-center rounded-md bg-gold-base px-5 text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
+              >
+                Dùng miễn phí
+              </Link>
+            </>
+          )}
 
           <MobileNav links={NAV} />
         </div>
