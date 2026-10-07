@@ -97,11 +97,19 @@ export function Hero() {
                   type="button"
                   onClick={start}
                   aria-label="Phát video giới thiệu CheckBDS"
-                  className="group absolute inset-0 flex items-center justify-center bg-gradient-to-br from-navy-800 via-navy-700 to-navy-900"
+                  className="group absolute inset-0 flex items-center justify-center overflow-hidden bg-navy-900"
+                  style={{
+                    backgroundImage:
+                      "url(https://i.ytimg.com/vi/C14TG2CZxDQ/maxresdefault.jpg)",
+                    backgroundSize: "cover",
+                    backgroundPosition: "center",
+                  }}
                 >
-                  <span className="flex h-[64px] w-[64px] items-center justify-center rounded-full bg-gold-base shadow-lift transition-transform duration-micro ease-cb group-hover:scale-105">
-                    <Play size={24} strokeWidth={1.75} aria-hidden="true" className="translate-x-[2px] fill-navy-900 text-navy-900" />
+                  <span className="absolute inset-0 bg-navy-900/45 transition-colors duration-micro ease-cb group-hover:bg-navy-900/35" />
+                  <span className="relative flex h-[72px] w-[72px] items-center justify-center rounded-full bg-gold-base shadow-lift transition-transform duration-micro ease-cb group-hover:scale-105">
+                    <Play size={26} strokeWidth={1.75} aria-hidden="true" className="translate-x-[2px] fill-navy-900 text-navy-900" />
                   </span>
+                  <span className="sr-only">Phát video giới thiệu CheckBDS</span>
                 </button>
               )}
             </div>
