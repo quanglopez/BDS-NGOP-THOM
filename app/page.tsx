@@ -25,7 +25,7 @@ export const metadata: Metadata = {
 
 // Landing theo thứ tự phễu: Hero -> Check (sản phẩm thật) -> Báo cáo AI -> Lợi ích
 // -> 3 bước -> Bulk -> Social proof -> Free/Pro -> Video demo -> FAQ -> CTA cuối.
-// Báo cáo AI lên ngay sau ô check vì đó là thứ chứng minh giá trị; video hướng dẫn là
+// Báo cáo AI lên ngay sau ô check vì đó là thứ chứng minh giá trị; video Loom là
 // nội dung thụ động nên hạ xuống dưới pricing thay vì chặn ngay sau sản phẩm.
 export default function HomePage() {
   return (
