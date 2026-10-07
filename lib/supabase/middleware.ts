@@ -30,12 +30,20 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
+  // Destination đầy đủ = pathname + query, để sau khi login quay lại ĐÚNG chỗ
+  // (vd /admin?q=test). Đây chỉ là chuỗi nội bộ bắt đầu bằng "/" và luôn được
+  // gắn vào query `next` -> không bao giờ trở thành host của redirect.
+  const destination = path + request.nextUrl.search;
 
   // Chưa đăng nhập mà vào /dashboard hoặc /admin -> đá về /login
   if (!user && (path.startsWith("/dashboard") || path.startsWith("/admin"))) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    url.searchParams.set("next", path);
+    // Gán lại TOÀN BỘ query trong 1 lần: vừa xoá query gốc (nếu không, query của
+    // trang được bảo vệ sẽ rò ra thành tham số top-level của /login, vd
+    // ?q=test&next=... và mất khỏi destination), vừa encode `?`/`&` bên trong
+    // next qua URLSearchParams. Một phép gán nên không phụ thuộc thứ tự.
+    url.search = new URLSearchParams({ next: destination }).toString();
     return NextResponse.redirect(url);
   }
 
