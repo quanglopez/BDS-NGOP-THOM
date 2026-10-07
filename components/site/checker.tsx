@@ -188,10 +188,12 @@ export function Checker() {
               className="w-full min-h-[132px] resize-none rounded-md border-line bg-surface-mist px-4 py-3.5 text-body leading-[1.6] text-ink-900 placeholder:text-ink-500 focus-visible:border-line-strong focus-visible:ring-2 focus-visible:ring-focus-light/25 focus-visible:ring-offset-0"
             />
 
-            {/* Ví dụ: nút thật, bấm là ra kết quả luôn */}
+            {/* Ví dụ: nút thật, bấm là ra kết quả luôn.
+                /api/check chặn anonymous (401 -> preview), nên copy phải nói rõ
+                là cần đăng nhập, không hứa "có kết quả ngay" rồi khóa màn hình. */}
             <div className="mt-3.5">
               <div id="check-hint" className="text-micro font-medium text-ink-600">
-                Chưa có tin? Thử miễn phí với tin mẫu — bấm là có kết quả ngay:
+                Chưa có tin? Thử với tin mẫu — đăng nhập miễn phí là xem kết quả:
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {exampleListings.map((ex, i) => (
