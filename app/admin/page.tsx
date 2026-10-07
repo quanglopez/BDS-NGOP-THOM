@@ -38,7 +38,7 @@ export default async function AdminPage({
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) redirect("/login");
+  if (!user) redirect(`/login?next=${encodeURIComponent(`/admin${query ? `?q=${encodeURIComponent(query)}` : ""}`)}`);
   if (!isAdmin(user.email)) redirect("/dashboard");
 
   const admin = adminClient();
