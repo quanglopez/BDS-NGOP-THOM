@@ -205,7 +205,7 @@ export function PaymentBox({ months, onMonthsChange }: { months: number; onMonth
               <button
                 type="button"
                 onClick={() => setShowQr((s) => !s)}
-                className="text-[13px] font-bold text-navy hover:underline underline-offset-2"
+                className="inline-flex min-h-12 items-center text-[13px] font-bold text-navy hover:underline underline-offset-2"
               >
                 {showQr ? "▾ Ẩn mã QR" : "▸ Hiện mã QR (khi bạn đang dùng máy tính)"}
               </button>

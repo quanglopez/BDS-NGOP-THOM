@@ -151,7 +151,7 @@ export function QuickCheck() {
                 <button
                   type="button"
                   onClick={resetToInput}
-                  className="text-[12px] font-bold text-navy hover:underline underline-offset-2"
+                  className="inline-flex min-h-12 items-center text-[12px] font-bold text-navy hover:underline underline-offset-2"
                 >
                   ← Check tin khác
                 </button>
@@ -215,7 +215,7 @@ export function QuickCheck() {
                   <button
                     type="button"
                     onClick={() => setUpgradeOpen(false)}
-                    className="text-[12px] text-slate-500 hover:text-slate-700"
+                    className="inline-flex min-h-12 items-center text-[12px] text-slate-500 hover:text-slate-700"
                   >
                     Để sau
                   </button>

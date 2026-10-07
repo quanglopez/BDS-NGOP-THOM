@@ -202,7 +202,7 @@ export function CategoryScan({ url }: { url: string }) {
         <button
           type="button"
           onClick={() => setShowFilters((s) => !s)}
-          className="text-[12px] font-semibold text-navy hover:underline underline-offset-2"
+          className="inline-flex min-h-12 items-center text-[12px] font-semibold text-navy hover:underline underline-offset-2"
         >
           {showFilters ? "▾" : "▸"} Bộ lọc (khu vực, giá, diện tích, phòng ngủ)
           {filterSummary() && <span className="ml-2 text-slate-500 font-normal">({filterSummary()})</span>}

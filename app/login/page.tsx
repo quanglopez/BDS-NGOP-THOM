@@ -63,7 +63,7 @@ export default function LoginPage() {
         {/* Cột form */}
         <div className="w-full max-w-[420px] mx-auto md:mx-0">
           <div className="md:hidden text-center mb-6">
-            <Link href="/" className="inline-flex items-center justify-center">
+            <Link href="/" className="inline-flex min-h-12 items-center justify-center">
               <Logo height={30} />
             </Link>
             <p className="mt-3 text-[13px] text-slate-300">Đăng nhập để check kèo BĐS trên toàn quốc</p>

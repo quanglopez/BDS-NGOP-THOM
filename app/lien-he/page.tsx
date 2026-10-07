@@ -42,13 +42,13 @@ export default function ContactPage() {
           <div>
             <LeadForm planInterest="lien-he" />
             <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-[12px] text-slate-500">
-              <Link href="/hoan-tien" className="font-semibold text-navy hover:underline">
+              <Link href="/hoan-tien" className="inline-flex min-h-12 items-center font-semibold text-navy hover:underline">
                 Chính sách hoàn tiền
               </Link>
-              <Link href="/dieu-khoan" className="font-semibold text-navy hover:underline">
+              <Link href="/dieu-khoan" className="inline-flex min-h-12 items-center font-semibold text-navy hover:underline">
                 Điều khoản sử dụng
               </Link>
-              <Link href="/bao-mat" className="font-semibold text-navy hover:underline">
+              <Link href="/bao-mat" className="inline-flex min-h-12 items-center font-semibold text-navy hover:underline">
                 Chính sách bảo mật
               </Link>
             </div>
