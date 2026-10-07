@@ -56,7 +56,7 @@ export function MobileNav({ links }: { links: NavLink[] }) {
         aria-expanded={open}
         aria-controls="cb-mobile-nav"
         aria-label={open ? "Đóng menu" : "Mở menu"}
-        className="md:hidden h-11 w-11 -mr-2 flex items-center justify-center rounded-md text-slate-100 hover:bg-white/10 transition-colors duration-micro ease-cb"
+        className="md:hidden h-12 w-12 -mr-2 flex items-center justify-center rounded-md text-slate-100 hover:bg-white/10 transition-colors duration-micro ease-cb"
       >
         {open ? <X size={22} strokeWidth={1.75} /> : <Menu size={22} strokeWidth={1.75} />}
       </button>
@@ -96,7 +96,7 @@ export function MobileNav({ links }: { links: NavLink[] }) {
                   key={l.label}
                   href={l.href}
                   onClick={close}
-                  className="flex h-11 items-center text-small font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
+                  className="flex h-12 items-center text-small font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
                 >
                   {l.label}
                 </Link>
@@ -104,7 +104,7 @@ export function MobileNav({ links }: { links: NavLink[] }) {
               <Link
                 href="/login"
                 onClick={close}
-                className="flex h-11 items-center text-small font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
+                className="flex h-12 items-center text-small font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
               >
                 Đăng nhập
               </Link>

@@ -148,7 +148,7 @@ export function ShareImage({ result }: { result: AnalysisResult }) {
         type="button"
         onClick={render}
         disabled={busy}
-        className="flex h-9 items-center gap-1.5 rounded-pill bg-gold-base px-4 text-micro font-bold text-navy-900"
+        className="flex h-12 items-center gap-1.5 rounded-pill bg-gold-base px-4 text-micro font-bold text-navy-900"
       >
         <Camera className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         {busy ? "Đang tạo ảnh..." : "Tạo ảnh đăng Zalo/FB"}

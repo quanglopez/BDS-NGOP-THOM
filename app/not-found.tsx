@@ -38,7 +38,7 @@ export default function NotFound() {
         <Link
           href="/"
           aria-label="Về trang chủ CheckBDS.online"
-          className="rounded-sm"
+          className="inline-flex min-h-12 items-center rounded-sm"
         >
           <Logo height={26} />
         </Link>
@@ -81,19 +81,19 @@ export default function NotFound() {
         >
           <Link
             href="/dieu-khoan"
-            className="text-small text-ink-500 transition-colors duration-micro ease-cb hover:text-navy-900"
+            className="inline-flex min-h-12 items-center text-small text-ink-500 transition-colors duration-micro ease-cb hover:text-navy-900"
           >
             Điều khoản sử dụng
           </Link>
           <Link
             href="/bao-mat"
-            className="text-small text-ink-500 transition-colors duration-micro ease-cb hover:text-navy-900"
+            className="inline-flex min-h-12 items-center text-small text-ink-500 transition-colors duration-micro ease-cb hover:text-navy-900"
           >
             Chính sách bảo mật
           </Link>
           <Link
             href="/hoan-tien"
-            className="text-small text-ink-500 transition-colors duration-micro ease-cb hover:text-navy-900"
+            className="inline-flex min-h-12 items-center text-small text-ink-500 transition-colors duration-micro ease-cb hover:text-navy-900"
           >
             Chính sách hoàn tiền
           </Link>

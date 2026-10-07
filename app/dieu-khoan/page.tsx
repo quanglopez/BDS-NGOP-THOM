@@ -11,7 +11,7 @@ export default function TermsPage() {
   return (
     <main className="min-h-screen bg-cream">
       <div className="mx-auto max-w-[760px] px-5 md:px-8 py-12">
-        <Link href="/" className="text-[13px] font-bold text-navy hover:underline">
+        <Link href="/" className="inline-flex min-h-12 items-center text-[13px] font-bold text-navy hover:underline">
           ← Về trang chủ
         </Link>
         <h1 className="mt-6 text-[28px] font-black text-navy">Điều khoản sử dụng</h1>

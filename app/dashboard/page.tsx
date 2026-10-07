@@ -80,13 +80,13 @@ export default async function DashboardPage() {
     <main className="min-h-screen bg-cream">
       <header className="sticky top-0 z-30 backdrop-blur-xl bg-navy/90 border-b border-white/10">
         <div className="mx-auto max-w-[1120px] px-5 md:px-8 h-[64px] flex items-center justify-between gap-3">
-          <Link href="/" className="flex items-center shrink-0">
+          <Link href="/" className="flex min-h-12 items-center shrink-0">
             <Logo height={24} />
           </Link>
           <div className="flex items-center gap-3">
             <nav aria-label="Điều hướng tài khoản" className="flex items-center gap-3 text-small">
-              <Link href="/dashboard" className="text-gold-soft hover:text-white">Dashboard</Link>
-              <Link href="/radar" className="text-gold-soft hover:text-white">Kèo Radar</Link>
+              <Link href="/dashboard" className="inline-flex min-h-12 items-center text-gold-soft hover:text-white">Dashboard</Link>
+              <Link href="/radar" className="inline-flex min-h-12 items-center text-gold-soft hover:text-white">Kèo Radar</Link>
             </nav>
             <SignOutButton />
           </div>

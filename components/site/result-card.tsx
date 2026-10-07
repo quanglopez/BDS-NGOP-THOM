@@ -401,7 +401,7 @@ export function ResultCard({
                 type="button"
                 onClick={onCheckAnother}
                 tabIndex={authRequired ? -1 : 0}
-                className="h-11 rounded-pill bg-navy-900 px-4 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
+                className="h-12 rounded-pill bg-navy-900 px-4 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
               >
                 Check tin khác
               </button>
@@ -409,7 +409,7 @@ export function ResultCard({
                 type="button"
                 onClick={copyAnalysis}
                 tabIndex={authRequired ? -1 : 0}
-                className="h-11 rounded-pill border border-line bg-white px-4 text-small font-bold text-ink-700 transition-colors duration-micro ease-cb hover:bg-surface-mist"
+                className="h-12 rounded-pill border border-line bg-white px-4 text-small font-bold text-ink-700 transition-colors duration-micro ease-cb hover:bg-surface-mist"
               >
                 Copy phân tích
               </button>
@@ -423,7 +423,7 @@ export function ResultCard({
                 {isPro ? (
                   <Link
                     href={reportUrl(checkId, seoSlug)}
-                    className="flex h-11 w-full items-center justify-center rounded-md bg-navy-900 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
+                    className="flex h-12 w-full items-center justify-center rounded-md bg-navy-900 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
                   >
                     Xem phân tích chuyên sâu →
                   </Link>

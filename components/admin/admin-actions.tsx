@@ -37,7 +37,7 @@ export function AdminActions({
     });
   };
 
-  const base = "h-8 px-3 rounded-full text-[11px] font-bold border";
+  const base = "h-12 px-3 rounded-full text-[11px] font-bold border";
 
   return (
     <div className="flex flex-wrap items-center gap-1.5">

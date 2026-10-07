@@ -40,7 +40,7 @@ export function LeadForm({ planInterest }: { planInterest?: string }) {
     return (
       <div className="rounded-[16px] border border-emerald-200 bg-emerald-50 p-6 text-[13px] text-emerald-800">
         <div className="font-black text-[15px]">✓ {message}</div>
-        <a href="/dashboard" className="mt-3 inline-flex h-9 px-4 rounded-full bg-emerald-600 text-white text-[12px] font-bold items-center">
+        <a href="/dashboard" className="mt-3 inline-flex h-12 px-4 rounded-full bg-emerald-600 text-white text-[12px] font-bold items-center">
           Vào Dashboard luôn →
         </a>
       </div>
@@ -60,7 +60,7 @@ export function LeadForm({ planInterest }: { planInterest?: string }) {
           placeholder="Email của bạn"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="h-11 rounded-[12px]"
+          className="h-12 rounded-[12px]"
         />
         <Input
           type="tel"
@@ -68,7 +68,7 @@ export function LeadForm({ planInterest }: { planInterest?: string }) {
           placeholder="SĐT (không bắt buộc)"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          className="h-11 rounded-[12px]"
+          className="h-12 rounded-[12px]"
         />
         {/* Bẫy bot: ẩn với người dùng, bot tự điền sẽ bị server từ chối ngầm */}
         <input
@@ -85,7 +85,7 @@ export function LeadForm({ planInterest }: { planInterest?: string }) {
           type="button"
           onClick={submit}
           disabled={status === "sending" || !email.includes("@")}
-          className="h-11 px-6 rounded-[12px] text-[13px] font-bold"
+          className="h-12 px-6 rounded-[12px] text-[13px] font-bold"
         >
           {status === "sending" ? "Đang gửi..." : "Gửi"}
         </Button>

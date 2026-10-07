@@ -30,7 +30,7 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-30 border-b border-line-navy bg-navy-900/90 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between gap-4 px-5 md:px-8">
-        <Link href="/" className="flex shrink-0 items-center">
+        <Link href="/" className="flex min-h-12 shrink-0 items-center">
           <Logo height={24} />
         </Link>
 
@@ -51,7 +51,7 @@ export function SiteHeader() {
             <>
               <Link
                 href="/dashboard"
-                className="hidden h-11 items-center px-3 text-small font-semibold text-slate-200 transition-colors duration-micro ease-cb hover:text-white sm:inline-flex"
+                className="hidden h-12 items-center px-3 text-small font-semibold text-slate-200 transition-colors duration-micro ease-cb hover:text-white sm:inline-flex"
               >
                 Dashboard
               </Link>
@@ -61,7 +61,7 @@ export function SiteHeader() {
             <>
               <Link
                 href="/login"
-                className="hidden h-11 items-center px-3 text-small font-semibold text-slate-200 transition-colors duration-micro ease-cb hover:text-white sm:inline-flex"
+                className="hidden h-12 items-center px-3 text-small font-semibold text-slate-200 transition-colors duration-micro ease-cb hover:text-white sm:inline-flex"
               >
                 Đăng nhập
               </Link>
@@ -69,7 +69,7 @@ export function SiteHeader() {
               <Link
                 href="/#kiem-tra"
                 onClick={() => trackEvent("cta_clicked", { cta: "header_primary" })}
-                className="flex h-11 items-center rounded-md bg-gold-base px-5 text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
+                className="flex h-12 items-center rounded-md bg-gold-base px-5 text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
               >
                 Dùng miễn phí
               </Link>

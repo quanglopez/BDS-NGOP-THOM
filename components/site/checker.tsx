@@ -254,7 +254,7 @@ export function Checker() {
                     <Link
                       href="/pricing#thanh-toan"
                       onClick={() => trackEvent("upgrade_clicked", { from: "limit_banner" })}
-                      className="inline-flex h-11 items-center rounded-sm bg-navy-900 px-4 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
+                      className="inline-flex h-12 items-center rounded-sm bg-navy-900 px-4 text-small font-bold text-white transition-colors duration-micro ease-cb hover:bg-navy-800"
                     >
                       Nâng cấp PRO →
                     </Link>
@@ -276,7 +276,7 @@ export function Checker() {
                   <button
                     type="button"
                     onClick={resetToInput}
-                    className="inline-flex h-11 shrink-0 items-center text-small font-bold text-navy underline-offset-2 transition-colors duration-micro ease-cb hover:underline"
+                    className="inline-flex h-12 shrink-0 items-center text-small font-bold text-navy underline-offset-2 transition-colors duration-micro ease-cb hover:underline"
                   >
                     ← Check tin khác
                   </button>
@@ -293,7 +293,7 @@ export function Checker() {
             </div>
             <a
               href="/pricing"
-              className="inline-flex min-h-[44px] shrink-0 items-center font-semibold text-navy underline-offset-2 transition-colors duration-micro ease-cb hover:underline"
+              className="inline-flex min-h-12 shrink-0 items-center font-semibold text-navy underline-offset-2 transition-colors duration-micro ease-cb hover:underline"
             >
               Cần check số lượng lớn? Xem gói PRO →
             </a>

@@ -255,9 +255,9 @@ export default async function AdminPage({
               name="q"
               defaultValue={q}
               placeholder="Tìm theo tên / SĐT / id..."
-              className="h-10 flex-1 rounded-[10px] border border-slate-200 px-3 text-[13px]"
+              className="h-12 flex-1 rounded-[10px] border border-slate-200 px-3 text-[13px]"
             />
-            <button className="h-10 px-4 rounded-[10px] bg-navy text-white text-[13px] font-bold">Tìm</button>
+            <button className="h-12 px-4 rounded-[10px] bg-navy text-white text-[13px] font-bold">Tìm</button>
           </form>
 
           <div className="mt-3 overflow-hidden rounded-[18px] border border-slate-200 bg-white">
