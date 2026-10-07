@@ -178,7 +178,7 @@ export function ResultCard({
             <Link
               href={unlockHref}
               onClick={handleUnlock}
-              className="flex h-[46px] shrink-0 items-center justify-center whitespace-nowrap rounded-md bg-gold-base px-6 text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
+              className="flex h-12 shrink-0 items-center justify-center whitespace-nowrap rounded-md bg-gold-base px-6 text-small font-bold text-navy-900 transition-colors duration-micro ease-cb hover:bg-gold-soft"
             >
               Mở khóa báo cáo →
             </Link>
@@ -220,7 +220,7 @@ export function ResultCard({
               <Link
                 href={unlockHref}
                 onClick={handleUnlock}
-                className="flex h-[46px] items-center justify-center rounded-md bg-navy-900 px-6 text-small font-bold text-white shadow-lift transition-colors duration-micro ease-cb hover:bg-navy-800"
+                className="flex h-12 items-center justify-center rounded-md bg-navy-900 px-6 text-small font-bold text-white shadow-lift transition-colors duration-micro ease-cb hover:bg-navy-800"
               >
                 Đăng nhập miễn phí để xem đầy đủ
               </Link>
