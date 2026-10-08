@@ -10,6 +10,9 @@ import { buildReportViewModel } from "@/lib/report/view-model";
 import { parseScoringSnapshot } from "@/lib/score-snapshot";
 import { ProReport, type ReportSeed } from "@/components/report/pro-report";
 import { PriceIntelligenceSection } from "@/components/report/price-intelligence-section";
+import { getWatchlistItemByCheck } from "@/lib/watchlist/data";
+import { WatchlistSaveButton } from "@/components/watchlist/save-button";
+import type { WatchlistStatus } from "@/lib/watchlist/types";
 
 export const metadata: Metadata = {
   title: "Báo cáo phân tích - CheckBDS.online",
@@ -254,6 +257,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   // Entitlement quyết định quyền xem, thay vì so sánh plan tại từng component.
   const canViewPro = vm.entitlement.canViewFullReport;
 
+  // Đã lưu Theo dõi chưa? Đọc DB của user; lỗi/table thiếu -> coi như chưa lưu
+  // (nút lưu vẫn dùng được, không chặn xem report).
+  let savedItem: { status: WatchlistStatus } | null = null;
+  try {
+    const item = await getWatchlistItemByCheck(supabase, user.id, row.id);
+    if (item) savedItem = { status: item.status };
+  } catch {
+    savedItem = null;
+  }
+
   return (
     <main className="min-h-screen bg-cream">
       <div className="mx-auto max-w-[880px] px-5 md:px-8 py-8 md:py-10">
@@ -321,6 +334,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             </span>
           </div>
         </section>
+
+        <WatchlistSaveButton
+          checkId={row.id}
+          initiallySaved={savedItem !== null}
+          initialStatus={savedItem?.status}
+        />
 
         {/* 2. CheckBDS Score — render server. Nhãn/điểm lấy từ adapter:
             score null hiện "—", deal_type null hiện "CHƯA CÓ NHẬN ĐỊNH". */}

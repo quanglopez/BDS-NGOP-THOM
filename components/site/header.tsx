@@ -55,6 +55,12 @@ export function SiteHeader() {
               >
                 Dashboard
               </Link>
+              <Link
+                href="/watchlist"
+                className="hidden h-12 items-center px-3 text-small font-semibold text-slate-200 transition-colors duration-micro ease-cb hover:text-white sm:inline-flex"
+              >
+                Theo dõi
+              </Link>
               <SignOutButton />
             </>
           ) : (
