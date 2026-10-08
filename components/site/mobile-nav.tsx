@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Menu, X, ArrowRight } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 
@@ -10,6 +11,7 @@ export type NavLink = { href: string; label: string };
 // Đường dẫn phụ chỉ có ở mobile — desktop đã vào được qua header + footer.
 const SECONDARY: NavLink[] = [
   { href: "/dashboard", label: "Dashboard" },
+  { href: "/watchlist", label: "Theo dõi" },
   { href: "/lien-he", label: "Liên hệ" },
 ];
 
@@ -23,6 +25,12 @@ const SECONDARY: NavLink[] = [
 export function MobileNav({ links }: { links: NavLink[] }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const pathname = usePathname();
+
+  const isActive = useCallback(
+    (href: string) => pathname === href || pathname.startsWith(`${href}/`),
+    [pathname],
+  );
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -96,7 +104,12 @@ export function MobileNav({ links }: { links: NavLink[] }) {
                   key={l.label}
                   href={l.href}
                   onClick={close}
-                  className="flex h-12 items-center text-small font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
+                  aria-current={isActive(l.href) ? "page" : undefined}
+                  className={`flex h-12 items-center text-small transition-colors duration-micro ease-cb ${
+                    isActive(l.href)
+                      ? "font-semibold text-white"
+                      : "font-medium text-slate-400 hover:text-slate-200"
+                  }`}
                 >
                   {l.label}
                 </Link>
@@ -104,7 +117,12 @@ export function MobileNav({ links }: { links: NavLink[] }) {
               <Link
                 href="/login"
                 onClick={close}
-                className="flex h-12 items-center text-small font-medium text-slate-300 transition-colors duration-micro ease-cb hover:text-white"
+                aria-current={pathname === "/login" ? "page" : undefined}
+                className={`flex h-12 items-center text-small transition-colors duration-micro ease-cb ${
+                  pathname === "/login"
+                    ? "font-semibold text-white"
+                    : "font-medium text-slate-400 hover:text-slate-200"
+                }`}
               >
                 Đăng nhập
               </Link>
