@@ -6,6 +6,9 @@ import {
   parseUserIdFromContent,
   planFromAmount,
   transferContent,
+  DURATIONS,
+  quotePrice,
+  type PlanKey,
 } from "@/lib/payments";
 import { nextExpiry } from "@/lib/quota";
 
@@ -152,10 +155,28 @@ export async function POST(req: NextRequest) {
 
   // Gói mua nhiều tháng ghi trong nội dung CK (NANGCAP {uuid} T12).
   // Có số tháng thì gói Pro — tránh suy theo tiền bị nhầm sang gói Team.
+  // Nhưng số tháng VÀ số tiền phải khớp nhau: không có gói giá số tháng đó, hoặc
+  // tiền ít hơn giá của gói, thì ghi unmatched và KHÔNG nâng gói.
   const months = parseMonthsFromContent(content);
-  const plan = months > 1 ? "pro" : planFromAmount(amount);
-  if (!plan || plan === "free") {
-    return recordUnmatched(userId, "so-tien-chua-du-goi");
+
+  let plan: PlanKey | null;
+  if (months > 1) {
+    // Số tháng phải là gói có giá thật (tránh mọi số tháng đều suy ra gói 1 tháng)
+    const tier = DURATIONS.find((d) => d.months === months);
+    if (!tier) {
+      return recordUnmatched(userId, "thang-khong-co-gia");
+    }
+    // Tiền phải đủ giá gói, so sánh dạng >= để NaN/âm/thiếu đều bị từ chối
+    if (!(amount >= quotePrice(tier.months).total)) {
+      return recordUnmatched(userId, "so-tien-chua-du-goi");
+    }
+    plan = "pro";
+  } else {
+    // Không có số tháng: giữ nguyên luật cũ suy gói theo tiền
+    plan = planFromAmount(amount);
+    if (!plan || plan === "free") {
+      return recordUnmatched(userId, "so-tien-chua-du-goi");
+    }
   }
 
   // Idempotent: cùng một giao dịch có thể được gửi lại nhiều lần
