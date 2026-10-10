@@ -22,7 +22,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Chưa cấu hình SUPABASE_SERVICE_ROLE_KEY" }, { status: 500 });
   }
 
-  const { email, phone, planInterest, website } = await req.json().catch(() => ({}));
+  const { email, phone, planInterest, website, source } = await req.json().catch(() => ({}));
 
   // Honeypot: input ẩn "website" người thật không bao giờ điền, bot thì có.
   // Trả ok giả để bot tưởng thành công, không insert DB.
@@ -47,10 +47,16 @@ export async function POST(req: Request) {
     { auth: { persistSession: false } },
   );
 
+  // source: nguồn lead (landing | legal_quiz | ...). Chỉ nhận chuỗi ngắn đã biết,
+  // không tin client — rơi về "landing" nếu lạ để không làm bẩn dữ liệu phân loại.
+  const KNOWN_SOURCES = ["landing", "legal_quiz"] as const;
+  const cleanSource = KNOWN_SOURCES.includes(source) ? source : "landing";
+
   const { error } = await supabase.from("leads").insert({
     email: cleanEmail,
     phone: cleanPhone || null,
     plan_interest: planInterest ? String(planInterest).slice(0, 20) : null,
+    source: cleanSource,
   });
 
   if (error) {
