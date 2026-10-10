@@ -21,7 +21,8 @@ import { nextExpiry } from "@/lib/quota";
 // Xác thực (chọn 1 trong 4 cách SePay hỗ trợ, cấu hình ở Bước 3 lúc tạo webhook):
 //   1. SEPAY_WEBHOOK_SECRET  -> HMAC-SHA256 qua X-SePay-Signature (khuyến nghị)
 //   2. SEPAY_API_KEY         -> header Authorization: Apikey {key}
-//   3. Cả hai đều rỗng      -> không xác thực (chỉ để test, KHÔNG dùng production)
+//   3. Cả hai đều rỗng      -> TỪ CHỐI mọi request: HTTP 500 "Webhook chưa được cấu hình."
+//      (fail-closed: không đọc body, không parse, không ghi Supabase — xem POST bên dưới)
 // Key/secret của SePay chỉ hiện đầy đủ đúng một lần, mở lại chỉ thấy 4 ký tự cuối.
 
 function ok(body: Record<string, unknown> = {}) {
@@ -83,9 +84,12 @@ export async function POST(req: NextRequest) {
   const apiKey = process.env.SEPAY_API_KEY ?? "";
 
   if (!secret && !apiKey) {
-    console.warn(
-      "[sepay] WARNING: chua dat SEPAY_WEBHOOK_SECRET hoac SEPAY_API_KEY — dang mo webhook khong xac thuc. KHONG dung o production.",
+    // Fail-closed: không có credential thì KHÔNG xử lý giao dịch nào, kể cả khi
+    // payload hợp lệ. Đặt trước req.text() để không đọc body, không parse, không Supabase.
+    console.error(
+      "[sepay] MISCONFIG: chua dat SEPAY_WEBHOOK_SECRET hoac SEPAY_API_KEY — tu choi webhook (fail-closed).",
     );
+    return fail("Webhook chưa được cấu hình.", 500);
   }
 
   // Đọc raw body TRƯỚC khi parse: HMAC ký trên bytes gốc, re-serialize sẽ lệch chữ ký
