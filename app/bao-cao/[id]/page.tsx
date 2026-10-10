@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { effectivePlan } from "@/lib/quota";
 import { fmtVnd } from "@/lib/price/format";
-import { formatAiGeneratedAt } from "@/lib/format";
+import { dealBadgeClass, formatAiGeneratedAt, scoreRingClass } from "@/lib/format";
 import { parseReportRef } from "@/lib/report/slug";
 import { buildReportViewModel } from "@/lib/report/view-model";
 import { parseScoringSnapshot } from "@/lib/score-snapshot";
@@ -343,20 +343,25 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 
         {/* 2. CheckBDS Score — render server. Nhãn/điểm lấy từ adapter:
             score null hiện "—", deal_type null hiện "CHƯA CÓ NHẬN ĐỊNH". */}
-        <section className="mt-4 rounded-[20px] bg-navy text-white p-5 md:p-6 flex items-center gap-5 relative overflow-hidden">
+        <section className="mt-4 rounded-[20px] bg-navy text-white p-5 md:p-6 relative overflow-hidden">
           <div className="absolute -top-16 right-0 w-[220px] h-[220px] bg-gold/15 rounded-full blur-[60px]" />
-          <div className={`w-[84px] h-[84px] shrink-0 rounded-full bg-white border-[6px] flex items-center justify-center relative ${vm.score.known ? "border-emerald-500 text-emerald-700" : "border-slate-300 text-slate-500"}`}>
-            <div className="text-center leading-none">
-              <div className="text-[26px] font-black tracking-tight">{vm.score.known ? vm.score.value : "—"}</div>
-              <div className="text-[10px] font-bold tracking-widest mt-0.5 opacity-70">/100</div>
+          <div className="relative flex min-w-0 items-center gap-4">
+            <div className={`flex h-[84px] w-[84px] shrink-0 items-center justify-center rounded-full border-[6px] bg-white ${scoreRingClass(vm.score.value, vm.dealType.value)}`}>
+              <div className="text-center leading-none">
+                <div className="text-[26px] font-black tracking-tight">{vm.score.known ? vm.score.value : "—"}</div>
+                <div className="mt-0.5 text-[10px] font-bold tracking-widest opacity-70">/100</div>
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold tracking-[0.18em] text-slate-400">CHECKBDS SCORE</div>
+              <div className={`mt-1 inline-flex max-w-full rounded-full px-3 py-1 text-[12px] font-black tracking-wide ${dealBadgeClass(vm.dealType.value)}`}>
+                <span className="truncate">{vm.dealType.display}</span>
+              </div>
             </div>
           </div>
-          <div className="relative">
-            <div className="text-[10px] tracking-[0.18em] font-bold text-slate-400">CHECKBDS SCORE</div>
-            <div className="mt-1 inline-flex px-3 py-1 rounded-full text-[12px] font-black tracking-wide bg-gold text-navy">
-              {vm.dealType.display}
-            </div>
-          </div>
+          <p className="relative mt-4 max-w-[36rem] text-[13px] leading-snug text-slate-300">
+            Điểm hỗ trợ lọc tin, không thay thế việc kiểm tra sổ và quy hoạch.
+          </p>
         </section>
 
         {/* Dữ liệu còn thiếu + nguồn trích dẫn — chỉ hiện khi thật sự thiếu.
