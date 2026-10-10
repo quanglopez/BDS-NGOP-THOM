@@ -101,6 +101,9 @@ export function LegalQuizClient() {
                       name={q.key}
                       value={opt.value}
                       checked={active}
+                      // Radio đã checked không bắn onChange khi click lại.
+                      // Default "Chưa rõ" đã checked sẵn — phải onClick mới tính là đã trả lời.
+                      onClick={() => choose(q.key, opt.value)}
                       onChange={() => choose(q.key, opt.value)}
                       className="h-4 w-4 shrink-0 accent-navy-600"
                     />

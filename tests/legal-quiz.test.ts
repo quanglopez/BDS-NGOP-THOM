@@ -432,6 +432,13 @@ check("source: nút kết quả có gate theo isComplete và disabled thật", (
   assert.ok(src.includes("disabled={!isComplete}"), "nút phải bị disabled khi chưa đủ");
   assert.ok(src.includes("aria-disabled"), "phải có aria-disabled");
   assert.ok(src.includes("Trả lời đủ 12 câu để xem kết quả"), "phải có copy hướng dẫn");
+  // Radio đã checked sẵn (default "Chưa rõ") không bắn onChange khi click lại.
+  // Thiếu onClick thì chọn đúng option mặc định không vào answeredKeys.
+  assert.ok(
+    src.includes("onClick={() => choose(q.key, opt.value)}"),
+    "radio phải onClick: radio đã checked không bắn onChange",
+  );
+  assert.ok(src.includes("onChange={() => choose(q.key, opt.value)}"), "radio vẫn phải onChange");
   // Không được suy completion từ giá trị câu trả lời.
   assert.equal(
     src.includes("UNKNOWN.has"),
@@ -446,6 +453,22 @@ check("source: lead capture không hứa gửi mail ngay", () => {
   assert.equal(src.includes("Đã gửi"), false, "không được nói 'Đã gửi'");
   assert.equal(src.includes("Kiểm tra hộp thư"), false, "không được hứa mail tới ngay");
   assert.ok(src.includes("Đăng ký nhận checklist"), "nút đổi sang đăng ký");
+});
+
+check("source: radio phải có onClick vì radio đã checked không bắn onChange", () => {
+  const src = readFileSync("components/legal-quiz/quiz-client.tsx", "utf8");
+  // Default (EMPTY_ANSWERS) đã checked sẵn option "Chưa rõ" / "Chưa xem" /
+  // "Chưa kiểm tra". Click lại chính option đó không đổi giá trị nên native
+  // radio KHÔNG bắn change event -> choose() không chạy -> answeredKeys không
+  // nhận key -> progress đứng 0/12, user không thể hoàn thành quiz.
+  // onClick có chủ ý lặp choose() với option đúng ra; answeredKeys dùng Set
+  // nên gọi lại là no-op, không double-count.
+  assert.ok(
+    src.includes("onClick={() => choose(q.key, opt.value)}"),
+    "thiếu onClick: chọn option đã checked không tính là đã trả lời",
+  );
+  assert.ok(src.includes('type="radio"'), "phải giữ native radio");
+  assert.ok(src.includes("checked={active}"), "checked state phải vẫn controlled");
 });
 
 console.log("\n== checklist ==");
