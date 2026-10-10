@@ -40,19 +40,13 @@ export function Hero() {
           </div>
 
           <h1 className="font-display text-display text-white">
-            Lọc 100 tin BĐS
-            <br />
-            trong{" "}
-            <span className="bg-gradient-to-r from-gold-base to-gold-soft bg-clip-text text-transparent">
-              1 phút
-            </span>
+            Biết tin nào đáng gọi trước khi mất thời gian gọi.
           </h1>
-          <p className="mt-2 inline-flex items-center rounded-full border border-gold-base/40 bg-gold-base/10 px-3 py-1 text-[12px] font-bold text-gold-base">
-            Tính năng PRO — Bulk Check và quét cả trang danh mục
+          <p className="mt-4 inline-flex max-w-full items-center rounded-full border border-gold-base/40 bg-gold-base/10 px-3 py-1 text-[12px] font-bold leading-snug text-gold-base">
+            PRO: Lọc 100 tin BĐS trong 1 phút
           </p>
-
-          <p className="mt-4 font-display text-h3 font-bold text-slate-100">
-            Biết tin nào đáng gọi chủ nhà trước.
+          <p className="mt-2 text-[12px] font-semibold text-slate-300">
+            Tính năng PRO — Bulk Check và quét cả trang danh mục
           </p>
 
           <p className="mt-3 max-w-[620px] text-body leading-[1.6] text-slate-300">

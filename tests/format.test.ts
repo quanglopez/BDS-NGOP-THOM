@@ -8,7 +8,7 @@
 // tức tin CHƯA được ai phân loại lại hiện như tin đã phân loại là bình thường.
 // Cả null lẫn giá trị lạ giờ đều về cùng nhãn "CHƯA CÓ NHẬN ĐỊNH".
 import { strict as assert } from "node:assert";
-import { dealBadgeClass, dealLabel, DEAL_UNKNOWN_LABEL, scoreBadgeClass } from "../lib/format.ts";
+import { dealBadgeClass, dealLabel, DEAL_UNKNOWN_LABEL, scoreBadgeClass, scoreRingClass } from "../lib/format.ts";
 
 let pass = 0;
 let fail = 0;
@@ -114,6 +114,30 @@ check("ngop_ngon / thom_dau_tu -> emerald", () => {
 check("gia_cao / rui_ro_phap_ly -> red", () => {
   assert.equal(dealBadgeClass("gia_cao"), "bg-red-600 text-white");
   assert.equal(dealBadgeClass("rui_ro_phap_ly"), "bg-red-600 text-white");
+});
+
+console.log("\n== scoreRingClass: rủi ro pháp lý không được nhìn tích cực ==");
+
+check("điểm cao + rủi ro pháp lý -> risk-high, không emerald", () => {
+  const cls = scoreRingClass(92, "rui_ro_phap_ly");
+  assert.equal(cls, "border-risk-high text-risk-high");
+  assert.equal(cls.includes("emerald"), false);
+});
+
+check("điểm cao không rủi ro -> emerald", () => {
+  assert.equal(scoreRingClass(92, "ngop_ngon"), "border-emerald-500 text-emerald-700");
+});
+
+check("điểm giữa -> risk-medium", () => {
+  assert.equal(scoreRingClass(60, "binh_thuong"), "border-risk-medium text-risk-medium");
+});
+
+check("điểm thấp -> risk-high", () => {
+  assert.equal(scoreRingClass(20, null), "border-risk-high text-risk-high");
+});
+
+check("chưa có điểm -> slate", () => {
+  assert.equal(scoreRingClass(null, null), "border-slate-300 text-slate-500");
 });
 
 console.log(`\nKết quả: ${pass} pass, ${fail} fail`);

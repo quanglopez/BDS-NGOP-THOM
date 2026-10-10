@@ -20,6 +20,7 @@ function check(name: string, fn: () => void) {
 const header = readFileSync("components/site/header.tsx", "utf8");
 const hero = readFileSync("components/site/hero.tsx", "utf8");
 const page = readFileSync("app/page.tsx", "utf8");
+const report = readFileSync("app/bao-cao/[id]/page.tsx", "utf8");
 const category = readFileSync("components/dashboard/category-scan.tsx", "utf8");
 const bulk = readFileSync("components/site/bulk-section.tsx", "utf8");
 
@@ -36,6 +37,21 @@ check("hero nói rõ 100 tin là PRO", () => {
   assert.ok(hero.includes("Tính năng PRO"));
   assert.ok(hero.includes("Bulk Check"));
   assert.ok(page.includes("(PRO)"));
+});
+
+check("H1 hứa lọc tin đáng gọi, 100 tin nằm ở PRO", () => {
+  assert.ok(hero.includes("Biết tin nào đáng gọi trước khi mất thời gian gọi."));
+  assert.ok(hero.includes("PRO: Lọc 100 tin BĐS trong 1 phút"));
+  assert.ok(!hero.includes("<h1") || hero.indexOf("Biết tin nào đáng gọi") < hero.indexOf("PRO: Lọc 100 tin"));
+  assert.ok(hero.includes('href="#kiem-tra"'));
+  assert.ok(hero.includes("Dùng miễn phí – 20 tin/ngày"));
+});
+
+check("report score không emerald cho mọi điểm, có disclaimer", () => {
+  assert.ok(report.includes("scoreRingClass"));
+  assert.ok(report.includes("dealBadgeClass"));
+  assert.ok(!report.includes("border-emerald-500 text-emerald-700"));
+  assert.ok(report.includes("Điểm hỗ trợ lọc tin, không thay thế việc kiểm tra sổ và quy hoạch."));
 });
 
 check("category scan nêu đủ 10/50/100", () => {

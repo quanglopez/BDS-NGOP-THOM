@@ -43,6 +43,19 @@ export function scoreBadgeClass(score: number | null | undefined): string {
   return "bg-red-500 text-white";
 }
 
+/** Viền vòng điểm trên report. Cùng ngưỡng với scoreBadgeClass.
+ *  Rủi ro pháp lý không được nhìn như trạng thái tốt, kể cả khi điểm cao. */
+export function scoreRingClass(
+  score: number | null | undefined,
+  deal?: string | null,
+): string {
+  if (deal === "rui_ro_phap_ly") return "border-risk-high text-risk-high";
+  if (score === null || score === undefined) return "border-slate-300 text-slate-500";
+  if (score >= 80) return "border-emerald-500 text-emerald-700";
+  if (score >= 50) return "border-risk-medium text-risk-medium";
+  return "border-risk-high text-risk-high";
+}
+
 /** Mốc AI tạo report, format vi-VN "dd/mm/yyyy hh:mm". null/invalid -> null
  *  (UI KHÔNG render, không bao giờ tự tạo mốc). */
 export function formatAiGeneratedAt(iso: string | null | undefined): string | null {
