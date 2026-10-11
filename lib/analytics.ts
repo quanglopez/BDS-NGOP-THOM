@@ -27,7 +27,8 @@ export type FunnelEvent =
   | "deal_grader_preview"
   | "deal_grader_ai_click"
   | "deal_grader_login_click"
-  | "deal_grader_ai_success";
+  | "deal_grader_ai_success"
+  | "owner_signal_preview";
 
 declare global {
   interface Window {
