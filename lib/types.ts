@@ -76,6 +76,8 @@ export interface CheckApiResponse {
   area_m2?: number | null;
   analyzed_at?: string;
   quota?: QuotaInfo;
+  /** true khi server trả điểm đã chấm trước đó từ score cache (không gọi lại AI). */
+  cached?: boolean;
   raw?: unknown;
   error?: string;
 }
