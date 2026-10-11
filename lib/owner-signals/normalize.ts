@@ -175,8 +175,37 @@ const NEGATION_FALSE_FRIENDS: Record<string, readonly string[]> = {
  */
 const MIEN_EXCLUSION_FOLLOWERS = new Set(["trung", "moi", "qua", "tiep"]);
 
-/** Số token tối đa nhìn ngược lại. Xa hơn thì coi như khác mệnh đề. */
-const NEGATION_WINDOW_TOKENS = 3;
+/**
+ * Từ đệm được phép đứng GIỮA từ phủ định và cụm khớp.
+ *
+ * Cần thiết vì tiếng Việt chèn từ đệm vào giữa: "không PHẢI LÀ MỘT sàn bất động
+ * sản", "không BAO GIỜ nhận ký gửi", "không phải BÊN nhận ký gửi". Nếu chỉ đếm
+ * khoảng cách token cố định thì "không" rơi ra ngoài và cụm bị coi là khẳng định.
+ *
+ * Chỉ nhận từ đệm THẬT SỰ trống nghĩa. Mọi token khác cắt chuỗi ngay — nhờ vậy
+ * "không bán căn cũ, nhận ký gửi" không bị coi là phủ định "nhận ký gửi".
+ */
+const NEGATION_BRIDGE_TOKENS = new Set([
+  "phai",
+  "la",
+  "mot",
+  "bao",
+  "gio",
+  "nguoi",
+  "don",
+  "vi",
+  "ben",
+  "co",
+  "tung",
+  "he",
+  "duoc",
+]);
+
+/**
+ * Trần số từ đệm. Đủ cho "không phải là một" (3 đệm) và "chưa bao giờ" (2 đệm),
+ * nhưng không biến phủ định thành "có chữ không ở đâu đó phía trước".
+ */
+const MAX_BRIDGE_TOKENS = 5;
 
 /** Cắt đoạn VĂN BẢN GỐC (còn dấu) ứng với một token. */
 function tokenOriginal(original: string, listing: NormalizedListing, token: Token): string {
@@ -203,16 +232,27 @@ function isNegationToken(
   return true;
 }
 
+/** Token này có phải từ đệm được phép nằm giữa phủ định và cụm khớp? */
+function isBridgeToken(token: Token): boolean {
+  return NEGATION_BRIDGE_TOKENS.has(token.text);
+}
+
 /**
  * Cụm khớp bắt đầu tại `at` có đang bị phủ định bởi ngữ cảnh ngay trước không?
  *
- * Quy tắc:
- * - chỉ nhìn ngược tối đa NEGATION_WINDOW_TOKENS token;
- * - dừng ngay khi gặp ranh giới mệnh đề (dấu câu / liên từ);
- * - gặp từ phủ định trong phạm vi đó -> coi như bị phủ định.
+ * Cơ chế CẦU PHỦ ĐỊNH (negation bridge):
+ *   phủ định + CHỈ các từ đệm + cụm khớp  ->  cụm bị phủ định
  *
- * Nhờ vậy "không cần sửa chữa. Nhận ký gửi nhà phố" vẫn nhận ra "nhận ký gửi":
- * dấu chấm chặn phủ định của mệnh đề trước.
+ * Đi ngược từ cụm khớp:
+ *  - gặp ranh giới mệnh đề (dấu câu / liên từ) -> dừng, KHÔNG phủ định;
+ *  - gặp từ đệm -> đi tiếp, tối đa MAX_BRIDGE_TOKENS;
+ *  - gặp từ phủ định -> PHỦ ĐỊNH;
+ *  - gặp bất kỳ token nào khác -> dừng, KHÔNG phủ định.
+ *
+ * Nhờ vậy "không phải là một sàn bất động sản" bị phủ định, nhưng
+ * "không bán căn cũ, nhận ký gửi" và "không thích căn này nhưng nhận ký gửi"
+ * vẫn nhận ra dấu hiệu thật: dấu câu/liên từ cắt chuỗi, còn từ mang nghĩa
+ * ("bán", "thích") cũng cắt chuỗi vì không phải từ đệm.
  */
 export function isNegated(
   original: string,
@@ -230,13 +270,16 @@ export function isNegated(
   }
   if (matchIdx === -1) return false;
 
-  for (let d = 1; d <= NEGATION_WINDOW_TOKENS; d++) {
+  const matchStart = tokens[matchIdx].start;
+
+  for (let d = 1; d <= MAX_BRIDGE_TOKENS + 1; d++) {
     const i = matchIdx - d;
     if (i < 0) return false;
 
     const tok = tokens[i];
     // Ranh giới mệnh đề giữa token này và cụm khớp -> phủ định không với tới.
-    if (hasClauseBoundary(listing.normalized, tok.end, tokens[matchIdx].start)) {
+    const prevEnd = d === 1 ? matchStart : tokens[matchIdx - d + 1].start;
+    if (hasClauseBoundary(listing.normalized, tok.end, prevEnd)) {
       return false;
     }
 
@@ -246,6 +289,10 @@ export function isNegated(
       const next = tokens[i + 1];
       if (next && MIEN_EXCLUSION_FOLLOWERS.has(next.text)) return true;
     }
+
+    // Chỉ từ đệm mới được phép nối tiếp chuỗi; mọi token khác cắt chuỗi.
+    if (!isBridgeToken(tok)) return false;
+    if (d > MAX_BRIDGE_TOKENS) return false;
   }
 
   return false;
@@ -305,26 +352,49 @@ export interface FindPhraseOptions {
 }
 
 /**
- * Tìm 1 cụm từ và trả về TRÍCH DẪN NGUYÊN VĂN của người đăng (giữ nguyên dấu
- * tiếng Việt), để UI hiển thị đúng câu chữ thật thay vì bản đã bỏ dấu.
+ * Một ứng viên khớp, kèm lý do bị loại (nếu bị loại).
  *
- * Trả null nếu không thấy khớp nào hợp lệ.
+ * Trả về cả ứng viên BỊ LOẠI (chứ không chỉ ứng viên hợp lệ) là điều kiện cần để
+ * `collectMatches` xử lý được lỗi "fallback hồi sinh": khi một cụm dài bị phủ
+ * định, cụm ngắn hơn nằm trong nó cũng phải bị chặn, dù bản thân cụm ngắn có
+ * thể nằm ngoài tầm với của từ phủ định.
  */
-export function findPhrase(
+export interface PhraseCandidate {
+  /** Cụm gốc, cắt từ CHÍNH văn bản người dùng dán (giữ nguyên dấu). */
+  quote: string;
+  /** Vị trí bắt đầu trong văn bản gốc. */
+  index: number;
+  /** Vị trí kết thúc (exclusive) trong văn bản gốc. */
+  end: number;
+  /** true khi ứng viên này bị loại (phủ định hoặc ngữ cảnh trước). */
+  suppressed: boolean;
+  /** Vì sao bị loại. */
+  reason: "negated" | "preceding_context" | null;
+}
+
+/**
+ * Liệt kê mọi ứng viên khớp của MỘT cụm từ, kèm trạng thái bị loại.
+ *
+ * Không dừng ở khớp hợp lệ đầu tiên: caller cần thấy cả các khớp bị phủ định để
+ * chặn các pattern thay thế chồng lấn về sau.
+ */
+export function findAllPhraseCandidates(
   original: string,
   listing: NormalizedListing,
   phrase: string,
   options: FindPhraseOptions = {},
-): PhraseMatch | null {
+): PhraseCandidate[] {
   const needle = normalizeListing(phrase);
-  if (!needle) return null;
+  if (!needle) return [];
 
   const { excludeIfPrecededBy, applyNegation = true } = options;
+  const out: PhraseCandidate[] = [];
 
   let from = 0;
   for (;;) {
     const at = listing.normalized.indexOf(needle, from);
-    if (at === -1) return null;
+    if (at === -1) break;
+    from = at + needle.length;
 
     const excluded =
       excludeIfPrecededBy && excludeIfPrecededBy.length > 0
@@ -333,34 +403,67 @@ export function findPhrase(
 
     const negated = applyNegation ? isNegated(original, listing, at) : false;
 
-    if (!excluded && !negated) {
-      // Ánh xạ chỉ số đầu/cuối về chuỗi gốc rồi cắt trên bản gốc.
-      const startOriginal = listing.map[at];
-      const endOriginal = listing.endMap[at + needle.length - 1];
-      const quote = original.slice(startOriginal, endOriginal).replace(/\s+/g, " ").trim();
-      return { quote, index: startOriginal, end: endOriginal };
-    }
-
-    from = at + needle.length;
+    const startOriginal = listing.map[at];
+    const endOriginal = listing.endMap[at + needle.length - 1];
+    out.push({
+      quote: original.slice(startOriginal, endOriginal).replace(/\s+/g, " ").trim(),
+      index: startOriginal,
+      end: endOriginal,
+      suppressed: excluded || negated,
+      reason: negated ? "negated" : excluded ? "preceding_context" : null,
+    });
   }
+
+  return out;
+}
+
+/**
+ * Tìm 1 cụm từ và trả về TRÍCH DẪN NGUYÊN VĂN của người đăng (giữ nguyên dấu
+ * tiếng Việt), để UI hiển thị đúng câu chữ thật thay vì bản đã bỏ dấu.
+ *
+ * Chỉ trả về ứng viên HỢP LỆ đầu tiên. Trả null nếu mọi khớp đều bị loại.
+ */
+export function findPhrase(
+  original: string,
+  listing: NormalizedListing,
+  phrase: string,
+  options: FindPhraseOptions = {},
+): PhraseMatch | null {
+  const candidates = findAllPhraseCandidates(original, listing, phrase, options);
+  const valid = candidates.find((c) => !c.suppressed);
+  if (!valid) return null;
+  return { quote: valid.quote, index: valid.index, end: valid.end };
 }
 
 /**
  * Biến thể viết liền không dấu ("chinhchu"). Chỉ áp dụng cho số ít cụm đặc
  * trưng — KHÔNG mở rộng thành lớp NLP riêng.
+ *
+ * Phải đi qua CÙNG cổng phủ định như cụm có dấu: "không chinhchu" là phủ định
+ * lời tự khai, không phải lời tự khai.
  */
 export function findGluedVariant(
   original: string,
   listing: NormalizedListing,
   variants: readonly string[],
+  options: FindPhraseOptions = {},
 ): PhraseMatch | null {
+  const { applyNegation = true } = options;
+
   for (const v of variants) {
-    const at = listing.normalized.indexOf(v);
-    if (at === -1) continue;
-    const startOriginal = listing.map[at];
-    const endOriginal = listing.endMap[at + v.length - 1];
-    const quote = original.slice(startOriginal, endOriginal).replace(/\s+/g, " ").trim();
-    return { quote, index: startOriginal, end: endOriginal };
+    let from = 0;
+    for (;;) {
+      const at = listing.normalized.indexOf(v, from);
+      if (at === -1) break;
+      from = at + v.length;
+
+      if (applyNegation && isNegated(original, listing, at)) continue;
+
+      const startOriginal = listing.map[at];
+      const endOriginal = listing.endMap[at + v.length - 1];
+      const quote = original.slice(startOriginal, endOriginal).replace(/\s+/g, " ").trim();
+      return { quote, index: startOriginal, end: endOriginal };
+    }
   }
   return null;
 }

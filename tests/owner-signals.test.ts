@@ -23,6 +23,7 @@ import {
   type SignalDefinition,
 } from "../lib/owner-signals/signals.ts";import {
   countPhrase,
+  findAllPhraseCandidates,
   findPhrase,
   hasClauseBoundary,
   isNegated,
@@ -901,6 +902,151 @@ check("mỗi dấu hiệu hiện ra có span hợp lệ", () => {
     assert.ok(Number.isInteger(s.start) && Number.isInteger(s.end), `${s.id} thiếu span`);
     assert.ok(s.end > s.start, `${s.id} span không hợp lệ`);
   }
+});
+
+// ---------------------------------------------------------------- MERGE BLOCKER
+
+console.log("\n== MERGE_BLOCKER-1: fallback chồng lấn không được hồi sinh ==");
+
+check("MB1 \"Tôi không bao giờ nhận ký gửi nhà phố\" -> insufficient, 0 evidence", () => {
+  const r = classify("Tôi không bao giờ nhận ký gửi nhà phố.");
+  assert.equal(r.classification, "insufficient");
+  assert.equal(
+    r.brokerSignals.some((s) => s.id === "broker_receive_consignment"),
+    false,
+    "pattern ngắn 'ký gửi nhà' không được hồi sinh dấu hiệu đã bị phủ định",
+  );
+});
+
+check("MB1b \"Tôi không phải bên nhận ký gửi nhà phố\" -> NOT broker_like", () => {
+  const r = classify("Tôi không phải bên nhận ký gửi nhà phố.");
+  assert.notEqual(r.classification, "broker_like");
+  assert.equal(r.brokerSignals.some((s) => s.id === "broker_receive_consignment"), false);
+});
+
+check("MB1c \"Tôi chưa bao giờ nhận ký gửi nhà phố\" -> NOT broker_like", () => {
+  const r = classify("Tôi chưa bao giờ nhận ký gửi nhà phố.");
+  assert.notEqual(r.classification, "broker_like");
+});
+
+check("MB1d không hồi sinh: khẳng định trực tiếp ở tầng signal + span", () => {
+  // Khẳng định ở tầng ID/span, không chỉ dựa vào classification cuối.
+  const r = classify("Tôi không bao giờ nhận ký gửi nhà phố.");
+  const hit = r.brokerSignals.filter((s) => s.id === "broker_receive_consignment");
+  assert.equal(hit.length, 0, `không được có evidence nào, gặp ${JSON.stringify(hit)}`);
+  // Và không câu trích dẫn nào của dấu hiệu này lọt ra UI.
+  const quotes = [...r.brokerSignals, ...r.ownerSignals].map((s) => s.quote.toLowerCase());
+  assert.equal(quotes.some((q) => q.includes("ký gửi")), false, "không render cụm bị phủ định");
+});
+
+check("MB1e fallback chồng lấn vẫn dùng được khi KHÔNG bị phủ định", () => {
+  // Không được phá fallback thật: "ký gửi nhà phố" vẫn phải nhận ra.
+  const r = classify("Ký gửi nhà phố, liên hệ để biết thêm.");
+  assert.equal(r.classification, "broker_like");
+  assert.ok(r.brokerSignals.some((s) => s.id === "broker_receive_consignment"));
+});
+
+console.log("\n== MERGE_BLOCKER-2: cầu phủ định với từ đệm ==");
+
+check("MB2 \"Tôi không phải là một sàn bất động sản\" -> insufficient, broker_company absent", () => {
+  const r = classify("Tôi không phải là một sàn bất động sản.");
+  assert.equal(r.classification, "insufficient");
+  assert.equal(r.brokerSignals.some((s) => s.id === "broker_company"), false);
+});
+
+check("MB2b \"Đây không phải là một công ty bất động sản\" -> insufficient", () => {
+  const r = classify("Đây không phải là một công ty bất động sản.");
+  assert.equal(r.classification, "insufficient");
+  assert.equal(r.brokerSignals.some((s) => s.id === "broker_company"), false);
+});
+
+check("MB2c \"không phải công ty bất động sản\" (không có đệm) -> insufficient", () => {
+  const r = classify("Tôi không phải công ty bất động sản, nhà 70m2 Đà Nẵng giá 3.5 tỷ.");
+  assert.notEqual(r.classification, "broker_like");
+});
+
+console.log("\n== SHOULD_FIX: biến thể viết liền đi qua cổng phủ định ==");
+
+check("SF \"Không chinhchu, bán hộ nhà...\" -> owner_self_claim absent", () => {
+  const r = classify("Không chinhchu, bán hộ nhà 70m2 tại Đà Nẵng, giá 3.5 tỷ.");
+  assert.equal(r.ownerSignals.some((s) => s.id === "owner_self_claim"), false);
+  const quotes = [...r.brokerSignals, ...r.ownerSignals].map((s) => s.quote.toLowerCase());
+  assert.equal(quotes.some((q) => q.includes("chinhchu")), false, "không render cụm viết liền bị phủ định");
+});
+
+check("SFb \"chinhchu\" KHÔNG bị phủ định vẫn nhận ra (weak, insufficient)", () => {
+  const r = classify("chinhchu bán nhà 70m2 tại Đà Nẵng, giá 3.5 tỷ sổ hồng riêng hẻm xe hơi.");
+  assert.ok(r.ownerSignals.some((s) => s.id === "owner_self_claim"), "phải giữ khả năng nhận diện");
+  assert.equal(r.classification, "insufficient", "lời tự khai yếu vẫn không đủ để kết luận");
+});
+
+console.log("\n== MERGE BLOCKER: regression tích cực ==");
+
+check("P7 \"Nhận ký gửi nhà phố\" -> broker_like", () => {
+  assert.equal(classify("Nhận ký gửi nhà phố.").classification, "broker_like");
+});
+
+check("P9 \"Công ty bất động sản nhận ký gửi nhà\" -> broker_like", () => {
+  assert.equal(classify("Công ty bất động sản nhận ký gửi nhà.").classification, "broker_like");
+});
+
+check("P10 \"Sàn bất động sản chuyên khu vực\" -> broker_like", () => {
+  assert.equal(classify("Sàn bất động sản chuyên khu vực Đà Nẵng.").classification, "broker_like");
+});
+
+console.log("\n== MERGE BLOCKER: ranh giới mệnh đề vẫn đúng ==");
+
+check("CB12 \"Không cần sửa chữa. Nhận ký gửi nhà phố\" -> broker_like", () => {
+  assert.equal(classify("Không cần sửa chữa. Nhận ký gửi nhà phố.").classification, "broker_like");
+});
+
+check("CB13 \"Không bán căn cũ, nhận ký gửi nhà phố\" -> broker_like", () => {
+  assert.equal(classify("Không bán căn cũ, nhận ký gửi nhà phố.").classification, "broker_like");
+});
+
+check("CB14 \"Không thích căn này nhưng nhận ký gửi nhà phố\" -> broker_like", () => {
+  assert.equal(classify("Không thích căn này nhưng nhận ký gửi nhà phố.").classification, "broker_like");
+});
+
+check("CB15 \"Không cần sửa chữa, công ty bất động sản nhận ký gửi\" -> broker_like", () => {
+  assert.equal(
+    classify("Không cần sửa chữa, công ty bất động sản nhận ký gửi.").classification,
+    "broker_like",
+  );
+});
+
+check("cầu phủ định KHÔNG nối qua token mang nghĩa", () => {
+  // "bán" / "thích" không phải từ đệm -> cắt chuỗi, không phủ định cụm sau.
+  const l1 = normalizeWithMap("khong ban can cu nhan ky gui");
+  assert.equal(isNegated("khong ban can cu nhan ky gui", l1, l1.normalized.indexOf("nhan ky gui")), false);
+  const l2 = normalizeWithMap("khong thich can nay nhan ky gui");
+  assert.equal(isNegated("khong thich can nay nhan ky gui", l2, l2.normalized.indexOf("nhan ky gui")), false);
+});
+
+check("cầu phủ định có trần: chuỗi đệm quá dài thì không phủ định", () => {
+  const long = "khong phai la mot ben nguoi don vi nhan ky gui";
+  const l = normalizeWithMap(long);
+  assert.equal(
+    isNegated(long, l, l.normalized.indexOf("nhan ky gui")),
+    false,
+    "vượt trần từ đệm thì không được coi là phủ định",
+  );
+});
+
+check("findAllPhraseCandidates báo đúng trạng thái bị phủ định", () => {
+  const text = "Tôi không bao giờ nhận ký gửi nhà phố.";
+  const l = normalizeWithMap(text);
+  const long = findAllPhraseCandidates(text, l, "nhận ký gửi");
+  assert.equal(long.length, 1);
+  assert.equal(long[0].suppressed, true, "cụm dài bị phủ định");
+  assert.equal(long[0].reason, "negated");
+
+  // Cụm ngắn tự nó KHÔNG bị phủ định (từ phủ định ngoài tầm), nhưng vẫn phải bị
+  // chặn ở tầng collectMatches vì chồng lấn vùng đã bị phủ định.
+  const short = findAllPhraseCandidates(text, l, "ký gửi nhà");
+  assert.equal(short.length, 1);
+  assert.equal(short[0].suppressed, false, "cụm ngắn nằm ngoài tầm phủ định — đây là lý do cần luật chồng lấn");
+  assert.ok(short[0].index < long[0].end, "cụm ngắn phải chồng lấn cụm dài");
 });
 
 // ---------------------------------------------------------------- route / scope

@@ -24,8 +24,8 @@ import {
   type SignalStrength,
 } from "./signals";
 import {
+  findAllPhraseCandidates,
   findGluedVariant,
-  findPhrase,
   normalizeListing,
   normalizeWithMap,
   type NormalizedListing,
@@ -72,16 +72,19 @@ export interface OwnerSignalResult {
 /**
  * Tìm mọi dấu hiệu khớp trong văn bản.
  *
- * Hai cổng lọc chạy trong `findPhrase`:
+ * Ba cổng lọc:
  *  - PHỦ ĐỊNH: "tôi không nhận ký gửi" không được tính là hoạt động nhận ký gửi.
- *    Cụm bị phủ định không vào kết quả, nên không hiện làm bằng chứng và không
- *    tham gia quyết định.
  *  - NGỮ CẢNH ĐỨNG TRƯỚC (excludeIfPrecededBy): chặn cụm lồng nhau như
  *    "công ty tôi cần bán" khớp nhầm thành dấu hiệu người bán cá nhân.
+ *  - KHÔNG HỒI SINH QUA VÙNG BỊ PHỦ ĐỊNH: nếu một pattern bị phủ định, mọi
+ *    pattern khác CÙNG định nghĩa nằm chồng lấn trong vùng đó cũng bị chặn.
  *
- * Mỗi định nghĩa chỉ trả tối đa 1 kết quả (khớp hợp lệ đầu tiên) — nhắc lại
- * nhiều lần không tạo thêm dấu hiệu độc lập, nếu không thì một tin lặp
- * "chính chủ" 5 lần sẽ thành 5 bằng chứng.
+ * Cổng thứ ba là cần thiết vì một định nghĩa có nhiều pattern thay thế:
+ * "nhận ký gửi" và "ký gửi nhà". Khi câu là "không bao giờ nhận ký gửi nhà",
+ * pattern dài bị phủ định đúng, nhưng pattern ngắn hơn bắt đầu MUỘN HƠN một
+ * token nên từ phủ định rơi ra ngoài tầm với của nó — và dấu hiệu hồi sinh
+ * thành khẳng định. Ghi lại vùng bị phủ định rồi chặn mọi cụm chồng lấn giải
+ * quyết việc này một cách tổng quát, không cần special-case câu cụ thể.
  */
 function collectMatches(
   original: string,
@@ -91,16 +94,28 @@ function collectMatches(
   const out: MatchedSignal[] = [];
 
   for (const def of defs) {
-    let match: PhraseMatch | null = null;
+    const options = { excludeIfPrecededBy: def.excludeIfPrecededBy };
 
-    for (const pattern of def.patterns) {
-      match = findPhrase(original, listing, pattern, {
-        excludeIfPrecededBy: def.excludeIfPrecededBy,
-      });
-      if (match) break;
-    }
+    // Thu mọi ứng viên của MỌI pattern trong định nghĩa này.
+    const candidates = def.patterns.flatMap((pattern) =>
+      findAllPhraseCandidates(original, listing, pattern, options),
+    );
+
+    // Vùng bị phủ định (hoặc bị ngữ cảnh trước chặn) — mọi cụm chồng lấn với
+    // vùng này thuộc cùng định nghĩa đều không được hồi sinh.
+    const suppressedSpans = candidates.filter((c) => c.suppressed);
+
+    const accepted = candidates.find(
+      (c) => !c.suppressed && !overlapsAny(c, suppressedSpans),
+    );
+
+    let match: PhraseMatch | null = accepted
+      ? { quote: accepted.quote, index: accepted.index, end: accepted.end }
+      : null;
+
+    // Biến thể viết liền đi qua cùng cổng phủ định.
     if (!match && def.glued) {
-      match = findGluedVariant(original, listing, def.glued);
+      match = findGluedVariant(original, listing, def.glued, options);
     }
     if (!match) continue;
 
@@ -118,6 +133,14 @@ function collectMatches(
   }
 
   return out;
+}
+
+/** Cụm này có chồng lấn (hoặc nằm trong) một trong các vùng đã cho không? */
+function overlapsAny(
+  candidate: { index: number; end: number },
+  spans: readonly { index: number; end: number }[],
+): boolean {
+  return spans.some((s) => candidate.index < s.end && s.index < candidate.end);
 }
 
 function countOccurrences(listing: NormalizedListing, def: SignalDefinition): number {
