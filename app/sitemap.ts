@@ -10,6 +10,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${base}/tools/kiem-tra-phap-ly-truoc-coc`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
     { url: `${base}/tools/cham-diem-tin-dang`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
     { url: `${base}/tools/tin-chinh-chu-hay-moi-gioi`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
+    { url: `${base}/tools/kiem-tra-dau-hieu-ban-gap`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
     { url: `${base}/pricing`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
     { url: `${base}/login`, lastModified: now, changeFrequency: "monthly", priority: 0.4 },
     { url: `${base}/lien-he`, lastModified: now, changeFrequency: "monthly", priority: 0.3 },
