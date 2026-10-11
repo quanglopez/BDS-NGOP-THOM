@@ -22,6 +22,11 @@ export interface CheckOutcome {
   // Slug SEO đã ghi trong DB. null khi ghi lỗi (thiếu cột, trùng slug) —
   // khi đó URL UUID vẫn mở được.
   seoSlug?: string | null;
+  // Confidence 0..1 của provider. null/undefined = provider không trả (KHÔNG
+  // phải 0). Chỉ có ở nhánh source "ai".
+  confidence?: number | null;
+  // Server trả kết quả đã chấm trước đó từ score cache (không gọi lại AI).
+  cached?: boolean;
 }
 
 // Thông tin kèm theo khi check (người đăng + địa lý có cấu trúc).
@@ -82,6 +87,8 @@ export async function runCheck(text: string, contact?: ContactInfo): Promise<Che
       analyzedAt: data.analyzed_at,
       checkId: typeof data.check_id === "string" ? data.check_id : null,
       seoSlug: typeof data.seo_slug === "string" ? data.seo_slug : null,
+      confidence: typeof data.confidence === "number" ? data.confidence : null,
+      cached: data.cached === true,
     };
   } catch {
     trackEvent("property_checked", { source: "local" });

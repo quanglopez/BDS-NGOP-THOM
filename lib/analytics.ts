@@ -23,7 +23,11 @@ export type FunnelEvent =
   | "price_intelligence_view"
   | "pro_locked_section_view"
   | "pro_unlock_click"
-  | "upgrade_from_report_click";
+  | "upgrade_from_report_click"
+  | "deal_grader_preview"
+  | "deal_grader_ai_click"
+  | "deal_grader_login_click"
+  | "deal_grader_ai_success";
 
 declare global {
   interface Window {
