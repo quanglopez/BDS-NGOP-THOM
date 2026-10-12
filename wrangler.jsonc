@@ -1,9 +1,8 @@
-// Cloudflare Workers shadow deployment (OpenNext) — KHÔNG phải deployment production.
+// Cloudflare Workers deployment (OpenNext) — PRODUCTION cho www.checkbds.online.
 //
-// Shadow này chạy song song Vercel Production (www.checkbds.online vẫn ở Vercel).
-// KHÔNG cấu hình custom domain / routes cho checkbds.online ở đây.
+// Apex checkbds.online vẫn ở Vercel (redirect 308 -> www); www serve từ Worker này.
 // Cron Triggers KHÔNG bật trên Cloudflare (Vercel Cron vẫn chạy duy nhất) —
-// bật song song sẽ chạy job production hai lần. Cutover là task riêng.
+// bật song song sẽ chạy job production hai lần. Cutover cron là task riêng.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "checkbds-shadow",
@@ -23,10 +22,18 @@
   "images": {
     "binding": "IMAGES"
   },
-  // Non-secret runtime vars cho shadow. Giá trị PUBLIC (đã nằm trong bundle build)
+  // Non-secret runtime vars. Giá trị PUBLIC (đã nằm trong bundle build)
   // hoặc cấu hình không nhạy cảm. Secret thật (service role, JEV, SePay, OpenRouter,
   // CRON_SECRET) đặt bằng `wrangler secret put`, KHÔNG bao giờ ở đây.
   "vars": {
     "NEXT_PUBLIC_SITE_URL": "https://www.checkbds.online"
-  }
+  },
+  // Custom domain production — ĐANG LIVE. Block này chỉ sync repo với config
+  // đã deploy, không phải thay đổi mới. Xoá là mất route www -> Worker.
+  "routes": [
+    {
+      "pattern": "www.checkbds.online",
+      "custom_domain": true
+    }
+  ]
 }
