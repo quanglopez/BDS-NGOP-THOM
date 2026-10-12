@@ -17,6 +17,12 @@
   "observability": {
     "enabled": true
   },
+  // Image optimization qua Cloudflare Images binding — dùng Images Free tier
+  // (5.000 unique transformations/tháng, $0). KHÔNG cần Images Paid add-on.
+  // Thiếu binding này thì next/image trả ảnh gốc không tối ưu.
+  "images": {
+    "binding": "IMAGES"
+  },
   // Non-secret runtime vars cho shadow. Giá trị PUBLIC (đã nằm trong bundle build)
   // hoặc cấu hình không nhạy cảm. Secret thật (service role, JEV, SePay, OpenRouter,
   // CRON_SECRET) đặt bằng `wrangler secret put`, KHÔNG bao giờ ở đây.
