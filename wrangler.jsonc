@@ -33,7 +33,8 @@
   // hoặc cấu hình không nhạy cảm. Secret thật (service role, JEV, SePay, OpenRouter,
   // CRON_SECRET) đặt bằng `wrangler secret put`, KHÔNG bao giờ ở đây.
   "vars": {
-    "NEXT_PUBLIC_SITE_URL": "https://www.checkbds.online"
+    "NEXT_PUBLIC_SITE_URL": "https://www.checkbds.online",
+    "NEXT_PUBLIC_SUPABASE_URL": "https://yqttttrhvriyfwcsioey.supabase.co"
   },
   // Custom domain production — ĐANG LIVE. Block này chỉ sync repo với config
   // đã deploy, không phải thay đổi mới. Xoá là mất route www -> Worker.
