@@ -341,7 +341,7 @@ await test("19. wrangler giữ nguyên route production + không nhét secret v�
     WRANGLER.replace(/^\s*\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, ""),
   ) as { routes?: { pattern: string; custom_domain?: boolean }[]; vars?: Record<string, string> };
   assert.deepEqual(parsed.routes, [{ pattern: "www.checkbds.online", custom_domain: true }]);
-  assert.deepEqual(Object.keys(parsed.vars ?? {}), ["NEXT_PUBLIC_SITE_URL"]);
+  assert.deepEqual(Object.keys(parsed.vars ?? {}), ["NEXT_PUBLIC_SITE_URL", "NEXT_PUBLIC_SUPABASE_URL"]);
 });
 
 console.log(`\nscheduled-wrapper: ${failures} fail`);
