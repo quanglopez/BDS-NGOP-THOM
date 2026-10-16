@@ -1,12 +1,19 @@
 // Cloudflare Workers deployment (OpenNext) — PRODUCTION cho www.checkbds.online.
 //
 // Apex checkbds.online vẫn ở Vercel (redirect 308 -> www); www serve từ Worker này.
-// Cron Triggers KHÔNG bật trên Cloudflare (Vercel Cron vẫn chạy duy nhất) —
-// bật song song sẽ chạy job production hai lần. Cutover cron là task riêng.
+//
+// `main` trỏ vào entry TỰ VIẾT (cloudflare/worker.ts), không trỏ thẳng vào
+// .open-next/worker.js: OpenNext GHI ĐÈ file generated mỗi lần build, nên muốn
+// thêm scheduled() phải re-export từ một file nằm trong Git. Entry đó giữ
+// nguyên `fetch` của OpenNext + 3 Durable Object class.
+//
+// Cron Triggers VẪN CHƯA bật trên Cloudflare (chưa có block `triggers`) — Vercel
+// Cron vẫn chạy duy nhất. PR-1 chỉ thêm capability scheduled(); bật trigger là
+// bước cutover riêng. Bật song song sẽ chạy job production hai lần.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "checkbds-shadow",
-  "main": ".open-next/worker.js",
+  "main": "cloudflare/worker.ts",
   "compatibility_date": "2026-10-12",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {
