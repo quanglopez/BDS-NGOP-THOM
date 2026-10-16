@@ -38,17 +38,11 @@ function json(body: Json, status = 200): Response {
   });
 }
 
-export async function handleRadarScanCron(req: Request, deps: RadarScanCronDeps): Promise<Response> {
-  const secret = deps.env.CRON_SECRET;
-  if (!secret) {
-    console.error("[cron:radar-scan] CRON_SECRET chua duợc cấu hình");
-    return json({ error: "Cron chua duợc cấu hình." }, 500);
-  }
-
-  const header = req.headers.get("authorization") ?? "";
-  const token = header.replace(/^bearer\s+/i, "").trim();
-  if (!safeEqual(token, secret)) return json({ error: "Cron không được xác thực." }, 401);
-
+/** Phần việc THẬT của cron quét radar: guard → list → scan → mark lỗi.
+ *  KHÔNG kiểm tra Bearer: dùng chung cho HTTP route (sau bước auth) và
+ *  scheduled handler (Cloudflare gọi nội bộ, không có request/secret).
+ *  Guard vẫn nằm TRƯỚC mọi work. */
+export async function runRadarScanJob(deps: RadarScanCronDeps): Promise<Response> {
   const skip = workerSkipReason(deps.env);
   if (skip) return json({ ok: true, skipped: skip });
 
@@ -92,5 +86,21 @@ export async function handleRadarScanCron(req: Request, deps: RadarScanCronDeps)
   }
 
   return json(result as unknown as Json);
+}
+
+/** Entry HTTP của cron quét radar: giữ nguyên contract Bearer CRON_SECRET.
+ *  Auth xong mới gọi runRadarScanJob — scheduled handler KHÔNG đi qua đây. */
+export async function handleRadarScanCron(req: Request, deps: RadarScanCronDeps): Promise<Response> {
+  const secret = deps.env.CRON_SECRET;
+  if (!secret) {
+    console.error("[cron:radar-scan] CRON_SECRET chưa được cấu hình");
+    return json({ error: "Cron chưa được cấu hình." }, 500);
+  }
+
+  const header = req.headers.get("authorization") ?? "";
+  const token = header.replace(/^bearer\s+/i, "").trim();
+  if (!safeEqual(token, secret)) return json({ error: "Cron không được xác thực." }, 401);
+
+  return runRadarScanJob(deps);
 }
 
